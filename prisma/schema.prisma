@@ -1,0 +1,406 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Empresa {
+  id                   Int                  @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  codigo               String               @unique(map: "codigo") @map("codigo") @db.VarChar(50)
+  nombre               String               @map("nombre") @db.VarChar(255)
+  razonSocial          String               @map("razon_social") @db.VarChar(255)
+  cuit                 String?              @map("cuit") @db.VarChar(20)
+  sfactoryCompanyKey   String               @map("sfactory_company_key") @db.VarChar(255)
+  sfactoryUserId       Int?                 @map("sfactory_user_id")
+  activa               Boolean              @default(true) @map("activa")
+  logoUrl              String?              @map("logo_url") @db.VarChar(500)
+  colores              Json?                @map("colores")
+  createdAt            DateTime             @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt            DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
+  camposPersonalizados CampoPersonalizado[]
+  clientes             Cliente[]
+  pedidos              Pedido[]
+  productosPadre       ProductoPadre[]
+  productosWeb         ProductoWeb[]
+  reglasParseo         ReglaParseo[]
+  rubros               Rubro[]
+  subrubros            Subrubro[]
+  syncLogs             SyncLog[]
+  usuarios             Usuario[]
+
+  @@index([codigo], map: "idx_codigo")
+  @@index([activa], map: "idx_activa")
+  @@map("empresas")
+}
+
+model Usuario {
+  id                Int      @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  empresaId         Int      @map("empresa_id") @db.UnsignedInt
+  email             String   @unique(map: "email") @map("email") @db.VarChar(255)
+  passwordHash      String   @map("password_hash") @db.VarChar(255)
+  rol               Rol      @default(cliente) @map("rol")
+  auth0UserId       String?  @unique(map: "auth0_user_id") @map("auth0_user_id") @db.VarChar(255)
+  provider          String?  @map("provider") @db.VarChar(50)
+  nombre            String   @map("nombre") @db.VarChar(255)
+  apellido          String?  @map("apellido") @db.VarChar(255)
+  telefono          String?  @map("telefono") @db.VarChar(50)
+  avatarUrl         String?  @map("avatar_url") @db.VarChar(500)
+  sfactoryClienteId Int?     @unique(map: "sfactory_cliente_id") @map("sfactory_cliente_id")
+  activo            Boolean  @default(true) @map("activo")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
+  pedidos           Pedido[]
+  sesiones          Sesion[]
+  empresa           Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "usuarios_ibfk_1")
+
+  @@index([email], map: "idx_email")
+  @@index([empresaId, rol], map: "idx_empresa_rol")
+  @@index([auth0UserId], map: "idx_auth0")
+  @@map("usuarios")
+}
+
+model Rubro {
+  id                        Int             @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  empresaId                 Int             @map("empresa_id") @db.UnsignedInt
+  sfactoryId                Int             @map("sfactory_id")
+  sfactoryCodigo            String?         @map("sfactory_codigo") @db.VarChar(50)
+  nombre                    String          @map("nombre") @db.VarChar(255)
+  codigoExterno             String?         @map("codigo_externo") @db.VarChar(100)
+  visibleWeb                Boolean         @default(true) @map("visible_web")
+  orden                     Int             @default(0) @map("orden")
+  slug                      String?         @map("slug") @db.VarChar(255)
+  descripcionWeb            String?         @map("descripcion_web") @db.Text
+  imagenUrl                 String?         @map("imagen_url") @db.VarChar(500)
+  ultimaSync                DateTime?       @map("ultima_sync") @db.Timestamp(0)
+  createdAt                 DateTime        @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt                 DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
+  productosPadre            ProductoPadre[]
+  reglasParseoAplicarARubro ReglaParseo[]   @relation("RubroReglasParseo")
+  empresa                   Empresa         @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "rubros_ibfk_1")
+  subrubros                 Subrubro[]
+
+  @@unique([empresaId, sfactoryId], name: "unique_empresa_sfactory", map: "unique_empresa_sfactory")
+  @@index([empresaId, visibleWeb], map: "idx_visible")
+  @@index([slug], map: "idx_slug")
+  @@map("rubros")
+}
+
+model Subrubro {
+  id                           Int             @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  empresaId                    Int             @map("empresa_id") @db.UnsignedInt
+  rubroId                      Int             @map("rubro_id") @db.UnsignedInt
+  sfactoryId                   Int             @map("sfactory_id")
+  sfactoryCodigo               String?         @map("sfactory_codigo") @db.VarChar(50)
+  sfactoryRubroId              Int             @map("sfactory_rubro_id")
+  nombre                       String          @map("nombre") @db.VarChar(255)
+  codigoExterno                String?         @map("codigo_externo") @db.VarChar(100)
+  visibleWeb                   Boolean         @default(true) @map("visible_web")
+  orden                        Int             @default(0) @map("orden")
+  slug                         String?         @map("slug") @db.VarChar(255)
+  descripcionWeb               String?         @map("descripcion_web") @db.Text
+  imagenUrl                    String?         @map("imagen_url") @db.VarChar(500)
+  ultimaSync                   DateTime?       @map("ultima_sync") @db.Timestamp(0)
+  createdAt                    DateTime        @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt                    DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
+  productosPadre               ProductoPadre[]
+  reglasParseoAplicarASubrubro ReglaParseo[]   @relation("SubrubroReglasParseo")
+  empresa                      Empresa         @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "subrubros_ibfk_1")
+  rubro                        Rubro           @relation(fields: [rubroId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "subrubros_ibfk_2")
+
+  @@unique([empresaId, sfactoryId], name: "unique_empresa_sfactory", map: "unique_empresa_sfactory")
+  @@index([rubroId], map: "idx_rubro")
+  @@index([empresaId, visibleWeb], map: "idx_visible")
+  @@index([slug], map: "idx_slug")
+  @@map("subrubros")
+}
+
+model ProductoPadre {
+  id                   Int            @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  empresaId            Int            @map("empresa_id") @db.UnsignedInt
+  codigoAgrupacion     String         @map("codigo_agrupacion") @db.VarChar(100)
+  nombre               String         @map("nombre") @db.VarChar(500)
+  descripcion          String?        @map("descripcion") @db.Text
+  agrupacionTipo       AgrupacionTipo @default(automatico) @map("agrupacion_tipo")
+  agrupacionConfirmada Boolean        @default(false) @map("agrupacion_confirmada")
+  rubroId              Int?           @map("rubro_id") @db.UnsignedInt
+  subrubroId           Int?           @map("subrubro_id") @db.UnsignedInt
+  linea                String?        @map("linea") @db.VarChar(255)
+  material             String?        @map("material") @db.VarChar(255)
+  um                   String?        @map("um") @db.VarChar(50)
+  publicado            Boolean        @default(false) @map("publicado")
+  destacado            Boolean        @default(false) @map("destacado")
+  orden                Int            @default(0) @map("orden")
+  descripcionMarketing String?        @map("descripcion_marketing") @db.Text
+  descripcionCorta     String?        @map("descripcion_corta") @db.VarChar(500)
+  slug                 String?        @unique(map: "slug") @map("slug") @db.VarChar(255)
+  metaTitle            String?        @map("meta_title") @db.VarChar(255)
+  metaDescription      String?        @map("meta_description") @db.VarChar(500)
+  imagenes             Json?          @map("imagenes")
+  videoUrl             String?        @map("video_url") @db.VarChar(500)
+  fichaTecnicaUrl      String?        @map("ficha_tecnica_url") @db.VarChar(500)
+  tablaTallesUrl       String?        @map("tabla_talles_url") @db.VarChar(500)
+  camposPersonalizados Json?          @map("campos_personalizados")
+  coloresDisponibles   Json?          @map("colores_disponibles")
+  tallesDisponibles    Json?          @map("talles_disponibles")
+  createdAt            DateTime       @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt            DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
+  pedidosItems         PedidoItem[]
+  empresa              Empresa        @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "productos_padre_ibfk_1")
+  rubro                Rubro?         @relation(fields: [rubroId], references: [id], onUpdate: NoAction, map: "productos_padre_ibfk_2")
+  subrubro             Subrubro?      @relation(fields: [subrubroId], references: [id], onUpdate: NoAction, map: "productos_padre_ibfk_3")
+  productosWeb         ProductoWeb[]
+
+  @@unique([empresaId, codigoAgrupacion], name: "unique_empresa_agrupacion", map: "unique_empresa_agrupacion")
+  @@index([empresaId, publicado], map: "idx_publicado")
+  @@index([destacado], map: "idx_destacado")
+  @@index([rubroId], map: "idx_rubro")
+  @@index([subrubroId], map: "idx_subrubro")
+  @@index([slug], map: "idx_slug")
+  @@map("productos_padre")
+}
+
+model ProductoWeb {
+  id                  Int           @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  empresaId           Int           @map("empresa_id") @db.UnsignedInt
+  productoPadreId     Int           @map("producto_padre_id") @db.UnsignedInt
+  sfactoryId          Int           @map("sfactory_id")
+  sfactoryCodigo      String        @map("sfactory_codigo") @db.VarChar(100)
+  sfactoryBarcode     String?       @map("sfactory_barcode") @db.VarChar(100)
+  descripcionCompleta String        @map("descripcion_completa") @db.VarChar(500)
+  talle               String?       @map("talle") @db.VarChar(50)
+  color               String?       @map("color") @db.VarChar(100)
+  precioCache         Decimal?      @map("precio_cache") @db.Decimal(10, 2)
+  stockCache          Decimal?      @map("stock_cache") @db.Decimal(10, 2)
+  ultimaSyncSfactory  DateTime?     @map("ultima_sync_sfactory") @db.Timestamp(0)
+  activoSfactory      Boolean       @default(true) @map("activo_sfactory")
+  imagenVariante      String?       @map("imagen_variante") @db.VarChar(500)
+  createdAt           DateTime      @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt           DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
+  pedidosItems        PedidoItem[]
+  empresa             Empresa       @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "productos_web_ibfk_1")
+  productoPadre       ProductoPadre @relation(fields: [productoPadreId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "productos_web_ibfk_2")
+
+  @@unique([empresaId, sfactoryCodigo], name: "unique_empresa_sfactory", map: "unique_empresa_sfactory")
+  @@index([productoPadreId], map: "idx_producto_padre")
+  @@index([sfactoryId], map: "idx_sfactory_id")
+  @@index([talle], map: "idx_talle")
+  @@index([color], map: "idx_color")
+  @@index([stockCache], map: "idx_stock")
+  @@map("productos_web")
+}
+
+model ReglaParseo {
+  id                 Int       @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  empresaId          Int       @map("empresa_id") @db.UnsignedInt
+  nombreRegla        String    @map("nombre_regla") @db.VarChar(255)
+  patronRegex        String?   @map("patron_regex") @db.VarChar(500)
+  posicionNombre     String?   @map("posicion_nombre") @db.VarChar(100)
+  posicionColor      String?   @map("posicion_color") @db.VarChar(100)
+  posicionTalle      String?   @map("posicion_talle") @db.VarChar(100)
+  aplicarARubroId    Int?      @map("aplicar_a_rubro_id") @db.UnsignedInt
+  aplicarASubrubroId Int?      @map("aplicar_a_subrubro_id") @db.UnsignedInt
+  aplicarALinea      String?   @map("aplicar_a_linea") @db.VarChar(255)
+  activa             Boolean   @default(true) @map("activa")
+  prioridad          Int       @default(0) @map("prioridad")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
+  empresa            Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "reglas_parseo_ibfk_1")
+  aplicarARubro      Rubro?    @relation("RubroReglasParseo", fields: [aplicarARubroId], references: [id], onUpdate: NoAction, map: "reglas_parseo_ibfk_2")
+  aplicarASubrubro   Subrubro? @relation("SubrubroReglasParseo", fields: [aplicarASubrubroId], references: [id], onUpdate: NoAction, map: "reglas_parseo_ibfk_3")
+
+  @@index([empresaId, activa], map: "idx_empresa_activa")
+  @@index([aplicarARubroId], map: "aplicar_a_rubro_id")
+  @@index([aplicarASubrubroId], map: "aplicar_a_subrubro_id")
+  @@map("reglas_parseo")
+}
+
+model CampoPersonalizado {
+  id          Int       @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  empresaId   Int       @map("empresa_id") @db.UnsignedInt
+  nombre      String    @map("nombre") @db.VarChar(255)
+  clave       String    @map("clave") @db.VarChar(100)
+  tipo        TipoCampo @map("tipo")
+  opciones    Json?     @map("opciones")
+  requerido   Boolean   @default(false) @map("requerido")
+  orden       Int       @default(0) @map("orden")
+  activo      Boolean   @default(true) @map("activo")
+  descripcion String?   @map("descripcion") @db.VarChar(500)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamp(0)
+  empresa     Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "campos_personalizados_ibfk_1")
+
+  @@unique([empresaId, clave], name: "unique_empresa_clave", map: "unique_empresa_clave")
+  @@index([empresaId, activo], map: "idx_empresa_activo")
+  @@map("campos_personalizados")
+}
+
+model Cliente {
+  id              Int       @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  empresaId       Int       @map("empresa_id") @db.UnsignedInt
+  sfactoryId      Int       @unique(map: "sfactory_id") @map("sfactory_id")
+  sfactoryCodigo  String?   @map("sfactory_codigo") @db.VarChar(100)
+  razonSocial     String    @map("razon_social") @db.VarChar(255)
+  nombre          String?   @map("nombre") @db.VarChar(255)
+  cuit            String?   @map("cuit") @db.VarChar(20)
+  email           String?   @map("email") @db.VarChar(255)
+  telefono        String?   @map("telefono") @db.VarChar(50)
+  domicilioFiscal String?   @map("domicilio_fiscal") @db.VarChar(500)
+  localidadId     Int?      @map("localidad_id")
+  provinciaId     Int?      @map("provincia_id")
+  paisId          Int?      @map("pais_id")
+  datosCompletos  Json?     @map("datos_completos")
+  ultimaSync      DateTime? @map("ultima_sync") @db.Timestamp(0)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
+  empresa         Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "clientes_ibfk_1")
+
+  @@unique([empresaId, sfactoryCodigo], name: "unique_empresa_sfactory", map: "unique_empresa_sfactory")
+  @@index([sfactoryId], map: "idx_sfactory_id")
+  @@index([empresaId], map: "idx_empresa")
+  @@map("clientes")
+}
+
+model Pedido {
+  id                 Int             @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  empresaId          Int             @map("empresa_id") @db.UnsignedInt
+  usuarioId          Int?            @map("usuario_id") @db.UnsignedInt
+  sfactoryOrdenId    Int?            @unique(map: "sfactory_orden_id") @map("sfactory_orden_id")
+  sfactoryEstado     String?         @map("sfactory_estado") @db.VarChar(50)
+  estadoInterno      EstadoPedido    @default(carrito) @map("estado_interno")
+  clienteNombre      String          @map("cliente_nombre") @db.VarChar(255)
+  clienteEmail       String          @map("cliente_email") @db.VarChar(255)
+  clienteTelefono    String?         @map("cliente_telefono") @db.VarChar(50)
+  clienteDireccion   String?         @map("cliente_direccion") @db.Text
+  subtotal           Decimal         @map("subtotal") @db.Decimal(10, 2)
+  iva                Decimal         @default(0.00) @map("iva") @db.Decimal(10, 2)
+  total              Decimal         @map("total") @db.Decimal(10, 2)
+  observaciones      String?         @map("observaciones") @db.Text
+  metodoContacto     MetodoContacto? @map("metodo_contacto")
+  mensajeWhatsapp    String?         @map("mensaje_whatsapp") @db.Text
+  fechaPedido        DateTime        @default(now()) @map("fecha_pedido") @db.Timestamp(0)
+  fechaEnvioSfactory DateTime?       @map("fecha_envio_sfactory") @db.Timestamp(0)
+  fechaConfirmacion  DateTime?       @map("fecha_confirmacion") @db.Timestamp(0)
+  createdAt          DateTime        @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt          DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
+  empresa            Empresa         @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "pedidos_ibfk_1")
+  usuario            Usuario?        @relation(fields: [usuarioId], references: [id], onUpdate: NoAction, map: "pedidos_ibfk_2")
+  items              PedidoItem[]
+
+  @@index([empresaId, estadoInterno], map: "idx_empresa_estado")
+  @@index([sfactoryOrdenId], map: "idx_sfactory_orden")
+  @@index([fechaPedido], map: "idx_fecha")
+  @@index([usuarioId], map: "usuario_id")
+  @@map("pedidos")
+}
+
+model PedidoItem {
+  id              Int            @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  pedidoId        Int            @map("pedido_id") @db.UnsignedInt
+  productoWebId   Int?           @map("producto_web_id") @db.UnsignedInt
+  productoPadreId Int?           @map("producto_padre_id") @db.UnsignedInt
+  sfactoryItemId  Int            @map("sfactory_item_id")
+  nombre          String         @map("nombre") @db.VarChar(500)
+  codigo          String         @map("codigo") @db.VarChar(100)
+  cantidad        Decimal        @map("cantidad") @db.Decimal(10, 2)
+  precioUnitario  Decimal        @map("precio_unitario") @db.Decimal(10, 2)
+  subtotal        Decimal        @map("subtotal") @db.Decimal(10, 2)
+  talle           String?        @map("talle") @db.VarChar(50)
+  color           String?        @map("color") @db.VarChar(100)
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamp(0)
+  pedido          Pedido         @relation(fields: [pedidoId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "pedidos_items_ibfk_1")
+  productoWeb     ProductoWeb?   @relation(fields: [productoWebId], references: [id], onUpdate: NoAction, map: "pedidos_items_ibfk_2")
+  productoPadre   ProductoPadre? @relation(fields: [productoPadreId], references: [id], onUpdate: NoAction, map: "pedidos_items_ibfk_3")
+
+  @@index([pedidoId], map: "idx_pedido")
+  @@index([productoPadreId], map: "producto_padre_id")
+  @@index([productoWebId], map: "producto_web_id")
+  @@map("pedidos_items")
+}
+
+model Sesion {
+  id        Int      @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  usuarioId Int      @map("usuario_id") @db.UnsignedInt
+  token     String   @unique(map: "token") @map("token") @db.VarChar(500)
+  ipAddress String?  @map("ip_address") @db.VarChar(45)
+  userAgent String?  @map("user_agent") @db.VarChar(500)
+  expiresAt DateTime @map("expires_at") @db.Timestamp(0)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+  usuario   Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "sesiones_ibfk_1")
+
+  @@index([token], map: "idx_token")
+  @@index([usuarioId], map: "idx_usuario")
+  @@map("sesiones")
+}
+
+model SyncLog {
+  id                  Int        @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  empresaId           Int        @map("empresa_id") @db.UnsignedInt
+  tipo                TipoSync   @map("tipo")
+  accion              AccionSync @map("accion")
+  registrosProcesados Int?       @map("registros_procesados")
+  registrosExitosos   Int?       @map("registros_exitosos")
+  registrosFallidos   Int?       @map("registros_fallidos")
+  detalles            Json?      @map("detalles")
+  createdAt           DateTime   @default(now()) @map("created_at") @db.Timestamp(0)
+  empresa             Empresa    @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "sync_logs_ibfk_1")
+
+  @@index([empresaId, tipo], map: "idx_empresa_tipo")
+  @@index([createdAt], map: "idx_fecha")
+  @@map("sync_logs")
+}
+
+enum Rol {
+  admin
+  vendedor
+  cliente
+}
+
+enum AgrupacionTipo {
+  automatico
+  manual
+  hibrido
+}
+
+enum TipoCampo {
+  texto
+  numero
+  select
+  fecha
+  boolean
+}
+
+enum EstadoPedido {
+  carrito
+  enviado
+  confirmado
+  despachado
+  entregado
+  cancelado
+}
+
+enum MetodoContacto {
+  whatsapp
+  email
+  telefono
+}
+
+enum TipoSync {
+  productos
+  clientes
+  pedidos
+  precios
+  stock
+  agrupacion
+  rubros
+  subrubros
+}
+
+enum AccionSync {
+  sync_completo
+  update
+  create
+  error
+  parseo
+}
