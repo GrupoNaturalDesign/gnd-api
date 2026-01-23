@@ -11,18 +11,42 @@ import { ZodError } from 'zod';
 export class RubroController {
   async getAll(req: Request, res: Response, next: NextFunction) {
     try {
+      // Obtener empresaId del middleware (inyectado automáticamente)
+      const empresaId = (req as any).empresaId;
+      
+      if (!empresaId) {
+        return res.status(400).json({
+          success: false,
+          error: 'Sesión no inicializada',
+          message: 'No se pudo obtener empresaId. Inicializa la sesión con SFactory primero.',
+          details: [
+            {
+              code: 'session_not_initialized',
+              path: ['empresaId'],
+              message: 'Inicializa la sesión con POST /api/sfactory/auth/init',
+            },
+          ],
+        });
+      }
+      
       const params = RubroQueryParamsSchema.parse(req.query) as Parameters<typeof rubroService.getAll>[0];
-      const rubros = await rubroService.getAll(params);
+      const resultado = await rubroService.getAll({ ...params, empresaId });
 
       const response: ApiResponse = {
         success: true,
-        data: rubros,
+        data: resultado.data,
         message: 'Rubros obtenidos exitosamente',
       };
 
-      res.json(response);
+      // Agregar información de paginación a la respuesta
+      res.json({
+        ...response,
+        pagination: resultado.pagination,
+      });
     } catch (error) {
+      console.error('[RubroController.getAll] Error:', error);
       if (error instanceof ZodError) {
+        console.error('[RubroController.getAll] Errores de validación:', error.issues);
         return res.status(400).json({
           success: false,
           error: 'Parámetros de consulta inválidos',
@@ -61,7 +85,7 @@ export class RubroController {
         return res.status(400).json({
           success: false,
           error: 'ID inválido',
-          details: error.errors,
+          details: error.issues,
         });
       }
       next(error);
@@ -70,9 +94,19 @@ export class RubroController {
 
   async getBySlug(req: Request, res: Response, next: NextFunction) {
     try {
+      const empresaId = (req as any).empresaId;
+      
+      if (!empresaId) {
+        return res.status(400).json({
+          success: false,
+          error: 'Sesión no inicializada',
+          message: 'No se pudo obtener empresaId. Inicializa la sesión con SFactory primero.',
+        });
+      }
+      
       const params = RubroBySlugParamsSchema.parse({
         slug: req.params.slug,
-        empresaId: req.query.empresaId,
+        empresaId,
       });
 
       const rubro = await rubroService.getBySlug(params.slug, params.empresaId);
@@ -95,7 +129,7 @@ export class RubroController {
         return res.status(400).json({
           success: false,
           error: 'Parámetros inválidos',
-          details: error.errors,
+          details: error.issues,
         });
       }
       next(error);

@@ -1,5 +1,6 @@
 // src/services/sfactory/sfactory.client.ts
 import dotenv from 'dotenv';
+import { sfactoryAuthService } from './sfactory-auth.service';
 
 dotenv.config();
 
@@ -15,107 +16,38 @@ interface SFactoryAuthBody {
   parameters: any;
 }
 
-interface SFactoryAuthResponse {
-  result: {
-    success: boolean;
-    state: number;
-    message: string;
-  };
-  response: {
-    token: string;
-  };
-}
-
 export class SFactoryClient {
   private baseURL: string;
-  private token: string | null = null;
-  private tokenExpiry: Date | null = null;
 
-  // Credenciales desde .env
+  // Credenciales desde .env (solo las necesarias para las peticiones)
   private readonly userdev: string;
   private readonly password: string;
-  private readonly userFactory: string;
-  private readonly passwordFactory: string;
   private readonly companyKey: string;
 
   constructor() {
     this.baseURL = process.env.SFACTORY_API_URL || '';
     this.userdev = process.env.SFACTORY_USERDEV || '';
     this.password = process.env.SFACTORY_PASSWORD || '';
-    this.userFactory = process.env.SFACTORY_USER_FACTORY || '';
-    this.passwordFactory = process.env.SFACTORY_PASSWORD_FACTORY || '';
     this.companyKey = process.env.SFACTORY_COMPANY_KEY || '';
   }
 
   /**
-   * Obtener token de autenticación
-   */
-  private async authenticate(): Promise<string> {
-    // Si ya tenemos un token válido, retornarlo
-    if (this.token && this.tokenExpiry && new Date() < this.tokenExpiry) {
-      return this.token;
-    }
-
-    try {
-      const body = {
-        auth: {
-          userdev: this.userdev,
-          password: this.password,
-        },
-        service: {
-          module: 'Auth',
-          method: 'sign_in',
-        },
-        parameters: {
-          user_factory: this.userFactory,
-          password_factory: this.passwordFactory,
-          companyKey: this.companyKey,
-        },
-      };
-
-      console.log('🔐 Autenticando con S-Factory...');
-      
-      const url = `${this.baseURL}/sign_in`;
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = (await response.json()) as SFactoryAuthResponse;
-
-      if (!data.result.success) {
-        throw new Error(`Error de autenticación: ${data.result.message}`);
-      }
-
-      this.token = data.response.token;
-      // Token expira en 30 días según documentación
-      this.tokenExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-
-      console.log('✅ Autenticación exitosa');
-      return this.token;
-
-    } catch (error: any) {
-      console.error('❌ Error de autenticación:', error.message);
-      throw new Error('No se pudo autenticar con S-Factory');
-    }
-  }
-
-  /**
    * Hacer petición a S-Factory
+   * 
+   * La autenticación se maneja automáticamente a través de sfactoryAuthService:
+   * - Verifica si hay token válido en BD
+   * - Autentica si es necesario
+   * - Guarda el token en BD
    */
   async request<T = any>(
     module: string,
     method: string,
-    parameters: any = {}
+    parameters: any = {},
+    companyKey?: string
   ): Promise<T> {
-    const token = await this.authenticate();
+    // Usar companyKey proporcionado o el del constructor
+    const key = companyKey || this.companyKey;
+    const token = await sfactoryAuthService.getToken(key);
 
     const body: SFactoryAuthBody & { credential: any } = {
       auth: {
@@ -128,15 +60,25 @@ export class SFactoryClient {
       },
       credential: {
         data: token,
-        companyKey: this.companyKey,
+        companyKey: key,
       },
       parameters,
     };
 
     try {
-      console.log(`📡 Llamando a S-Factory: ${module}.${method}`);
+      // Para peticiones de datos, usar el endpoint /main
+      let apiURL = this.baseURL;
+      if (!apiURL.endsWith('/main') && !apiURL.endsWith('/main/')) {
+        if (apiURL.endsWith('/api')) {
+          apiURL = `${apiURL}/main`;
+        } else if (apiURL.endsWith('/api/')) {
+          apiURL = `${apiURL}main`;
+        } else {
+          apiURL = `${apiURL}/main`;
+        }
+      }
       
-      const response = await fetch(this.baseURL, {
+      const response = await fetch(apiURL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -145,26 +87,36 @@ export class SFactoryClient {
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        const errorText = await response.text();
+        throw new Error(`HTTP error! status: ${response.status} - ${errorText}`);
       }
 
-      const data = (await response.json()) as {
-        result: {
+      const rawData = await response.json();
+
+      // La respuesta de SFactory tiene estructura:
+      // { service: {...}, result: { success: boolean, ... }, response: { data: [...] } }
+      const data = rawData as {
+        result?: {
           success: boolean;
           message?: string;
+          state?: number;
         };
-        response: T;
+        response?: T | { data?: any };
       };
 
-      if (!data.result.success) {
+      // Verificar si result existe y si success es false
+      if (data.result && !data.result.success) {
         throw new Error(data.result.message || 'Error en S-Factory API');
       }
 
-      console.log(`✅ Respuesta exitosa de ${module}.${method}`);
-      return data.response;
+      // Extraer los datos de response
+      if (!data.response) {
+        throw new Error('La respuesta de S-Factory no contiene el campo "response"');
+      }
+
+      return data.response as T;
 
     } catch (error: any) {
-      console.error(`❌ Error en ${module}.${method}:`, error.message);
       throw error;
     }
   }

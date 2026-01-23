@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "nodemon src/index.ts",
+    "dev": "nodemon --exec ts-node --transpile-only src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "prisma:generate": "prisma generate",
@@ -16,12 +16,19 @@
   "license": "ISC",
   "description": "Backend API para e-commerce de uniformes empresariales con sincronización S-Factory",
   "dependencies": {
+    "@prisma/adapter-mariadb": "^7.1.0",
     "@prisma/client": "^7.0.1",
+    "@types/multer": "^2.0.0",
+    "basic-ftp": "^5.0.5",
     "cors": "^2.8.5",
+    "csv-parse": "^6.1.0",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "helmet": "^8.1.0",
+    "mariadb": "^3.4.5",
     "morgan": "^1.10.1",
+    "multer": "^2.0.2",
+    "xlsx": "^0.18.5",
     "zod": "^4.1.13"
   },
   "devDependencies": {

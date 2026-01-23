@@ -4,10 +4,11 @@ import type {
   SubrubroQueryParams,
   SubrubroConRubro,
   SubrubroBySlugParams,
+  PaginatedResponse,
 } from '../types';
 
 export class SubrubroService {
-  async getAll(params: SubrubroQueryParams): Promise<SubrubroConRubro[]> {
+  async getAll(params: SubrubroQueryParams & { empresaId: number }): Promise<PaginatedResponse<SubrubroConRubro>> {
     const where: Prisma.SubrubroWhereInput = {
       empresaId: params.empresaId,
       ...(params.rubroId && {
@@ -38,11 +39,34 @@ export class SubrubroService {
       },
     };
 
-    return prisma.subrubro.findMany({
+    // Paginación: valores por defecto
+    const page = params.page || 1;
+    const limit = params.limit || 20;
+    const skip = params.offset !== undefined ? params.offset : (page - 1) * limit;
+
+    // Obtener total de registros
+    const total = await prisma.subrubro.count({ where });
+
+    // Obtener datos paginados
+    const data = await prisma.subrubro.findMany({
       where,
       include,
       orderBy: { orden: 'asc' },
-    }) as Promise<SubrubroConRubro[]>;
+      skip,
+      take: limit,
+    }) as SubrubroConRubro[];
+
+    const totalPages = Math.ceil(total / limit);
+
+    return {
+      data,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+      },
+    };
   }
 
   async getById(

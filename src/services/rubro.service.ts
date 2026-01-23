@@ -4,10 +4,11 @@ import type {
   RubroQueryParams,
   RubroConSubrubros,
   RubroBySlugParams,
+  PaginatedResponse,
 } from '../types';
 
 export class RubroService {
-  async getAll(params: RubroQueryParams): Promise<RubroConSubrubros[]> {
+  async getAll(params: RubroQueryParams & { empresaId: number }): Promise<PaginatedResponse<RubroConSubrubros>> {
     const where: Prisma.RubroWhereInput = {
       empresaId: params.empresaId,
       ...(params.visibleWeb !== undefined && {
@@ -35,11 +36,34 @@ export class RubroService {
       },
     };
 
-    return prisma.rubro.findMany({
+    // Paginación: valores por defecto
+    const page = params.page || 1;
+    const limit = params.limit || 20;
+    const skip = params.offset !== undefined ? params.offset : (page - 1) * limit;
+
+    // Obtener total de registros
+    const total = await prisma.rubro.count({ where });
+
+    // Obtener datos paginados
+    const data = await prisma.rubro.findMany({
       where,
       include,
       orderBy: { orden: 'asc' },
-    }) as Promise<RubroConSubrubros[]>;
+      skip,
+      take: limit,
+    }) as RubroConSubrubros[];
+
+    const totalPages = Math.ceil(total / limit);
+
+    return {
+      data,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+      },
+    };
   }
 
   async getById(
