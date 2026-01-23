@@ -10,6 +10,9 @@ import {
   extraerCodigoAgrupacion,
 } from '../producto-agrupacion.service';
 
+// Type helper for Prisma transaction
+type PrismaTransaction = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
 function generarSlug(text: string, codigo: string): string {
   const base = text
     .toLowerCase()
@@ -67,14 +70,14 @@ export class ProductoSyncService {
         select: { id: true, sfactoryId: true },
       });
       const rubrosMap = new Map<number, number>(); // Map<sfactoryId, localId>
-      rubros.forEach(r => rubrosMap.set(r.sfactoryId, r.id));
+      rubros.forEach((r: { id: number; sfactoryId: number }) => rubrosMap.set(r.sfactoryId, r.id));
 
       const subrubros = await prisma.subrubro.findMany({
         where: { empresaId },
         select: { id: true, sfactoryId: true },
       });
       const subrubrosMap = new Map<number, number>(); // Map<sfactoryId, localId>
-      subrubros.forEach(s => subrubrosMap.set(s.sfactoryId, s.id));
+      subrubros.forEach((s: { id: number; sfactoryId: number }) => subrubrosMap.set(s.sfactoryId, s.id));
 
       let insertados = 0;
       let actualizados = 0;
@@ -87,7 +90,7 @@ export class ProductoSyncService {
       for (let i = 0; i < productos.length; i += BATCH_SIZE) {
         const batch = productos.slice(i, i + BATCH_SIZE);
         
-        await prisma.$transaction(async (tx) => {
+        await prisma.$transaction(async (tx: PrismaTransaction) => {
           for (const producto of batch) {
             try {
               const codigo = String((producto as any).Codigo || (producto as any).codigo || '');
@@ -222,17 +225,30 @@ export class ProductoSyncService {
         select: { id: true, sfactoryId: true, nombre: true },
       });
       const rubrosMap = new Map<number, number>(); // Map<sfactoryId, localId>
-      rubros.forEach(r => rubrosMap.set(r.sfactoryId, r.id));
+      rubros.forEach((r: { id: number; sfactoryId: number; nombre: string }) => rubrosMap.set(r.sfactoryId, r.id));
 
       const subrubros = await prisma.subrubro.findMany({
         where: { empresaId },
         select: { id: true, sfactoryId: true, rubroId: true, nombre: true },
       });
       const subrubrosMap = new Map<number, number>(); // Map<sfactoryId, localId>
-      subrubros.forEach(s => subrubrosMap.set(s.sfactoryId, s.id));
+      subrubros.forEach((s: { id: number; sfactoryId: number; rubroId: number | null; nombre: string }) => subrubrosMap.set(s.sfactoryId, s.id));
 
       // Convertir a formato SFactoryProduct para usar las funciones existentes
-      const productos: SFactoryProduct[] = productosSfactory.map((p) => ({
+      const productos: SFactoryProduct[] = productosSfactory.map((p: {
+        codigo: string;
+        descripcion: string | null;
+        descrip_corta: string | null;
+        rubro: string | null;
+        subrubro: string | null;
+        linea: string | null;
+        material: string | null;
+        um: string | null;
+        precio_venta: Prisma.Decimal | null;
+        barcode: string | null;
+        activo: string;
+        sfactory_id: number | null;
+      }) => ({
         Codigo: p.codigo,
         Descripcion: p.descripcion || p.descrip_corta || p.codigo,
         Rubro: p.rubro || null,
@@ -266,7 +282,7 @@ export class ProductoSyncService {
       for (let i = 0; i < gruposArray.length; i += BATCH_SIZE) {
         const batch = gruposArray.slice(i, i + BATCH_SIZE);
         
-        await prisma.$transaction(async (tx) => {
+        await prisma.$transaction(async (tx: PrismaTransaction) => {
           for (const [codigoAgrupacion, grupo] of batch) {
             try {
               if (!codigoAgrupacion || grupo.productos.length === 0) {
@@ -281,7 +297,7 @@ export class ProductoSyncService {
 
               // Buscar el producto en productos_sfactory para obtener datos completos
               const codigoPrimerProducto = String((primerProducto as any).Codigo || '');
-              const productoSfactory = productosSfactory.find(p => p.codigo === codigoPrimerProducto);
+              const productoSfactory = productosSfactory.find((p: { codigo: string }) => p.codigo === codigoPrimerProducto);
 
               // Usar el nombre base del grupo (sin color, talle ni sexo)
               const nombre = grupo.nombreBase || codigoAgrupacion;
@@ -377,7 +393,7 @@ export class ProductoSyncService {
                   }
 
                   // Buscar el producto en productos_sfactory para obtener datos completos
-                  const productoSfactoryItem = productosSfactory.find(p => p.codigo === codigoStr);
+                  const productoSfactoryItem = productosSfactory.find((p: { codigo: string }) => p.codigo === codigoStr);
 
                   // Usar color del parseo o de campos directos
                   let color = item.color;

@@ -803,7 +803,7 @@ export class ProductoService {
         });
         
         // Variantes simplificadas
-        const variantes: VariantePublicada[] = variantesActivas.map((v) => {
+        const variantes: VariantePublicada[] = variantesActivas.map((v: any) => {
           const imagenColor = v.color ? imagenesPorColor.get(v.color) || null : null;
           
           return {
@@ -823,29 +823,29 @@ export class ProductoService {
         const colores = Array.from(
           new Set(
             variantesActivas
-              .map((v) => v.color)
-              .filter((c): c is string => !!c)
+              .map((v: any) => v.color)
+              .filter((c: string | null): c is string => !!c)
           )
         ).sort();
         
         const talles = Array.from(
           new Set(
             variantesActivas
-              .map((v) => v.talle)
-              .filter((t): t is string => !!t)
+              .map((v: any) => v.talle)
+              .filter((t: string | null): t is string => !!t)
           )
         ).sort();
         
         const stockTotal = variantesActivas.reduce(
-          (sum, v) => sum + Number(v.stockCache || 0),
+          (sum: number, v: any) => sum + Number(v.stockCache || 0),
           0
         );
         
         // Obtener sexo común de todas las variantes (las variantes heredan el sexo del producto padre)
         // Si todas las variantes tienen el mismo sexo, usar ese. Si no, usar null.
         const sexos = variantesActivas
-          .map((v) => v.sexo)
-          .filter((s): s is string => !!s);
+          .map((v: any) => v.sexo)
+          .filter((s: string | null): s is string => !!s);
         const sexoUnico: string | null = sexos.length > 0 && new Set(sexos).size === 1 
           ? (sexos[0] ?? null)
           : null;
