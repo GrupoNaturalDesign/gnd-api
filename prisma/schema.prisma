@@ -4,7 +4,6 @@ generator client {
 
 datasource db {
   provider = "mysql"
-  url      = env("DATABASE_URL")
 }
 
 model Empresa {
@@ -15,6 +14,9 @@ model Empresa {
   cuit                 String?              @map("cuit") @db.VarChar(20)
   sfactoryCompanyKey   String               @map("sfactory_company_key") @db.VarChar(255)
   sfactoryUserId       Int?                 @map("sfactory_user_id")
+  sfactoryToken        String?              @map("sfactory_token") @db.Text
+  sfactoryTokenExpiry  DateTime?            @map("sfactory_token_expiry") @db.Timestamp(0)
+  sfactoryCompanyId    Int?                 @map("sfactory_company_id")
   activa               Boolean              @default(true) @map("activa")
   logoUrl              String?              @map("logo_url") @db.VarChar(500)
   colores              Json?                @map("colores")
@@ -25,6 +27,7 @@ model Empresa {
   pedidos              Pedido[]
   productosPadre       ProductoPadre[]
   productosWeb         ProductoWeb[]
+  productosSfactory    ProductoSfactory[]  @relation("ProductoSfactoryEmpresa")
   reglasParseo         ReglaParseo[]
   rubros               Rubro[]
   subrubros            Subrubro[]
@@ -38,11 +41,10 @@ model Empresa {
 
 model Usuario {
   id                Int      @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  auth0UserId       String?  @unique(map: "auth0_user_id") @map("auth0_user_id") @db.VarChar(255)
   empresaId         Int      @map("empresa_id") @db.UnsignedInt
   email             String   @unique(map: "email") @map("email") @db.VarChar(255)
-  passwordHash      String   @map("password_hash") @db.VarChar(255)
   rol               Rol      @default(cliente) @map("rol")
-  auth0UserId       String?  @unique(map: "auth0_user_id") @map("auth0_user_id") @db.VarChar(255)
   provider          String?  @map("provider") @db.VarChar(50)
   nombre            String   @map("nombre") @db.VarChar(255)
   apellido          String?  @map("apellido") @db.VarChar(255)
@@ -78,6 +80,7 @@ model Rubro {
   createdAt                 DateTime        @default(now()) @map("created_at") @db.Timestamp(0)
   updatedAt                 DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
   productosPadre            ProductoPadre[]
+  productosSfactory         ProductoSfactory[] @relation("ProductoSfactoryRubro")
   reglasParseoAplicarARubro ReglaParseo[]   @relation("RubroReglasParseo")
   empresa                   Empresa         @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "rubros_ibfk_1")
   subrubros                 Subrubro[]
@@ -106,6 +109,7 @@ model Subrubro {
   createdAt                    DateTime        @default(now()) @map("created_at") @db.Timestamp(0)
   updatedAt                    DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
   productosPadre               ProductoPadre[]
+  productosSfactory            ProductoSfactory[] @relation("ProductoSfactorySubrubro")
   reglasParseoAplicarASubrubro ReglaParseo[]   @relation("SubrubroReglasParseo")
   empresa                      Empresa         @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "subrubros_ibfk_1")
   rubro                        Rubro           @relation(fields: [rubroId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "subrubros_ibfk_2")
@@ -163,33 +167,72 @@ model ProductoPadre {
 }
 
 model ProductoWeb {
-  id                  Int           @id @default(autoincrement()) @map("id") @db.UnsignedInt
-  empresaId           Int           @map("empresa_id") @db.UnsignedInt
-  productoPadreId     Int           @map("producto_padre_id") @db.UnsignedInt
-  sfactoryId          Int           @map("sfactory_id")
-  sfactoryCodigo      String        @map("sfactory_codigo") @db.VarChar(100)
-  sfactoryBarcode     String?       @map("sfactory_barcode") @db.VarChar(100)
-  descripcionCompleta String        @map("descripcion_completa") @db.VarChar(500)
-  talle               String?       @map("talle") @db.VarChar(50)
-  color               String?       @map("color") @db.VarChar(100)
-  precioCache         Decimal?      @map("precio_cache") @db.Decimal(10, 2)
-  stockCache          Decimal?      @map("stock_cache") @db.Decimal(10, 2)
-  ultimaSyncSfactory  DateTime?     @map("ultima_sync_sfactory") @db.Timestamp(0)
-  activoSfactory      Boolean       @default(true) @map("activo_sfactory")
-  imagenVariante      String?       @map("imagen_variante") @db.VarChar(500)
-  createdAt           DateTime      @default(now()) @map("created_at") @db.Timestamp(0)
-  updatedAt           DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
+  id                  Int              @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  empresaId           Int              @map("empresa_id") @db.UnsignedInt
+  productoPadreId     Int              @map("producto_padre_id") @db.UnsignedInt
+  sfactoryId          Int              @map("sfactory_id")
+  sfactoryCodigo      String           @map("sfactory_codigo") @db.VarChar(100)
+  sfactoryBarcode     String?          @map("sfactory_barcode") @db.VarChar(100)
+  nombre              String           @map("nombre") @db.VarChar(500)
+  descripcionCompleta String?          @map("descripcion_completa") @db.VarChar(500)
+  sexo                String?          @map("sexo") @db.VarChar(20)
+  talle               String?          @map("talle") @db.VarChar(50)
+  color               String?          @map("color") @db.VarChar(100)
+  precioCache         Decimal?         @map("precio_cache") @db.Decimal(10, 2)
+  stockCache          Decimal?         @map("stock_cache") @db.Decimal(10, 2)
+  ultimaSyncSfactory  DateTime?        @map("ultima_sync_sfactory") @db.Timestamp(0)
+  activoSfactory      Boolean          @default(true) @map("activo_sfactory")
+  imagenVariante      String?          @map("imagen_variante") @db.VarChar(500)
+  createdAt           DateTime         @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt           DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
   pedidosItems        PedidoItem[]
-  empresa             Empresa       @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "productos_web_ibfk_1")
-  productoPadre       ProductoPadre @relation(fields: [productoPadreId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "productos_web_ibfk_2")
+  imagenes            ProductoImagen[]
+  empresa             Empresa          @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "productos_web_ibfk_1")
+  productoPadre       ProductoPadre    @relation(fields: [productoPadreId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "productos_web_ibfk_2")
+  precios             ProductoPrecio[]
 
   @@unique([empresaId, sfactoryCodigo], name: "unique_empresa_sfactory", map: "unique_empresa_sfactory")
   @@index([productoPadreId], map: "idx_producto_padre")
   @@index([sfactoryId], map: "idx_sfactory_id")
   @@index([talle], map: "idx_talle")
   @@index([color], map: "idx_color")
+  @@index([sexo], map: "idx_sexo")
   @@index([stockCache], map: "idx_stock")
   @@map("productos_web")
+}
+
+model ProductoImagen {
+  id            Int         @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  productoWebId Int         @map("producto_web_id") @db.UnsignedInt
+  color         String?     @map("color") @db.VarChar(100)
+  imagenUrl     String      @map("imagen_url") @db.VarChar(500)
+  orden         Int         @default(1) @map("orden")
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt     DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
+  productoWeb   ProductoWeb @relation(fields: [productoWebId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "producto_imagenes_ibfk_1")
+
+  @@index([productoWebId], map: "idx_producto_web")
+  @@index([color], map: "idx_color")
+  @@map("producto_imagenes")
+}
+
+model ProductoPrecio {
+  id             Int         @id @default(autoincrement())
+  productoWebId  Int         @map("producto_web_id") @db.UnsignedInt
+  tipoCliente    TipoCliente @map("tipo_cliente")
+  precio         Decimal     @db.Decimal(10, 2)
+  precioLista    Decimal     @map("precio_lista") @db.Decimal(10, 2)
+  precioTransfer Decimal?    @map("precio_transfer") @db.Decimal(10, 2)
+  precioFinanciado Decimal?  @map("precio_financiado") @db.Decimal(10, 2)
+  cuotasFinanciado Int?      @map("cuotas_financiado") @default(3) @db.UnsignedInt
+  precioSinImp   Decimal?    @map("precio_sin_imp") @db.Decimal(10, 2)
+  minimoUnidades Decimal?    @db.Decimal(10, 2)
+
+  productoWeb ProductoWeb @relation(fields: [productoWebId], references: [id], onDelete: Cascade)
+
+  @@unique([productoWebId, tipoCliente], name: "unique_producto_tipo")
+  @@index([tipoCliente], map: "idx_tipo_cliente")
+  @@map("productos_precios")
 }
 
 model ReglaParseo {
@@ -217,6 +260,85 @@ model ReglaParseo {
   @@map("reglas_parseo")
 }
 
+model ProductoSfactory {
+  id                   Int       @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  empresaId            Int       @map("empresa_id") @db.UnsignedInt
+  codigo               String    @map("codigo") @db.VarChar(50)
+  barcode              String?   @map("barcode") @db.VarChar(50)
+  descrip_corta        String?   @map("descrip_corta") @db.Text
+  descripcion          String?   @map("descripcion") @db.Text
+  detalle              String?   @map("detalle") @db.Text
+  tipo                 String?   @map("tipo") @db.VarChar(5)
+  stockeable           String?   @map("stockeable") @db.VarChar(5)
+  stock_minimo         Decimal?  @map("stock_minimo") @db.Decimal(10,2)
+  stock_maximo         Decimal?  @map("stock_maximo") @db.Decimal(10,2)
+  precio_costo         Decimal?  @map("precio_costo") @db.Decimal(10,2)
+  precio_venta         Decimal?  @map("precio_venta") @db.Decimal(10,2)
+  iva                  Decimal?  @map("iva") @db.Decimal(5,2)
+  utilidad_planificada Decimal?  @map("utilidad_planificada") @db.Decimal(10,2)
+  utilidad_real        Decimal?  @map("utilidad_real") @db.Decimal(10,2)
+  rubro                String?   @map("rubro") @db.VarChar(100)
+  subrubro             String?   @map("subrubro") @db.VarChar(100)
+  rubro_id             Int?      @map("rubro_id") @db.UnsignedInt
+  subrubro_id          Int?      @map("subrubro_id") @db.UnsignedInt
+  item_venta           String?   @map("item_venta") @db.VarChar(5)
+  item_compra          String?   @map("item_compra") @db.VarChar(5)
+  item_alquiler        String?   @map("item_alquiler") @db.VarChar(5)
+  cta_ingresos_id      Int?      @map("cta_ingresos_id")
+  cta_egresos_id       Int?      @map("cta_egresos_id")
+  cta_costo_venta_id   Int?      @map("cta_costo_venta_id")
+  codigo_externo       String?   @map("codigo_externo") @db.VarChar(50)
+  ctb_id               Int?
+  peso_bruto           Decimal?  @map("peso_bruto") @db.Decimal(10,2)
+  volumen              Decimal?  @map("volumen") @db.Decimal(10,2)
+  ancho                Decimal?  @map("ancho") @db.Decimal(10,2)
+  largo                Decimal?  @map("largo") @db.Decimal(10,2)
+  activo               String?   @map("activo") @db.VarChar(5)
+  um                   String?   @map("um") @db.VarChar(10)
+  um_compra            String?   @map("um_compra") @db.VarChar(10)
+  um_id                Int?
+  um_compra_id         Int?
+  precio_um_compra     Decimal?  @map("precio_um_compra") @db.Decimal(10,2)
+  extcode_2            String?   @map("extcode_2") @db.VarChar(50)
+  moneda               String?   @map("moneda") @db.VarChar(5)
+  fecha_act_precio     DateTime? @map("fecha_act_precio") @db.Timestamp(0)
+  generico             String?   @map("generico") @db.VarChar(5)
+  grupo_gasto          String?   @map("grupo_gasto") @db.VarChar(100)
+  lista_material       String?   @map("lista_material") @db.Text
+  deposito_consumo     String?   @map("deposito_consumo") @db.VarChar(50)
+  item_lote            String?   @map("item_lote") @db.VarChar(5)
+  item_serie           String?   @map("item_serie") @db.VarChar(5)
+  fabricar             String?   @map("fabricar") @db.VarChar(5)
+  a_pedido             String?   @map("a_pedido") @db.VarChar(5)
+  clase                String?   @map("clase") @db.VarChar(50)
+  linea                String?   @map("linea") @db.VarChar(100)
+  material             String?   @map("material") @db.VarChar(100)
+  proveedor            String?   @map("proveedor") @db.VarChar(100)
+  precio_costo_xlm     Decimal?  @map("precio_costo_xlm") @db.Decimal(10,2)
+  flowint_sincro_enabled String? @map("flowint_sincro_enabled") @db.VarChar(5)
+  deposito_ubicacion   String?   @map("deposito_ubicacion") @db.VarChar(50)
+  actualizar_precio_xoc String?  @map("actualizar_precio_xoc") @db.VarChar(5)
+  fecha_alta           DateTime? @map("fecha_alta") @db.Timestamp(0)
+  usuario              String?   @map("usuario") @db.VarChar(100)
+  sfactory_id          Int?      @map("sfactory_id")
+  ultima_sync          DateTime? @map("ultima_sync") @db.Timestamp(0)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
+
+  // Relaciones
+  empresa    Empresa      @relation("ProductoSfactoryEmpresa", fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  rubroRel   Rubro?       @relation("ProductoSfactoryRubro", fields: [rubro_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  subrubroRel Subrubro?   @relation("ProductoSfactorySubrubro", fields: [subrubro_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@unique([empresaId, codigo], name: "unique_empresa_codigo")
+  @@index([empresaId], map: "idx_empresa")
+  @@index([rubro_id], map: "idx_rubro")
+  @@index([subrubro_id], map: "idx_subrubro")
+  @@index([codigo], map: "idx_codigo")
+  @@map("productos_sfactory")
+}
+
 model CampoPersonalizado {
   id          Int       @id @default(autoincrement()) @map("id") @db.UnsignedInt
   empresaId   Int       @map("empresa_id") @db.UnsignedInt
@@ -239,26 +361,37 @@ model CampoPersonalizado {
 model Cliente {
   id              Int       @id @default(autoincrement()) @map("id") @db.UnsignedInt
   empresaId       Int       @map("empresa_id") @db.UnsignedInt
-  sfactoryId      Int       @unique(map: "sfactory_id") @map("sfactory_id")
+  sfactoryId      Int?      @unique(map: "sfactory_id") @map("sfactory_id")
   sfactoryCodigo  String?   @map("sfactory_codigo") @db.VarChar(100)
   razonSocial     String    @map("razon_social") @db.VarChar(255)
   nombre          String?   @map("nombre") @db.VarChar(255)
   cuit            String?   @map("cuit") @db.VarChar(20)
+  tipo            String?   @map("tipo") @db.VarChar(10)
+  activo          Boolean   @default(true) @map("activo")
   email           String?   @map("email") @db.VarChar(255)
   telefono        String?   @map("telefono") @db.VarChar(50)
+  movil           String?   @map("movil") @db.VarChar(50)
   domicilioFiscal String?   @map("domicilio_fiscal") @db.VarChar(500)
   localidadId     Int?      @map("localidad_id")
   provinciaId     Int?      @map("provincia_id")
   paisId          Int?      @map("pais_id")
+  cpFiscal        String?   @map("cp_fiscal") @db.VarChar(20)
+  categoriaFiscal String?   @map("categoria_fiscal") @db.VarChar(50)
+  codigoExterno   String?   @map("codigo_externo") @db.VarChar(100)
   datosCompletos  Json?     @map("datos_completos")
   ultimaSync      DateTime? @map("ultima_sync") @db.Timestamp(0)
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamp(0)
   updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
   empresa         Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "clientes_ibfk_1")
 
+  tipoCliente        TipoCliente @default(minorista) @map("tipo_cliente")
+  aprobado           Boolean     @default(false) @map("aprobado")
+  minimoCompraGlobal Decimal?    @map("minimo_compra_global") @db.Decimal(10, 2)
+
   @@unique([empresaId, sfactoryCodigo], name: "unique_empresa_sfactory", map: "unique_empresa_sfactory")
   @@index([sfactoryId], map: "idx_sfactory_id")
   @@index([empresaId], map: "idx_empresa")
+  @@index([activo], map: "idx_activo")
   @@map("clientes")
 }
 
@@ -269,6 +402,7 @@ model Pedido {
   sfactoryOrdenId    Int?            @unique(map: "sfactory_orden_id") @map("sfactory_orden_id")
   sfactoryEstado     String?         @map("sfactory_estado") @db.VarChar(50)
   estadoInterno      EstadoPedido    @default(carrito) @map("estado_interno")
+  tipoCliente        TipoCliente     @default(minorista) @map("tipo_cliente")
   clienteNombre      String          @map("cliente_nombre") @db.VarChar(255)
   clienteEmail       String          @map("cliente_email") @db.VarChar(255)
   clienteTelefono    String?         @map("cliente_telefono") @db.VarChar(50)
@@ -403,4 +537,9 @@ enum AccionSync {
   create
   error
   parseo
+}
+
+enum TipoCliente {
+  minorista
+  mayorista
 }
