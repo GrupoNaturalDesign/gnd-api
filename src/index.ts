@@ -11,12 +11,6 @@ app.listen(PORT, () => {
   console.log('🚀 Servidor corriendo en puerto', PORT);
   console.log(`📍 API disponible en http://localhost:${PORT}/api`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log('');
-  console.log('Endpoints disponibles:');
-  console.log(`  - Health: http://localhost:${PORT}/api/health`);
-  console.log(`  - Rubros: http://localhost:${PORT}/api/rubros`);
-  console.log(`  - Subrubros: http://localhost:${PORT}/api/subrubros`);
-  console.log(`  - Productos: http://localhost:${PORT}/api/productos`);
 });
 
 // Graceful shutdown
