@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { productoService } from '../services';
 import { sfactoryService } from '../services/sfactory/sfactory.service';
 import { sfactoryAuthService } from '../services/sfactory/sfactory-auth.service';
+import { CacheService } from '../services/cache.service';
 import {
   ProductoQueryParamsSchema,
   ProductoByIdParamsSchema,
@@ -42,7 +43,25 @@ export class ProductoController {
         });
       }
       
-      const resultado = await productoService.getAll(params as Parameters<typeof productoService.getAll>[0] & { empresaId: number });
+      // Construir key de cache
+      const cacheKey = CacheService.buildProductKey('list', {
+        empresaId: params.empresaId,
+        rubroId: params.rubroId,
+        subrubroId: params.subrubroId,
+        publicado: params.publicado,
+        destacado: params.destacado,
+        search: params.search,
+        page: params.page,
+        limit: params.limit,
+        includeVariantes: params.includeVariantes,
+      });
+
+      // Cache-aside pattern
+      const resultado = await CacheService.cacheAside(
+        cacheKey,
+        () => productoService.getAll(params as Parameters<typeof productoService.getAll>[0] & { empresaId: number }),
+        180 // 3 minutos para listas
+      );
 
       const response: ApiResponse = {
         success: true,
@@ -75,7 +94,19 @@ export class ProductoController {
       });
 
       const includeVariantes = req.query.includeVariantes === 'true';
-      const producto = await productoService.getById(id, includeVariantes);
+      
+      // Construir key de cache
+      const cacheKey = CacheService.buildProductKey('padre', {
+        id,
+        includeVariantes,
+      });
+
+      // Cache-aside pattern
+      const producto = await CacheService.cacheAside(
+        cacheKey,
+        () => productoService.getById(id, includeVariantes),
+        300 // 5 minutos para detalles
+      );
 
       if (!producto) {
         return res.status(404).json({
@@ -106,19 +137,19 @@ export class ProductoController {
     try {
       // Decodificar el slug que viene de la URL (Express ya lo decodifica, pero por si acaso)
       const rawSlugParam = req.params.slug;
-      const rawSlug: string = Array.isArray(rawSlugParam) ? rawSlugParam[0] : (rawSlugParam || '');
+      const rawSlug: string = Array.isArray(rawSlugParam) ? String(rawSlugParam[0] || '') : String(rawSlugParam || '');
       let decodedSlug: string = rawSlug;
       
       try {
         // Intentar decodificar si está codificado
-        decodedSlug = decodeURIComponent(String(rawSlug));
+        decodedSlug = decodeURIComponent(rawSlug);
       } catch (e) {
         // Si falla la decodificación, usar el slug tal cual
         decodedSlug = rawSlug;
       }
       
       // Asegurar que decodedSlug no sea undefined
-      const cleanSlug = String(decodedSlug || '').trim();
+      const cleanSlug = decodedSlug.trim();
       
       if (!cleanSlug) {
         return res.status(400).json({
@@ -140,10 +171,19 @@ export class ProductoController {
       });
 
       const includeVariantes = params.includeVariantes !== false;
-      const producto = await productoService.getBySlug(
-        params.slug,
-        params.empresaId,
-        includeVariantes
+      
+      // Construir key de cache
+      const cacheKey = CacheService.buildProductKey('slug', {
+        slug: params.slug,
+        empresaId: params.empresaId,
+        includeVariantes,
+      });
+
+      // Cache-aside pattern
+      const producto = await CacheService.cacheAside(
+        cacheKey,
+        () => productoService.getBySlug(params.slug, params.empresaId, includeVariantes),
+        300 // 5 minutos para detalles
       );
 
       if (!producto) {
@@ -188,8 +228,8 @@ export class ProductoController {
   async getVariantes(req: Request, res: Response, next: NextFunction) {
     try {
       const idParam = req.params.id;
-      const idString: string = Array.isArray(idParam) ? String(idParam[0]) : String(idParam || '0');
-      const productoPadreId = parseInt(idString);
+      const idString: string = Array.isArray(idParam) ? String(idParam[0] || '0') : String(idParam || '0');
+      const productoPadreId = parseInt(idString, 10);
 
       if (isNaN(productoPadreId)) {
         return res.status(400).json({
@@ -198,8 +238,16 @@ export class ProductoController {
         });
       }
 
-      const variantes = await productoService.getVariantesByProductoPadreId(
-        productoPadreId
+      // Construir key de cache
+      const cacheKey = CacheService.buildProductKey('variantes', {
+        productoPadreId,
+      });
+
+      // Cache-aside pattern
+      const variantes = await CacheService.cacheAside(
+        cacheKey,
+        () => productoService.getVariantesByProductoPadreId(productoPadreId),
+        300 // 5 minutos
       );
 
       const response: ApiResponse = {
@@ -230,6 +278,9 @@ export class ProductoController {
         });
       }
 
+      // Invalidar cache de productos
+      await CacheService.invalidateProducts(producto.empresaId, producto.id);
+
       const response: ApiResponse = {
         success: true,
         data: producto,
@@ -255,7 +306,19 @@ export class ProductoController {
         id: req.params.id,
       });
 
+      // Obtener empresaId antes de eliminar (si es posible)
+      let empresaId: number | undefined;
+      try {
+        const producto = await productoService.getById(id, false);
+        empresaId = producto?.empresaId;
+      } catch {
+        // Si falla, continuar sin empresaId
+      }
+
       await productoService.delete(id);
+
+      // Invalidar cache de productos
+      await CacheService.invalidateProducts(empresaId, id);
 
       const response: ApiResponse = {
         success: true,
@@ -329,8 +392,21 @@ export class ProductoController {
         });
       }
 
-      // Obtener productos activos
-      const resultado = await productoService.getActivos(params);
+      // Construir key de cache
+      const cacheKey = CacheService.buildProductKey('activos', {
+        empresaId: params.empresaId,
+        rubroId: params.rubroId,
+        subrubroId: params.subrubroId,
+        page: params.page,
+        limit: params.limit,
+      });
+
+      // Cache-aside pattern
+      const resultado = await CacheService.cacheAside(
+        cacheKey,
+        () => productoService.getActivos(params),
+        180 // 3 minutos para listas
+      );
 
       // Respuesta exitosa
       const response: ApiResponse = {
@@ -403,8 +479,21 @@ export class ProductoController {
         });
       }
 
-      // Obtener productos destacados (reutiliza getPublicadosOptimizado)
-      const resultado = await productoService.getDestacados(params);
+      // Construir key de cache
+      const cacheKey = CacheService.buildProductKey('destacados', {
+        empresaId: params.empresaId,
+        rubroId: params.rubroId,
+        subrubroId: params.subrubroId,
+        page: params.page,
+        limit: params.limit,
+      });
+
+      // Cache-aside pattern
+      const resultado = await CacheService.cacheAside(
+        cacheKey,
+        () => productoService.getDestacados(params),
+        180 // 3 minutos para listas
+      );
 
       // Respuesta exitosa normalizada con paginación
       // TypeScript no reconoce correctamente la herencia, pero el tipo tiene data y pagination
@@ -473,8 +562,21 @@ export class ProductoController {
         });
       }
 
-      // Obtener productos publicados optimizados
-      const resultado = await productoService.getPublicadosOptimizado(params);
+      // Construir key de cache
+      const cacheKey = CacheService.buildProductKey('publicados', {
+        empresaId: params.empresaId,
+        rubroId: params.rubroId,
+        subrubroId: params.subrubroId,
+        page: params.page,
+        limit: params.limit,
+      });
+
+      // Cache-aside pattern
+      const resultado = await CacheService.cacheAside(
+        cacheKey,
+        () => productoService.getPublicadosOptimizado(params),
+        180 // 3 minutos para listas
+      );
 
       // Respuesta exitosa normalizada con paginación
       // TypeScript no reconoce correctamente la herencia, pero el tipo tiene data y pagination
@@ -561,6 +663,9 @@ export class ProductoController {
 
       // Crear producto en SFactory y sincronizar
       const producto = await productoService.crearProducto(body, empresaId);
+
+      // Invalidar cache de productos
+      await CacheService.invalidateProducts(empresaId, producto.id);
 
       const response: ApiResponse = {
         success: true,
@@ -860,6 +965,9 @@ export class ProductoController {
         });
       }
 
+      // Invalidar cache de productos
+      await CacheService.invalidateProducts(producto.empresaId, producto.id);
+
       const response: ApiResponse = {
         success: true,
         data: producto,
@@ -923,6 +1031,13 @@ export class ProductoController {
         updateData,
         empresaId
       );
+
+      // Invalidar cache de productos (variante afecta al producto padre)
+      if (resultado?.productoPadreId) {
+        await CacheService.invalidateProducts(empresaId, resultado.productoPadreId);
+      } else {
+        await CacheService.invalidateProducts(empresaId);
+      }
 
       const response: ApiResponse = {
         success: true,
@@ -1045,6 +1160,9 @@ export class ProductoController {
 
       // Actualizar producto en SFactory y sincronizar
       const producto = await productoService.actualizarProducto(itemId, editData, empresaId);
+
+      // Invalidar cache de productos
+      await CacheService.invalidateProducts(empresaId, producto.id);
 
       const response: ApiResponse = {
         success: true,

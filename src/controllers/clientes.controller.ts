@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { clientesService } from '../services/clientes.service';
+import { CacheService } from '../services/cache.service';
 import type { ApiResponse } from '../types';
 import { ZodError } from 'zod';
 
@@ -29,12 +30,21 @@ export class ClientesController {
           ? req.query.activo === 'true'
           : undefined;
 
-      const resultado = await clientesService.listar(empresaId, {
+      // Construir key de cache
+      const cacheKey = CacheService.buildClientKey('list', {
+        empresaId,
         page,
         limit,
         search,
         activo,
       });
+
+      // Cache-aside pattern
+      const resultado = await CacheService.cacheAside(
+        cacheKey,
+        () => clientesService.listar(empresaId, { page, limit, search, activo }),
+        180 // 3 minutos para listas
+      );
 
       const response: ApiResponse = {
         success: true,
@@ -80,7 +90,8 @@ export class ClientesController {
           message: 'El ID es requerido',
         });
       }
-      const id = parseInt(idParam, 10);
+      const idString = Array.isArray(idParam) ? idParam[0] : idParam;
+      const id = parseInt(idString, 10);
       if (isNaN(id)) {
         return res.status(400).json({
           success: false,
@@ -89,7 +100,18 @@ export class ClientesController {
         });
       }
 
-      const cliente = await clientesService.getById(id, empresaId);
+      // Construir key de cache
+      const cacheKey = CacheService.buildClientKey('id', {
+        id,
+        empresaId,
+      });
+
+      // Cache-aside pattern
+      const cliente = await CacheService.cacheAside(
+        cacheKey,
+        () => clientesService.getById(id, empresaId),
+        300 // 5 minutos para detalles
+      );
 
       if (!cliente) {
         return res.status(404).json({
@@ -142,6 +164,9 @@ export class ClientesController {
       }
 
       const cliente = await clientesService.crear(datosCliente, empresaId);
+
+      // Invalidar cache de clientes
+      await CacheService.invalidateClients(empresaId, cliente.id);
 
       const response: ApiResponse = {
         success: true,

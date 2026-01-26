@@ -176,7 +176,7 @@ export class ProductImageService {
       ],
     });
 
-    return images.map((img) => ({
+    return images.map((img: { id: number; productoWebId: number; color: string | null; imagenUrl: string; orden: number; createdAt: Date; updatedAt: Date }) => ({
       id: img.id,
       productoWebId: img.productoWebId,
       color: img.color,
@@ -216,8 +216,8 @@ export class ProductImageService {
     });
 
     return images
-      .map((img) => img.color)
-      .filter((color): color is string => color !== null);
+      .map((img: { color: string | null }) => img.color)
+      .filter((color: string | null): color is string => color !== null);
   }
 
   /**
@@ -281,7 +281,7 @@ export class ProductImageService {
       ],
     });
 
-    return images.map((img) => ({
+    return images.map((img: { id: number; productoWebId: number; color: string | null; imagenUrl: string; orden: number; createdAt: Date; updatedAt: Date }) => ({
       id: img.id,
       productoWebId: img.productoWebId,
       color: img.color,

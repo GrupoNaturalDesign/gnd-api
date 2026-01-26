@@ -1,14 +1,20 @@
 import dotenv from 'dotenv';
 import app from './app';
+import { redisService } from './lib/redis';
 
 // Load environment variables
 dotenv.config();
 
-const PORT = process.env.PORT || 3002;
+// Inicializar Redis (lazy, se conecta cuando se use por primera vez)
+redisService.getClient().catch((error) => {
+  console.warn('⚠️  Redis no disponible, continuando sin cache:', error.message);
+});
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
+
+const PORT = process.env.PORT || 3002;
 
 // Start server
 app.listen(PORT, () => {

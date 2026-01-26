@@ -248,8 +248,8 @@ export class ProductoService {
       });
 
       // Buscar coincidencia case-insensitive
-      const found = allProducts.find((p: { id: number; slug: string | null }) => 
-        p.slug && String(p.slug).toLowerCase().trim() === cleanSlug.toLowerCase()
+      const found = allProducts.find((p: { id: number; slug: string | null }): boolean => 
+        p.slug !== null && String(p.slug).toLowerCase().trim() === cleanSlug.toLowerCase()
       );
 
       if (found) {
@@ -404,11 +404,12 @@ export class ProductoService {
       }
     }
 
-    // 1. Asegurar que um_id tenga un valor por defecto si no se proporciona
-    // SFactory requiere um_id, valor por defecto común es 1 (unidad estándar)
+    // 1. Asegurar que um_id y moneda_id tengan valores por defecto si no se proporcionan
+    // SFactory requiere um_id y moneda_id, valores por defecto comunes son 1
     const dataConUmId = {
       ...data,
       um_id: data.um_id ?? 1,
+      moneda_id: data.moneda_id ?? 1, // Moneda por defecto: 1
     };
 
     // 2. Crear en SFactory
@@ -453,11 +454,20 @@ export class ProductoService {
     
     try {
       productoCompleto = await sfactoryService.leerItem({ codigo });
+      // CRÍTICO: Asegurar que rubro_id y subrubro_id estén presentes
+      // SFactory puede no devolver estos campos al leer, así que usamos los valores originales enviados
+      if (data.rubro_id) {
+        (productoCompleto as any).rubro_id = (productoCompleto as any).rubro_id || (productoCompleto as any).RubroId || data.rubro_id;
+      }
+      if (data.subrubro_id) {
+        (productoCompleto as any).subrubro_id = (productoCompleto as any).subrubro_id || (productoCompleto as any).SubrubroId || data.subrubro_id;
+      }
     } catch (error) {
       // Si leerItem falla, usar la respuesta de creación directamente
       // o construir un objeto básico con los datos que tenemos
       console.warn(`[ProductoService.crearProducto] No se pudo leer el producto ${codigo} desde SFactory, usando datos de creación`);
       // Construir objeto básico desde data y sfactoryResponse
+      // CRÍTICO: Incluir rubro_id y subrubro_id para que se guarden correctamente
       productoCompleto = {
         Codigo: codigo,
         Descripcion: data.descripcion || data.descrip_corta || '',
@@ -465,6 +475,8 @@ export class ProductoService {
         PrecioCosto: data.precio_costo || null,
         PrecioVenta: data.precio_venta || null,
         id: sfactoryResponse.id || null,
+        rubro_id: data.rubro_id || null,
+        subrubro_id: data.subrubro_id || null,
       } as SFactoryProduct;
     }
 
@@ -874,7 +886,7 @@ export class ProductoService {
       orderBy.push({ destacado: 'desc' }, { orden: 'asc' }, { nombre: 'asc' });
     }
 
-    // Include optimizado - traer TODO lo necesario en una query
+    // Include optimizado - traer SOLO lo necesario con selects específicos
     const include: Prisma.ProductoPadreInclude = {
       rubro: {
         where: { visibleWeb: true },
@@ -893,6 +905,7 @@ export class ProductoService {
           ...(params.tieneStock && { stockCache: { gt: 0 } }),
         },
         orderBy: [{ color: 'asc' }, { talle: 'asc' }],
+        // OPTIMIZACIÓN: Include con selects específicos en niveles anidados para reducir datos
         include: {
           imagenes: {
             where: { orden: 1 },
@@ -901,11 +914,18 @@ export class ProductoService {
           },
           precios: {
             where: {
-              tipoCliente: 'minorista', // Por defecto usar precios minorista para ecommerce
+              tipoCliente: 'minorista',
             },
             take: 1,
+            select: {
+              precioLista: true,
+              precioTransfer: true,
+              precioFinanciado: true,
+              precioSinImp: true,
+            },
           },
         },
+        // Nota: ProductoWeb trae todos sus campos, pero los includes anidados están optimizados
       },
     };
 
@@ -923,8 +943,8 @@ export class ProductoService {
 
     // Transformar a estructura optimizada
     const productosFormateados: ProductoPublicado[] = productos
-      .filter((p) => p.productosWeb && p.productosWeb.length > 0)
-      .map((producto): ProductoPublicado => {
+      .filter((p: any) => p.productosWeb && p.productosWeb.length > 0)
+      .map((producto: any): ProductoPublicado => {
         // Type assertion para acceder a las propiedades
         const p = producto as any;
         const variantesActivas = p.productosWeb || [];
@@ -932,11 +952,11 @@ export class ProductoService {
         // Obtener precios de ProductoPrecio si están disponibles, sino usar precioCache
         const preciosProductoPrecio = variantesActivas
           .flatMap((v: any) => v.precios || [])
-          .filter((p: any) => p.precioLista > 0);
+          .filter((p: any): boolean => Number(p.precioLista) > 0);
         
         const preciosCache = variantesActivas
-          .map((v: any) => Number(v.precioCache || 0))
-          .filter((p: number) => p > 0);
+          .map((v: any): number => Number(v.precioCache || 0))
+          .filter((p: number): boolean => p > 0);
         
         // Priorizar precios de ProductoPrecio, sino usar precioCache
         let precioLista: number | null = null;
@@ -946,8 +966,8 @@ export class ProductoService {
         
         if (preciosProductoPrecio.length > 0) {
           // Usar precios de ProductoPrecio (ya calculados)
-          const precioMinPrecio = Math.min(...preciosProductoPrecio.map((p: any) => Number(p.precioLista)));
-          const precioObj = preciosProductoPrecio.find((p: any) => Number(p.precioLista) === precioMinPrecio);
+          const precioMinPrecio = Math.min(...preciosProductoPrecio.map((p: any): number => Number(p.precioLista)));
+          const precioObj = preciosProductoPrecio.find((p: any): boolean => Number(p.precioLista) === precioMinPrecio);
           
           if (precioObj) {
             precioLista = Number(precioObj.precioLista);
@@ -986,11 +1006,11 @@ export class ProductoService {
         // Crear mapa de imágenes por color (todas las variantes del mismo color usan la misma imagen)
         const imagenesPorColor = new Map<string, string | null>();
         
-        variantesActivas.forEach((v: any) => {
+        variantesActivas.forEach((v: any): void => {
           if (v.color && !imagenesPorColor.has(v.color)) {
             // Buscar primera variante de este color con imagen
             const varianteConImagen = variantesActivas.find(
-              (v2: any) => v2.color === v.color && 
+              (v2: any): boolean => v2.color === v.color && 
               (v2.imagenes?.[0]?.imagenUrl || v2.imagenVariante)
             );
             
@@ -1002,7 +1022,7 @@ export class ProductoService {
         });
         
         // Variantes simplificadas
-        const variantes: VariantePublicada[] = variantesActivas.map((v: any) => {
+        const variantes: VariantePublicada[] = variantesActivas.map((v: any): VariantePublicada => {
           const imagenColor = v.color ? imagenesPorColor.get(v.color) || null : null;
           
           return {
@@ -1022,7 +1042,7 @@ export class ProductoService {
         const colores = Array.from(
           new Set(
             variantesActivas
-              .map((v: any) => v.color)
+              .map((v: any): string | null => v.color)
               .filter((c: string | null): c is string => !!c)
           )
         ).sort();
@@ -1030,20 +1050,20 @@ export class ProductoService {
         const talles = Array.from(
           new Set(
             variantesActivas
-              .map((v: any) => v.talle)
+              .map((v: any): string | null => v.talle)
               .filter((t: string | null): t is string => !!t)
           )
         ).sort();
         
         const stockTotal = variantesActivas.reduce(
-          (sum: number, v: any) => sum + Number(v.stockCache || 0),
+          (sum: number, v: any): number => sum + Number(v.stockCache || 0),
           0
         );
         
         // Obtener sexo común de todas las variantes (las variantes heredan el sexo del producto padre)
         // Si todas las variantes tienen el mismo sexo, usar ese. Si no, usar null.
         const sexos = variantesActivas
-          .map((v: any) => v.sexo)
+          .map((v: any): string | null => v.sexo)
           .filter((s: string | null): s is string => !!s);
         const sexoUnico: string | null = sexos.length > 0 && new Set(sexos).size === 1 
           ? (sexos[0] ?? null)
@@ -1516,15 +1536,12 @@ export class ProductoService {
         um_compra_id: true,
         item_lote: true,
         item_serie: true,
-        usa_vencimiento: true,
+        // usa_vencimiento, clase_id, linea_id, moneda_id no existen en el schema
         cta_ingresos_id: true,
         cta_costo_venta_id: true,
         cta_egresos_id: true,
         barcode: true,
-        clase_id: true,
-        linea_id: true,
         ctb_id: true,
-        moneda_id: true,
       },
     });
 
@@ -1540,7 +1557,7 @@ export class ProductoService {
       detalle: productoSfactory.detalle || null,
       precio_costo: productoSfactory.precio_costo ? Number(productoSfactory.precio_costo) : null,
       precio_venta: productoSfactory.precio_venta ? Number(productoSfactory.precio_venta) : null,
-      moneda_id: productoSfactory.moneda_id ? Number(productoSfactory.moneda_id) : null,
+      moneda_id: null, // No existe en el schema
       utilidad_planificada: productoSfactory.utilidad_planificada ? Number(productoSfactory.utilidad_planificada) : null,
       iva: productoSfactory.iva ? Number(productoSfactory.iva) : null,
       stock_minimo: productoSfactory.stock_minimo ? Number(productoSfactory.stock_minimo) : null,
@@ -1555,14 +1572,12 @@ export class ProductoService {
       um_compra_id: productoSfactory.um_compra_id || null,
       usa_lote: productoSfactory.item_lote === 'S',
       usa_serie: productoSfactory.item_serie === 'S' ? 1 : 0,
-      usa_vencimiento: null,
-      cta_ingresos_id: null,
-      cta_costo_venta_id: null,
-      cta_egresos_id: null,
+      // usa_vencimiento, clase_id, linea_id, moneda_id no existen en el schema
+      cta_ingresos_id: productoSfactory.cta_ingresos_id || null,
+      cta_costo_venta_id: productoSfactory.cta_costo_venta_id || null,
+      cta_egresos_id: productoSfactory.cta_egresos_id || null,
       barcode: productoSfactory.barcode || null,
-      clase_id: null,
-      linea_id: null,
-      ctb_id: null,
+      ctb_id: productoSfactory.ctb_id || null,
     };
 
       return {
@@ -1634,6 +1649,7 @@ export class ProductoService {
     id: number;
     talle: string | null;
     color: string | null;
+    productoPadreId: number;
   }> {
     // Validar que la nueva combinación no exista en el mismo producto padre
     const variante = await prisma.productoWeb.findUnique({
@@ -1686,6 +1702,7 @@ export class ProductoService {
         id: true,
         talle: true,
         color: true,
+        productoPadreId: true,
       },
     });
 

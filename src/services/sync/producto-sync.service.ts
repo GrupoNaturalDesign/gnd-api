@@ -9,6 +9,7 @@ import {
   parsearNombreProducto,
   extraerCodigoAgrupacion,
 } from '../producto-agrupacion.service';
+import { calcularTodosLosPrecios, CUOTAS_FINANCIADO_DEFAULT } from '../../config/precios.config';
 
 // Type helper for Prisma transaction
 type PrismaTransaction = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
@@ -70,14 +71,14 @@ export class ProductoSyncService {
         select: { id: true, sfactoryId: true },
       });
       const rubrosMap = new Map<number, number>(); // Map<sfactoryId, localId>
-      rubros.forEach((r: { id: number; sfactoryId: number }) => rubrosMap.set(r.sfactoryId, r.id));
+      rubros.forEach((r: { id: number; sfactoryId: number }): void => { rubrosMap.set(r.sfactoryId, r.id); });
 
       const subrubros = await prisma.subrubro.findMany({
         where: { empresaId },
         select: { id: true, sfactoryId: true },
       });
       const subrubrosMap = new Map<number, number>(); // Map<sfactoryId, localId>
-      subrubros.forEach((s: { id: number; sfactoryId: number }) => subrubrosMap.set(s.sfactoryId, s.id));
+      subrubros.forEach((s: { id: number; sfactoryId: number }): void => { subrubrosMap.set(s.sfactoryId, s.id); });
 
       let insertados = 0;
       let actualizados = 0;
@@ -90,7 +91,7 @@ export class ProductoSyncService {
       for (let i = 0; i < productos.length; i += BATCH_SIZE) {
         const batch = productos.slice(i, i + BATCH_SIZE);
         
-        await prisma.$transaction(async (tx: PrismaTransaction) => {
+        await prisma.$transaction(async (tx: PrismaTransaction): Promise<void> => {
           for (const producto of batch) {
             try {
               const codigo = String((producto as any).Codigo || (producto as any).codigo || '');
@@ -125,6 +126,8 @@ export class ProductoSyncService {
                 stock_maximo: toDecimal((producto as any).StockMax || (producto as any).stockMax),
                 precio_costo: toDecimal((producto as any).PrecioCosto || (producto as any).precioCosto),
                 precio_venta: toDecimal((producto as any).PrecioVenta || (producto as any).precioVenta),
+                // Stock: se guarda en productos_sfactory si viene de SFactory
+                // Nota: Stock puede venir como campo directo o necesitar obtenerse de otra fuente
                 iva: toDecimal((producto as any).Iva || (producto as any).iva),
                 utilidad_planificada: toDecimal((producto as any).UtilidadP || (producto as any).utilidadP),
                 utilidad_real: toDecimal((producto as any).UtilidadR || (producto as any).utilidadR),
@@ -225,17 +228,17 @@ export class ProductoSyncService {
         select: { id: true, sfactoryId: true, nombre: true },
       });
       const rubrosMap = new Map<number, number>(); // Map<sfactoryId, localId>
-      rubros.forEach((r: { id: number; sfactoryId: number; nombre: string }) => rubrosMap.set(r.sfactoryId, r.id));
+      rubros.forEach((r: { id: number; sfactoryId: number; nombre: string }): void => { rubrosMap.set(r.sfactoryId, r.id); });
 
       const subrubros = await prisma.subrubro.findMany({
         where: { empresaId },
         select: { id: true, sfactoryId: true, rubroId: true, nombre: true },
       });
       const subrubrosMap = new Map<number, number>(); // Map<sfactoryId, localId>
-      subrubros.forEach((s: { id: number; sfactoryId: number; rubroId: number | null; nombre: string }) => subrubrosMap.set(s.sfactoryId, s.id));
+      subrubros.forEach((s: { id: number; sfactoryId: number; rubroId: number | null; nombre: string }): void => { subrubrosMap.set(s.sfactoryId, s.id); });
 
       // Convertir a formato SFactoryProduct para usar las funciones existentes
-      const productos: SFactoryProduct[] = productosSfactory.map((p) => {
+      const productos: SFactoryProduct[] = productosSfactory.map((p: any): SFactoryProduct => {
         const activo = p.activo || 'S';
         return {
           Codigo: p.codigo,
@@ -264,15 +267,21 @@ export class ProductoSyncService {
       let productosPadreCreados = 0;
       let productosWebCreados = 0;
 
-      // REDUCIR tamaño del batch y AUMENTAR timeout
-      const BATCH_SIZE = 20; // Reducido de 50 a 20
+      // OPTIMIZACIÓN: Crear Map indexado por código ANTES del loop para búsquedas O(1)
+      const productosSfactoryMap = new Map<string, typeof productosSfactory[0]>();
+      productosSfactory.forEach((p: any): void => {
+        productosSfactoryMap.set(p.codigo, p);
+      });
+
+      // Aumentar batch size para mejor performance
+      const BATCH_SIZE = 50; // Aumentado de 20 a 50 para mejor throughput
       const TRANSACTION_TIMEOUT = 30000; // 30 segundos
       const gruposArray = Array.from(grupos.entries());
       
       for (let i = 0; i < gruposArray.length; i += BATCH_SIZE) {
         const batch = gruposArray.slice(i, i + BATCH_SIZE);
         
-        await prisma.$transaction(async (tx: PrismaTransaction) => {
+        await prisma.$transaction(async (tx: PrismaTransaction): Promise<void> => {
           for (const [codigoAgrupacion, grupo] of batch) {
             try {
               if (!codigoAgrupacion || grupo.productos.length === 0) {
@@ -285,9 +294,9 @@ export class ProductoSyncService {
                 continue;
               }
 
-              // Buscar el producto en productos_sfactory para obtener datos completos
+              // OPTIMIZACIÓN: Usar Map para búsqueda O(1) en lugar de .find() O(n)
               const codigoPrimerProducto = String((primerProducto as any).Codigo || '');
-              const productoSfactory = productosSfactory.find((p: { codigo: string }) => p.codigo === codigoPrimerProducto);
+              const productoSfactory = productosSfactoryMap.get(codigoPrimerProducto);
 
               // Usar el nombre base del grupo (sin color, talle ni sexo)
               const nombre = grupo.nombreBase || codigoAgrupacion;
@@ -382,8 +391,8 @@ export class ProductoSyncService {
                     continue;
                   }
 
-                  // Buscar el producto en productos_sfactory para obtener datos completos
-                  const productoSfactoryItem = productosSfactory.find((p: { codigo: string }) => p.codigo === codigoStr);
+                  // OPTIMIZACIÓN: Usar Map para búsqueda O(1) en lugar de .find() O(n)
+                  const productoSfactoryItem = productosSfactoryMap.get(codigoStr);
 
                   // Usar color del parseo o de campos directos
                   let color = item.color;
@@ -418,13 +427,15 @@ export class ProductoSyncService {
                     talle: talle,
                     color: color,
                     precioCache: productoSfactoryItem?.precio_venta ? Number(productoSfactoryItem.precio_venta) : null,
-                    stockCache: null, // Se actualizará desde otra fuente si es necesario
+                    stockCache: (producto as any).Stock !== null && (producto as any).Stock !== undefined 
+                      ? Number((producto as any).Stock) 
+                      : null,
                     ultimaSyncSfactory: productoSfactoryItem?.ultima_sync || new Date(),
                     activoSfactory: productoSfactoryItem?.activo === 'S' || (producto as any).Activo !== false,
                   };
 
                   // Upsert en productos_web
-                  await tx.productoWeb.upsert({
+                  const productoWeb = await tx.productoWeb.upsert({
                     where: {
                       unique_empresa_sfactory: {
                         empresaId: empresaId,
@@ -441,6 +452,45 @@ export class ProductoSyncService {
                       ...datosProductoWeb,
                     },
                   });
+
+                  // Si hay precio_venta, crear/actualizar ProductoPrecio automáticamente dentro de la transacción
+                  if (datosProductoWeb.precioCache && datosProductoWeb.precioCache > 0) {
+                    try {
+                      const precioLista = Number(datosProductoWeb.precioCache);
+                      const preciosDerivados = calcularTodosLosPrecios(precioLista, CUOTAS_FINANCIADO_DEFAULT);
+                      
+                      // Crear precio para minorista (precio lista) dentro de la transacción
+                      await tx.productoPrecio.upsert({
+                        where: {
+                          unique_producto_tipo: {
+                            productoWebId: productoWeb.id,
+                            tipoCliente: 'minorista',
+                          },
+                        },
+                        create: {
+                          productoWebId: productoWeb.id,
+                          tipoCliente: 'minorista',
+                          precioLista,
+                          precio: precioLista,
+                          precioTransfer: preciosDerivados.precioTransfer,
+                          precioFinanciado: preciosDerivados.precioFinanciado,
+                          cuotasFinanciado: CUOTAS_FINANCIADO_DEFAULT,
+                          precioSinImp: preciosDerivados.precioSinImp,
+                        },
+                        update: {
+                          precioLista,
+                          precio: precioLista,
+                          precioTransfer: preciosDerivados.precioTransfer,
+                          precioFinanciado: preciosDerivados.precioFinanciado,
+                          cuotasFinanciado: CUOTAS_FINANCIADO_DEFAULT,
+                          precioSinImp: preciosDerivados.precioSinImp,
+                        },
+                      });
+                    } catch (error: any) {
+                      // Log error pero no fallar la sincronización
+                      console.warn(`[procesarProductosDesdeSfactory] Error creando ProductoPrecio para ${codigoStr}:`, error.message);
+                    }
+                  }
 
                   productosWebCreados++;
                   exitosos++;
@@ -568,18 +618,30 @@ export class ProductoSyncService {
     }
 
     // Resolver rubro_id y subrubro_id locales
-    const sfactoryRubroId = (producto as any).rubro_id || (producto as any).RubroId || null;
-    const sfactorySubrubroId = (producto as any).subrubro_id || (producto as any).SubrubroId || null;
+    // Intentar múltiples variantes de nombres de campos que SFactory puede usar
+    const sfactoryRubroId = (producto as any).rubro_id || (producto as any).RubroId || (producto as any).rubroId || null;
+    const sfactorySubrubroId = (producto as any).subrubro_id || (producto as any).SubrubroId || (producto as any).subrubroId || null;
 
     let rubroIdLocal = null;
     let subrubroIdLocal = null;
 
     if (sfactoryRubroId) {
-      rubroIdLocal = rubrosMap.get(sfactoryRubroId) || null;
+      rubroIdLocal = rubrosMap.get(Number(sfactoryRubroId)) || null;
+      if (!rubroIdLocal) {
+        console.warn(`[syncProductoSfactoryIndividual] No se encontró rubro local para sfactoryId: ${sfactoryRubroId}`);
+      }
     }
 
     if (sfactorySubrubroId) {
-      subrubroIdLocal = subrubrosMap.get(sfactorySubrubroId) || null;
+      subrubroIdLocal = subrubrosMap.get(Number(sfactorySubrubroId)) || null;
+      if (!subrubroIdLocal) {
+        console.warn(`[syncProductoSfactoryIndividual] No se encontró subrubro local para sfactoryId: ${sfactorySubrubroId}`);
+      }
+    }
+
+    // Log para debugging
+    if (sfactoryRubroId || sfactorySubrubroId) {
+      console.log(`[syncProductoSfactoryIndividual] Mapeo de IDs - SFactory rubro_id: ${sfactoryRubroId} -> Local: ${rubroIdLocal}, SFactory subrubro_id: ${sfactorySubrubroId} -> Local: ${subrubroIdLocal}`);
     }
 
     // Mapear datos (misma lógica que syncProductosSfactory)
@@ -703,7 +765,9 @@ export class ProductoSyncService {
       Material: productoSfactory.material || null,
       UM: productoSfactory.um || null,
       PrecioVenta: productoSfactory.precio_venta ? Number(productoSfactory.precio_venta) : null,
-      Stock: null,
+      Stock: (producto as any).Stock !== null && (producto as any).Stock !== undefined 
+        ? Number((producto as any).Stock) 
+        : null,
       Barcode: productoSfactory.barcode || null,
       Activo: productoSfactory.activo === 'S',
       id: productoSfactory.sfactory_id || undefined,
@@ -721,14 +785,18 @@ export class ProductoSyncService {
     }
 
     // Procesar el grupo (reutilizar lógica existente)
+    const TRANSACTION_TIMEOUT = 30000; // 30 segundos
     await prisma.$transaction(async (tx: PrismaTransaction) => {
       const primerProducto = grupo.productos[0]?.producto;
       if (!primerProducto) return;
 
       // Resolver rubro y subrubro
+      // CRÍTICO: Usar primero los IDs locales que ya están mapeados en productos_sfactory
+      // Estos IDs ya fueron mapeados correctamente de SFactory a locales en syncProductoSfactoryIndividual
       let rubroId = productoSfactory.rubro_id || null;
       let subrubroId = productoSfactory.subrubro_id || null;
 
+      // Si no hay IDs mapeados, intentar por nombre como fallback
       if (!rubroId) {
         const rubroNombre = normalizarRubro(productoSfactory.rubro || (primerProducto as any).Rubro);
         if (rubroNombre) {
@@ -754,6 +822,13 @@ export class ProductoSyncService {
           });
           subrubroId = subrubroPorNombre?.id || null;
         }
+      }
+
+      // Log para debugging
+      if (rubroId || subrubroId) {
+        console.log(`[procesarProductoIndividual] Guardando en ProductoPadre - rubroId: ${rubroId}, subrubroId: ${subrubroId}`);
+      } else {
+        console.warn(`[procesarProductoIndividual] ADVERTENCIA: No se encontraron rubroId ni subrubroId para producto ${codigo}`);
       }
 
       const nombre = grupo.nombreBase || codigoAgrupacion;
@@ -826,12 +901,14 @@ export class ProductoSyncService {
           talle,
           color,
           precioCache: productoSfactory.precio_venta ? Number(productoSfactory.precio_venta) : null,
-          stockCache: null,
+          stockCache: (producto as any).Stock !== null && (producto as any).Stock !== undefined 
+            ? Number((producto as any).Stock) 
+            : null,
           ultimaSyncSfactory: productoSfactory.ultima_sync || new Date(),
           activoSfactory: productoSfactory.activo === 'S',
         };
 
-        await tx.productoWeb.upsert({
+        const productoWeb = await tx.productoWeb.upsert({
           where: {
             unique_empresa_sfactory: {
               empresaId,
@@ -848,7 +925,49 @@ export class ProductoSyncService {
             ...datosProductoWeb,
           },
         });
+
+        // Si hay precio_venta, crear/actualizar ProductoPrecio automáticamente dentro de la transacción
+        if (datosProductoWeb.precioCache && datosProductoWeb.precioCache > 0) {
+          try {
+            const precioLista = Number(datosProductoWeb.precioCache);
+            const preciosDerivados = calcularTodosLosPrecios(precioLista, CUOTAS_FINANCIADO_DEFAULT);
+            
+            // Crear precio para minorista (precio lista) dentro de la transacción
+            await tx.productoPrecio.upsert({
+              where: {
+                unique_producto_tipo: {
+                  productoWebId: productoWeb.id,
+                  tipoCliente: 'minorista',
+                },
+              },
+              create: {
+                productoWebId: productoWeb.id,
+                tipoCliente: 'minorista',
+                precioLista,
+                precio: precioLista,
+                precioTransfer: preciosDerivados.precioTransfer,
+                precioFinanciado: preciosDerivados.precioFinanciado,
+                cuotasFinanciado: CUOTAS_FINANCIADO_DEFAULT,
+                precioSinImp: preciosDerivados.precioSinImp,
+              },
+              update: {
+                precioLista,
+                precio: precioLista,
+                precioTransfer: preciosDerivados.precioTransfer,
+                precioFinanciado: preciosDerivados.precioFinanciado,
+                cuotasFinanciado: CUOTAS_FINANCIADO_DEFAULT,
+                precioSinImp: preciosDerivados.precioSinImp,
+              },
+            });
+          } catch (error: any) {
+            // Log error pero no fallar la sincronización
+            console.warn(`[procesarProductoIndividual] Error creando ProductoPrecio para ${codigoStr}:`, error.message);
+          }
+        }
       }
+    }, {
+      timeout: TRANSACTION_TIMEOUT,
+      maxWait: TRANSACTION_TIMEOUT,
     });
   }
 
