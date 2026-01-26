@@ -8,6 +8,7 @@ export interface UpdateProductoWebData {
 export class ProductoWebService {
   /**
    * Actualiza un ProductoWeb
+   * Retorna el producto actualizado con su relación productoPadre
    */
   async update(id: number, data: UpdateProductoWebData) {
     const updateData: any = {};
@@ -23,6 +24,14 @@ export class ProductoWebService {
     const productoWeb = await prisma.productoWeb.update({
       where: { id },
       data: updateData,
+      include: {
+        productoPadre: {
+          select: {
+            id: true,
+            empresaId: true,
+          },
+        },
+      },
     });
 
     return productoWeb;
@@ -30,14 +39,37 @@ export class ProductoWebService {
 
   /**
    * Actualiza múltiples ProductoWeb en lote
+   * Retorna los productos actualizados con sus relaciones (productoPadre)
    */
   async updateBulk(updates: Array<{ id: number } & UpdateProductoWebData>) {
+    // Actualizar todos los productos en paralelo
     const promises = updates.map((update) => {
       const { id, ...data } = update;
       return this.update(id, data);
     });
 
-    return Promise.all(promises);
+    const productosWeb = await Promise.all(promises);
+
+    // Obtener los productos actualizados con sus relaciones (productoPadre) para invalidar cache
+    const productosWebConRelaciones = await Promise.all(
+      productosWeb.map((pw) =>
+        prisma.productoWeb.findUnique({
+          where: { id: pw.id },
+          include: {
+            productoPadre: {
+              select: {
+                id: true,
+                empresaId: true,
+              },
+            },
+          },
+        })
+      )
+    );
+
+    return productosWebConRelaciones.filter((pw) => pw !== null) as Array<
+      typeof productosWebConRelaciones[0] & { productoPadre: { id: number; empresaId: number } }
+    >;
   }
 
   /**

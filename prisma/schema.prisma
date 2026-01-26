@@ -159,10 +159,14 @@ model ProductoPadre {
 
   @@unique([empresaId, codigoAgrupacion], name: "unique_empresa_agrupacion", map: "unique_empresa_agrupacion")
   @@index([empresaId, publicado], map: "idx_publicado")
+  @@index([empresaId, publicado, destacado], map: "idx_empresa_publicado_destacado")
+  @@index([empresaId, publicado, rubroId], map: "idx_empresa_publicado_rubro")
+  @@index([empresaId, publicado, subrubroId], map: "idx_empresa_publicado_subrubro")
   @@index([destacado], map: "idx_destacado")
   @@index([rubroId], map: "idx_rubro")
   @@index([subrubroId], map: "idx_subrubro")
-  @@index([slug], map: "idx_slug")
+  @@index([slug, empresaId], map: "idx_slug_empresa")
+  @@index([empresaId, codigoAgrupacion], map: "idx_empresa_agrupacion")
   @@map("productos_padre")
 }
 
@@ -193,6 +197,12 @@ model ProductoWeb {
 
   @@unique([empresaId, sfactoryCodigo], name: "unique_empresa_sfactory", map: "unique_empresa_sfactory")
   @@index([productoPadreId], map: "idx_producto_padre")
+  @@index([productoPadreId, activoSfactory], map: "idx_padre_activo")
+  @@index([empresaId, activoSfactory], map: "idx_empresa_activo")
+  @@index([empresaId, activoSfactory, sexo], map: "idx_empresa_activo_sexo")
+  @@index([empresaId, activoSfactory, color], map: "idx_empresa_activo_color")
+  @@index([empresaId, activoSfactory, talle], map: "idx_empresa_activo_talle")
+  @@index([empresaId, activoSfactory, stockCache], map: "idx_empresa_activo_stock")
   @@index([sfactoryId], map: "idx_sfactory_id")
   @@index([talle], map: "idx_talle")
   @@index([color], map: "idx_color")
@@ -233,31 +243,6 @@ model ProductoPrecio {
   @@unique([productoWebId, tipoCliente], name: "unique_producto_tipo")
   @@index([tipoCliente], map: "idx_tipo_cliente")
   @@map("productos_precios")
-}
-
-model ReglaParseo {
-  id                 Int       @id @default(autoincrement()) @map("id") @db.UnsignedInt
-  empresaId          Int       @map("empresa_id") @db.UnsignedInt
-  nombreRegla        String    @map("nombre_regla") @db.VarChar(255)
-  patronRegex        String?   @map("patron_regex") @db.VarChar(500)
-  posicionNombre     String?   @map("posicion_nombre") @db.VarChar(100)
-  posicionColor      String?   @map("posicion_color") @db.VarChar(100)
-  posicionTalle      String?   @map("posicion_talle") @db.VarChar(100)
-  aplicarARubroId    Int?      @map("aplicar_a_rubro_id") @db.UnsignedInt
-  aplicarASubrubroId Int?      @map("aplicar_a_subrubro_id") @db.UnsignedInt
-  aplicarALinea      String?   @map("aplicar_a_linea") @db.VarChar(255)
-  activa             Boolean   @default(true) @map("activa")
-  prioridad          Int       @default(0) @map("prioridad")
-  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamp(0)
-  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
-  empresa            Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "reglas_parseo_ibfk_1")
-  aplicarARubro      Rubro?    @relation("RubroReglasParseo", fields: [aplicarARubroId], references: [id], onUpdate: NoAction, map: "reglas_parseo_ibfk_2")
-  aplicarASubrubro   Subrubro? @relation("SubrubroReglasParseo", fields: [aplicarASubrubroId], references: [id], onUpdate: NoAction, map: "reglas_parseo_ibfk_3")
-
-  @@index([empresaId, activa], map: "idx_empresa_activa")
-  @@index([aplicarARubroId], map: "aplicar_a_rubro_id")
-  @@index([aplicarASubrubroId], map: "aplicar_a_subrubro_id")
-  @@map("reglas_parseo")
 }
 
 model ProductoSfactory {
@@ -333,10 +318,38 @@ model ProductoSfactory {
 
   @@unique([empresaId, codigo], name: "unique_empresa_codigo")
   @@index([empresaId], map: "idx_empresa")
+  @@index([empresaId, codigo], map: "idx_empresa_codigo")
+  @@index([empresaId, rubro_id], map: "idx_empresa_rubro")
+  @@index([empresaId, subrubro_id], map: "idx_empresa_subrubro")
   @@index([rubro_id], map: "idx_rubro")
   @@index([subrubro_id], map: "idx_subrubro")
   @@index([codigo], map: "idx_codigo")
+  @@index([ultima_sync], map: "idx_ultima_sync")
   @@map("productos_sfactory")
+}
+model ReglaParseo {
+  id                 Int       @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  empresaId          Int       @map("empresa_id") @db.UnsignedInt
+  nombreRegla        String    @map("nombre_regla") @db.VarChar(255)
+  patronRegex        String?   @map("patron_regex") @db.VarChar(500)
+  posicionNombre     String?   @map("posicion_nombre") @db.VarChar(100)
+  posicionColor      String?   @map("posicion_color") @db.VarChar(100)
+  posicionTalle      String?   @map("posicion_talle") @db.VarChar(100)
+  aplicarARubroId    Int?      @map("aplicar_a_rubro_id") @db.UnsignedInt
+  aplicarASubrubroId Int?      @map("aplicar_a_subrubro_id") @db.UnsignedInt
+  aplicarALinea      String?   @map("aplicar_a_linea") @db.VarChar(255)
+  activa             Boolean   @default(true) @map("activa")
+  prioridad          Int       @default(0) @map("prioridad")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
+  empresa            Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "reglas_parseo_ibfk_1")
+  aplicarARubro      Rubro?    @relation("RubroReglasParseo", fields: [aplicarARubroId], references: [id], onUpdate: NoAction, map: "reglas_parseo_ibfk_2")
+  aplicarASubrubro   Subrubro? @relation("SubrubroReglasParseo", fields: [aplicarASubrubroId], references: [id], onUpdate: NoAction, map: "reglas_parseo_ibfk_3")
+
+  @@index([empresaId, activa], map: "idx_empresa_activa")
+  @@index([aplicarARubroId], map: "aplicar_a_rubro_id")
+  @@index([aplicarASubrubroId], map: "aplicar_a_subrubro_id")
+  @@map("reglas_parseo")
 }
 
 model CampoPersonalizado {
@@ -357,7 +370,6 @@ model CampoPersonalizado {
   @@index([empresaId, activo], map: "idx_empresa_activo")
   @@map("campos_personalizados")
 }
-
 model Cliente {
   id              Int       @id @default(autoincrement()) @map("id") @db.UnsignedInt
   empresaId       Int       @map("empresa_id") @db.UnsignedInt
@@ -394,7 +406,6 @@ model Cliente {
   @@index([activo], map: "idx_activo")
   @@map("clientes")
 }
-
 model Pedido {
   id                 Int             @id @default(autoincrement()) @map("id") @db.UnsignedInt
   empresaId          Int             @map("empresa_id") @db.UnsignedInt
@@ -428,7 +439,6 @@ model Pedido {
   @@index([usuarioId], map: "usuario_id")
   @@map("pedidos")
 }
-
 model PedidoItem {
   id              Int            @id @default(autoincrement()) @map("id") @db.UnsignedInt
   pedidoId        Int            @map("pedido_id") @db.UnsignedInt
@@ -452,7 +462,6 @@ model PedidoItem {
   @@index([productoWebId], map: "producto_web_id")
   @@map("pedidos_items")
 }
-
 model Sesion {
   id        Int      @id @default(autoincrement()) @map("id") @db.UnsignedInt
   usuarioId Int      @map("usuario_id") @db.UnsignedInt
@@ -467,7 +476,6 @@ model Sesion {
   @@index([usuarioId], map: "idx_usuario")
   @@map("sesiones")
 }
-
 model SyncLog {
   id                  Int        @id @default(autoincrement()) @map("id") @db.UnsignedInt
   empresaId           Int        @map("empresa_id") @db.UnsignedInt

@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { productoWebService } from '../services/productoWeb.service';
+import { CacheService } from '../services/cache.service';
 import { handleZodError } from '../utils/validation';
 import { z } from 'zod';
 import type { ApiResponse } from '../types';
@@ -36,7 +37,13 @@ export class ProductoWebController {
 
       const body = UpdateProductoWebSchema.parse(req.body);
 
+      const empresaId = (req as any).empresaId;
       const productoWeb = await productoWebService.update(params.id, body);
+
+      // Invalidar cache del producto padre
+      if (productoWeb.productoPadreId) {
+        await CacheService.invalidateProducts(empresaId, productoWeb.productoPadreId);
+      }
 
       const response: ApiResponse = {
         success: true,
@@ -63,9 +70,29 @@ export class ProductoWebController {
    */
   async updateBulk(req: Request, res: Response, next: NextFunction) {
     try {
+      const empresaId = (req as any).empresaId;
       const body = BulkUpdateProductoWebSchema.parse(req.body);
 
       const productosWeb = await productoWebService.updateBulk(body.updates);
+
+      // Invalidar cache de productos afectados
+      // Obtener los productoPadreId únicos de las variantes actualizadas
+      const productoPadreIds = new Set<number>();
+      for (const productoWeb of productosWeb) {
+        if (productoWeb.productoPadreId) {
+          productoPadreIds.add(productoWeb.productoPadreId);
+        }
+      }
+
+      // Invalidar cache de cada producto padre afectado
+      for (const productoPadreId of productoPadreIds) {
+        await CacheService.invalidateProducts(empresaId, productoPadreId);
+      }
+
+      // También invalidar todas las listas de productos para asegurar consistencia
+      if (empresaId) {
+        await CacheService.invalidateProducts(empresaId);
+      }
 
       const response: ApiResponse = {
         success: true,

@@ -16,7 +16,7 @@ export interface UploadResult {
 export interface UploadOptions {
   productoId: number;
   nombreBase: string;
-  color: string;
+  color?: string;
   files: MulterFile[];
 }
 
@@ -123,7 +123,7 @@ export class ImageUploadService {
 
     // Crear estructura de carpetas
     const folderName = slugifyProductName(nombreBase);
-    const baseFilename = slugifyImageName(nombreBase, color);
+    const baseFilename = slugifyImageName(nombreBase, color || '');
     const folderPath = folderName;
 
     console.log('📂 [FTP UPLOAD] Estructura de carpetas:', {
@@ -186,7 +186,7 @@ export class ImageUploadService {
           results.push({
             url: imagePath,
             filename,
-            color,
+            color: color || '',
             orden: imageNumber,
           });
 

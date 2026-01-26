@@ -7,7 +7,11 @@ import type { MulterFile } from '../types/multer.types';
 const UploadImagesSchema = z.object({
   productoWebId: z.coerce.number().int().positive().nullable().optional(),
   productoPadreId: z.coerce.number().int().positive().nullable().optional(),
-  color: z.string().min(1).max(100),
+  // Permitir cadena vacía cuando se usa productoPadreId, o string válido cuando se usa productoWebId
+  color: z.union([
+    z.string().min(1).max(100), // String válido (cuando hay color)
+    z.literal(''), // Cadena vacía (cuando no hay colores disponibles)
+  ]).optional(),
 });
 
 const GetImagesSchema = z.object({
@@ -74,9 +78,11 @@ export class ProductImagesController {
 
       console.log('🔄 [UPLOAD] Iniciando subida al servicio...');
       // Subir imágenes
+      // Convertir cadena vacía a undefined para que el backend lo maneje como 'sin-color'
+      const colorValue = body.color && body.color.trim().length > 0 ? body.color : undefined;
       const images = await productImageService.uploadImages(
         body.productoWebId || null,
-        body.color,
+        colorValue,
         files,
         body.productoPadreId || null
       );

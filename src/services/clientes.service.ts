@@ -193,6 +193,8 @@ export class ClientesService {
     errores: string[];
   }> {
     try {
+      console.log(`[ClientesService] Iniciando sincronización para empresaId: ${empresaId}`);
+      
       const response = await sfactoryService.listarClientes({});
 
       let clientes: SFactoryCliente[] = [];
@@ -215,6 +217,8 @@ export class ClientesService {
           }
         }
       }
+
+      console.log(`[ClientesService] Clientes obtenidos: ${clientes.length}`);
 
       let exitosos = 0;
       let fallidos = 0;
@@ -258,7 +262,28 @@ export class ClientesService {
         errores,
       };
     } catch (error: any) {
-      throw new Error(`Error al sincronizar clientes: ${error.message}`);
+      const errorMessage = error.message || 'Error desconocido';
+      
+      // Log detallado del error
+      console.error('[ClientesService.sincronizar] Error completo:', {
+        message: errorMessage,
+        stack: error.stack,
+        name: error.name,
+        code: error.code,
+      });
+      
+      // Mensaje más descriptivo según el tipo de error
+      if (errorMessage.includes('terminated') || 
+          errorMessage.includes('Conexión terminada') ||
+          errorMessage.includes('ECONNRESET')) {
+        throw new Error(
+          `Error al sincronizar clientes: La conexión con SFactory se cerró inesperadamente. ` +
+          `Esto puede deberse a: token inválido/expirado, servidor sobrecargado, o problemas de red. ` +
+          `Intenta nuevamente o verifica la conexión con SFactory. Error original: ${errorMessage}`
+        );
+      }
+      
+      throw new Error(`Error al sincronizar clientes: ${errorMessage}`);
     }
   }
 

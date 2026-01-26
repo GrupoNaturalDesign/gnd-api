@@ -1,8 +1,18 @@
 import dotenv from 'dotenv';
 import app from './app';
+import { redisService } from './lib/redis';
 
 // Load environment variables
 dotenv.config();
+
+// Inicializar Redis (lazy, se conecta cuando se use por primera vez)
+redisService.getClient().catch((error) => {
+  console.warn('⚠️  Redis no disponible, continuando sin cache:', error.message);
+});
+
+app.get('/health', (_req, res) => {
+  res.json({ ok: true });
+});
 
 const PORT = process.env.PORT || 3002;
 
@@ -11,12 +21,6 @@ app.listen(PORT, () => {
   console.log('🚀 Servidor corriendo en puerto', PORT);
   console.log(`📍 API disponible en http://localhost:${PORT}/api`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log('');
-  console.log('Endpoints disponibles:');
-  console.log(`  - Health: http://localhost:${PORT}/api/health`);
-  console.log(`  - Rubros: http://localhost:${PORT}/api/rubros`);
-  console.log(`  - Subrubros: http://localhost:${PORT}/api/subrubros`);
-  console.log(`  - Productos: http://localhost:${PORT}/api/productos`);
 });
 
 // Graceful shutdown
