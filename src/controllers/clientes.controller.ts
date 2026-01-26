@@ -90,7 +90,16 @@ export class ClientesController {
           message: 'El ID es requerido',
         });
       }
-      const idString = Array.isArray(idParam) ? idParam[0] : idParam;
+      const idString: string = Array.isArray(idParam) 
+        ? (idParam[0] ? String(idParam[0]) : '') 
+        : (idParam ? String(idParam) : '');
+      if (!idString) {
+        return res.status(400).json({
+          success: false,
+          error: 'ID requerido',
+          message: 'El ID es requerido',
+        });
+      }
       const id = parseInt(idString, 10);
       if (isNaN(id)) {
         return res.status(400).json({

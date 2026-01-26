@@ -805,7 +805,11 @@ export class ProductoController {
         });
       }
 
-      const productoPadreId = parseInt(req.params.productoPadreId || '0');
+      const productoPadreIdParam = req.params.productoPadreId;
+      const productoPadreIdString: string = Array.isArray(productoPadreIdParam) 
+        ? (productoPadreIdParam[0] ? String(productoPadreIdParam[0]) : '0') 
+        : (productoPadreIdParam ? String(productoPadreIdParam) : '0');
+      const productoPadreId = parseInt(productoPadreIdString, 10);
 
       if (isNaN(productoPadreId) || productoPadreId <= 0) {
         return res.status(400).json({
@@ -917,7 +921,11 @@ export class ProductoController {
         });
       }
 
-      const productoPadreId = parseInt(req.params.productoPadreId || '0');
+      const productoPadreIdParam = req.params.productoPadreId;
+      const productoPadreIdString: string = Array.isArray(productoPadreIdParam) 
+        ? (productoPadreIdParam[0] ? String(productoPadreIdParam[0]) : '0') 
+        : (productoPadreIdParam ? String(productoPadreIdParam) : '0');
+      const productoPadreId = parseInt(productoPadreIdString, 10);
 
       if (isNaN(productoPadreId) || productoPadreId <= 0) {
         return res.status(400).json({
@@ -1003,7 +1011,11 @@ export class ProductoController {
         });
       }
 
-      const productoWebId = parseInt(req.params.productoWebId || '0');
+      const productoWebIdParam = req.params.productoWebId;
+      const productoWebIdString: string = Array.isArray(productoWebIdParam) 
+        ? (productoWebIdParam[0] ? String(productoWebIdParam[0]) : '0') 
+        : (productoWebIdParam ? String(productoWebIdParam) : '0');
+      const productoWebId = parseInt(productoWebIdString, 10);
 
       if (isNaN(productoWebId) || productoWebId <= 0) {
         return res.status(400).json({
@@ -1137,7 +1149,11 @@ export class ProductoController {
         });
       }
 
-      const itemId = parseInt(req.params.itemId || '0');
+      const itemIdParam = req.params.itemId;
+      const itemIdString: string = Array.isArray(itemIdParam) 
+        ? (itemIdParam[0] ? String(itemIdParam[0]) : '0') 
+        : (itemIdParam ? String(itemIdParam) : '0');
+      const itemId = parseInt(itemIdString, 10);
       
       if (isNaN(itemId) || itemId <= 0) {
         return res.status(400).json({
