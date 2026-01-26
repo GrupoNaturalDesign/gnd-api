@@ -84,7 +84,22 @@ export class SFactoryAuthService {
       const userId = data.response.user_id;
 
       // Token expira en 30 días según documentación
-      const tokenExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      let tokenExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+      // Validar que la fecha sea válida
+      if (isNaN(tokenExpiry.getTime())) {
+        throw new Error('Fecha de expiración inválida generada');
+      }
+
+      // Asegurar que la fecha esté en un rango válido para MySQL TIMESTAMP
+      // MySQL TIMESTAMP válido: '1970-01-01 00:00:01' UTC a '2038-01-19 03:14:07' UTC
+      const minDate = new Date('1970-01-01T00:00:01Z');
+      const maxDate = new Date('2038-01-19T03:14:07Z');
+
+      if (tokenExpiry < minDate || tokenExpiry > maxDate) {
+        console.warn('[SFactoryAuth] Fecha fuera de rango, usando fecha máxima permitida');
+        tokenExpiry = maxDate;
+      }
 
       // Guardar token y datos en BD
       try {
@@ -104,7 +119,27 @@ export class SFactoryAuthService {
             'Ejecuta el script SQL: add_sfactory_columns.sql o ejecuta: npx prisma db push'
           );
         }
-        throw error;
+        
+        // Si es error de fecha inválida, intentar con NULL
+        if (error.message && (error.message.includes('Invalid time value') || error.message.includes('invalid time'))) {
+          console.warn('[SFactoryAuth] Error de fecha inválida, guardando sin fecha de expiración');
+          try {
+            await prisma.empresa.update({
+              where: { id: empresa.id },
+              data: {
+                sfactoryToken: token,
+                sfactoryTokenExpiry: null, // Guardar sin fecha de expiración
+                ...(companyId !== undefined && { sfactoryCompanyId: companyId }),
+                ...(userId !== undefined && { sfactoryUserId: userId }),
+              },
+            });
+          } catch (retryError: any) {
+            console.error('[SFactoryAuth] Error al guardar sin fecha de expiración:', retryError.message);
+            throw retryError;
+          }
+        } else {
+          throw error;
+        }
       }
 
       return {
