@@ -1,6 +1,7 @@
 import { Client } from 'basic-ftp';
 import { getFTPConfig, type FTPConfig } from '../config/ftp.config';
 import * as path from 'path';
+import { Readable } from 'stream';
 
 export class FTPService {
   private _config: FTPConfig | null = null;
@@ -127,6 +128,40 @@ export class FTPService {
     } catch (error) {
       console.error(`Error uploading file ${localPath} to ${remotePath}:`, error);
       throw new Error(`Failed to upload file: ${error}`);
+    }
+  }
+
+  /**
+   * Sube un archivo desde un Buffer (para producción serverless)
+   * @param buffer Buffer con el contenido del archivo
+   * @param remotePath Ruta remota donde subir (relativa a basePath)
+   */
+  async uploadFileFromBuffer(buffer: Buffer, remotePath: string): Promise<void> {
+    try {
+      if (!this.client) {
+        await this.connect();
+      }
+      if (!this.client) {
+        throw new Error('FTP client not connected');
+      }
+
+      // Asegurar que el directorio remoto existe
+      const remoteDir = path.dirname(remotePath);
+      if (remoteDir !== '.') {
+        await this.ensureDirectory(remoteDir);
+      }
+
+      // Volver al directorio base
+      await this.client.cd(this.config.basePath);
+
+      // Crear un stream desde el buffer
+      const stream = Readable.from(buffer);
+
+      // Subir el archivo desde el stream
+      await this.client.uploadFrom(stream, remotePath);
+    } catch (error) {
+      console.error(`Error uploading buffer to ${remotePath}:`, error);
+      throw new Error(`Failed to upload file from buffer: ${error}`);
     }
   }
 

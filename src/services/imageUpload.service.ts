@@ -21,22 +21,25 @@ export interface UploadOptions {
 }
 
 /**
- * Configuración de multer para almacenamiento temporal
+ * Configuración de multer para almacenamiento
+ * En producción (serverless) usa memoria, en desarrollo usa disco
  */
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = path.join(process.cwd(), 'uploads', 'temp');
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    const ext = path.extname(file.originalname);
-    cb(null, `upload-${uniqueSuffix}${ext}`);
-  },
-});
+const storage = process.env.NODE_ENV === 'production' 
+  ? multer.memoryStorage() // Producción: memoria (Vercel es read-only)
+  : multer.diskStorage({  // Desarrollo: disco
+      destination: (req, file, cb) => {
+        const uploadDir = path.join(process.cwd(), 'uploads', 'temp');
+        if (!fs.existsSync(uploadDir)) {
+          fs.mkdirSync(uploadDir, { recursive: true });
+        }
+        cb(null, uploadDir);
+      },
+      filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+        const ext = path.extname(file.originalname);
+        cb(null, `upload-${uniqueSuffix}${ext}`);
+      },
+    });
 
 export const upload = multer({
   storage,
@@ -108,12 +111,15 @@ export class ImageUploadService {
   async uploadImages(options: UploadOptions): Promise<UploadResult[]> {
     const { productoId, nombreBase, color, files } = options;
 
+    const isProduction = process.env.NODE_ENV === 'production';
+
     console.log('📁 [FTP UPLOAD] Iniciando proceso de subida');
     console.log('📁 [FTP UPLOAD] Opciones:', {
       productoId,
       nombreBase,
       color,
       cantidadArchivos: files.length,
+      isProduction,
     });
 
     if (!files || files.length === 0) {
@@ -131,6 +137,8 @@ export class ImageUploadService {
       baseFilename,
       folderPath,
     });
+
+    const tempFiles: string[] = []; // Para limpiar archivos temporales en desarrollo
 
     try {
       // Conectar a FTP
@@ -154,12 +162,12 @@ export class ImageUploadService {
             console.warn(`⚠️ [FTP UPLOAD] Archivo ${i + 1} es undefined, saltando...`);
             continue;
           }
-          const tempPath = file.path;
 
           console.log(`📤 [FTP UPLOAD] Procesando archivo ${i + 1}/${files.length}:`, {
             originalname: file.originalname,
-            tempPath,
             size: `${(file.size / 1024).toFixed(2)} KB`,
+            hasBuffer: !!file.buffer,
+            hasPath: !!file.path,
           });
 
           // Obtener número secuencial
@@ -174,10 +182,21 @@ export class ImageUploadService {
           console.log(`📝 [FTP UPLOAD] Nombre de archivo generado: ${filename}`);
           console.log(`📝 [FTP UPLOAD] Ruta remota: ${remotePath}`);
 
-          // Subir archivo
-          console.log(`⬆️ [FTP UPLOAD] Subiendo archivo a FTP...`);
-          await ftpService.uploadFile(tempPath, remotePath);
-          uploadedFiles.push(tempPath);
+          // En producción usar buffer, en desarrollo usar path
+          if (isProduction && file.buffer) {
+            // Producción: subir desde buffer
+            console.log(`⬆️ [FTP UPLOAD] Subiendo desde buffer (producción)...`);
+            await ftpService.uploadFileFromBuffer(file.buffer, remotePath);
+          } else if (file.path) {
+            // Desarrollo: subir desde archivo temporal
+            console.log(`⬆️ [FTP UPLOAD] Subiendo desde archivo temporal (desarrollo)...`);
+            await ftpService.uploadFile(file.path, remotePath);
+            tempFiles.push(file.path);
+          } else {
+            throw new Error('Archivo no tiene buffer ni path disponible');
+          }
+
+          uploadedFiles.push(remotePath);
           console.log(`✅ [FTP UPLOAD] Archivo subido exitosamente: ${filename}`);
 
           // Guardamos SOLO el path relativo
@@ -189,7 +208,6 @@ export class ImageUploadService {
             color: color || '',
             orden: imageNumber,
           });
-
         }
 
         console.log(`✅ [FTP UPLOAD] Proceso completado. ${results.length} archivo(s) subido(s)`);
@@ -197,9 +215,8 @@ export class ImageUploadService {
       } catch (error) {
         // Si hay error, intentar limpiar archivos subidos
         console.error('❌ [FTP UPLOAD] Error durante la subida, limpiando archivos:', error);
-        for (const result of results) {
+        for (const remotePath of uploadedFiles) {
           try {
-            const remotePath = `${folderPath}/${result.filename}`;
             console.log(`🧹 [FTP UPLOAD] Eliminando archivo remoto: ${remotePath}`);
             await ftpService.deleteFile(remotePath);
           } catch (cleanupError) {
@@ -208,20 +225,24 @@ export class ImageUploadService {
         }
         throw error;
       } finally {
-        // Limpiar archivos temporales
-        console.log('🧹 [FTP UPLOAD] Limpiando archivos temporales...');
-        for (const file of files) {
-          cleanupTempFile(file.path);
+        // Limpiar archivos temporales solo en desarrollo
+        if (!isProduction) {
+          console.log('🧹 [FTP UPLOAD] Limpiando archivos temporales...');
+          for (const tempPath of tempFiles) {
+            cleanupTempFile(tempPath);
+          }
         }
         console.log('🔌 [FTP UPLOAD] Desconectando del servidor FTP...');
         await ftpService.disconnect();
         console.log('✅ [FTP UPLOAD] Desconexión completada');
       }
     } catch (error) {
-      // Limpiar archivos temporales en caso de error
-      console.error('❌ [FTP UPLOAD] Error general, limpiando archivos temporales:', error);
-      for (const file of files) {
-        cleanupTempFile(file.path);
+      // Limpiar archivos temporales en caso de error (solo desarrollo)
+      if (!isProduction) {
+        console.error('❌ [FTP UPLOAD] Error general, limpiando archivos temporales:', error);
+        for (const tempPath of tempFiles) {
+          cleanupTempFile(tempPath);
+        }
       }
       throw error;
     }
