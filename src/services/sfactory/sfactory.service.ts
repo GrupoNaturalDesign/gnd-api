@@ -1,5 +1,12 @@
 // src/services/sfactory/sfactory.service.ts
 import { sfactoryClient } from './sfactory.client';
+import type {
+  SFactoryItemCreateData,
+  SFactoryItemEditData,
+  SFactoryItemCreateResponse,
+  SFactoryItemEditResponse,
+  SFactoryProduct,
+} from '../../types/sfactory.types';
 
 export class SFactoryService {
   /**
@@ -84,6 +91,79 @@ export class SFactoryService {
     return sfactoryClient.request('ventas', 'ventas_crear_orden_pedido', {
       data,
       items,
+    });
+  }
+
+  /**
+   * Crear nuevo item (producto) en SFactory
+   * @param data - Datos del producto según formato de SFactory
+   * @returns Producto creado con código generado
+   */
+  async crearItem(data: SFactoryItemCreateData): Promise<SFactoryItemCreateResponse> {
+    const response = await sfactoryClient.request<SFactoryItemCreateResponse>(
+      'items',
+      'items_crear_item',
+      { data }
+    );
+    return response;
+  }
+
+  /**
+   * Editar item existente en SFactory
+   * @param data - Datos del producto incluyendo item_id
+   * @returns Producto actualizado
+   */
+  async editarItem(data: SFactoryItemEditData): Promise<SFactoryItemEditResponse> {
+    // SFactory espera { data: { item_id, ...resto de campos } }
+    const response = await sfactoryClient.request<SFactoryItemEditResponse>(
+      'items',
+      'items_editar_item',
+      { data }
+    );
+    return response;
+  }
+
+  /**
+   * Leer un item específico por código o ID
+   * @param identificador - Código o ID del item
+   * @returns Producto completo desde SFactory
+   */
+  async leerItem(identificador: { codigo?: string; item_id?: number }): Promise<SFactoryProduct> {
+    const response = await sfactoryClient.request<SFactoryProduct | SFactoryProduct[]>(
+      'items',
+      'items_leer_item',
+      identificador
+    );
+
+    // Normalizar respuesta
+    if (Array.isArray(response)) {
+      if (response.length === 0) {
+        throw new Error('Producto no encontrado');
+      }
+      return response[0] as SFactoryProduct;
+    }
+
+    if (response && typeof response === 'object' && 'data' in response) {
+      const data = (response as any).data;
+      if (Array.isArray(data)) {
+        if (data.length === 0) {
+          throw new Error('Producto no encontrado');
+        }
+        return data[0] as SFactoryProduct;
+      }
+      return data as SFactoryProduct;
+    }
+
+    return response as SFactoryProduct;
+  }
+
+  /**
+   * Borrar item en SFactory
+   * @param itemId - ID del item a borrar
+   */
+  async borrarItem(itemId: number): Promise<{ success: boolean; message?: string }> {
+    return sfactoryClient.request('items', 'items_borrar_item', {
+      item_id: itemId,
     });
   }
 }

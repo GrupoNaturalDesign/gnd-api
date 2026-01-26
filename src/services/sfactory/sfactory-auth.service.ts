@@ -179,6 +179,40 @@ export class SFactoryAuthService {
   }
 
   /**
+   * Invalidar token en BD para forzar reautenticación
+   */
+  async invalidateToken(companyKey?: string): Promise<void> {
+    try {
+      const key = companyKey || process.env.SFACTORY_COMPANY_KEY || '';
+      
+      if (!key) {
+        return;
+      }
+
+      try {
+        await prisma.empresa.updateMany({
+          where: {
+            sfactoryCompanyKey: key,
+            activa: true,
+          },
+          data: {
+            sfactoryToken: null,
+            sfactoryTokenExpiry: null,
+          },
+        });
+        console.log(`[SFactoryAuth] Token invalidado para companyKey: ${key}`);
+      } catch (error: any) {
+        // Si las columnas no existen, no hacer nada
+        if (error.code !== 'P2022') {
+          console.error('[SFactoryAuth] Error invalidando token:', error.message);
+        }
+      }
+    } catch (error: any) {
+      console.error('[SFactoryAuth] Error en invalidateToken:', error.message);
+    }
+  }
+
+  /**
    * Obtener empresaId desde la BD basado en companyKey
    * Si no hay token válido, intenta autenticar
    */

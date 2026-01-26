@@ -20,7 +20,7 @@ export class ProductImageService {
    */
   async uploadImages(
     productoWebId: number | null,
-    color: string,
+    color: string | undefined | null,
     files: MulterFile[],
     productoPadreId?: number | null
   ): Promise<ProductImage[]> {
@@ -28,13 +28,20 @@ export class ProductImageService {
     let nombreBase: string;
 
     // Si se proporciona productoPadreId, obtener la primera variante de ese color
+    // Si color está vacío o es null, obtener la primera variante sin importar el color
     if (productoPadreId && !productoWebId) {
+      const whereClause: any = {
+        productoPadreId,
+        activoSfactory: true,
+      };
+      
+      // Solo filtrar por color si se proporciona y no está vacío
+      if (color && color.trim().length > 0) {
+        whereClause.color = color;
+      }
+
       producto = await prisma.productoWeb.findFirst({
-        where: {
-          productoPadreId,
-          color,
-          activoSfactory: true,
-        },
+        where: whereClause,
         include: {
           productoPadre: true,
         },
@@ -44,7 +51,11 @@ export class ProductImageService {
       });
 
       if (!producto) {
-        throw new Error(`No se encontró una variante con el color "${color}" para este producto`);
+        if (color && color.trim().length > 0) {
+          throw new Error(`No se encontró una variante con el color "${color}" para este producto`);
+        } else {
+          throw new Error('No se encontró ninguna variante para este producto');
+        }
       }
 
       productoWebId = producto.id;
@@ -92,7 +103,7 @@ export class ProductImageService {
     const uploadOptions: UploadOptions = {
       productoId: productoWebId!,
       nombreBase,
-      color,
+      color: color && color.trim().length > 0 ? color : undefined, // Convertir cadena vacía a undefined (opcional)
       files,
     };
 

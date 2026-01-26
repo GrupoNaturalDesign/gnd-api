@@ -235,35 +235,25 @@ export class ProductoSyncService {
       subrubros.forEach((s: { id: number; sfactoryId: number; rubroId: number | null; nombre: string }) => subrubrosMap.set(s.sfactoryId, s.id));
 
       // Convertir a formato SFactoryProduct para usar las funciones existentes
-      const productos: SFactoryProduct[] = productosSfactory.map((p: {
-        codigo: string;
-        descripcion: string | null;
-        descrip_corta: string | null;
-        rubro: string | null;
-        subrubro: string | null;
-        linea: string | null;
-        material: string | null;
-        um: string | null;
-        precio_venta: Prisma.Decimal | null;
-        barcode: string | null;
-        activo: string;
-        sfactory_id: number | null;
-      }) => ({
-        Codigo: p.codigo,
-        Descripcion: p.descripcion || p.descrip_corta || p.codigo,
-        Rubro: p.rubro || null,
-        Subrubro: p.subrubro || null,
-        Linea: p.linea || null,
-        Material: p.material || null,
-        UM: p.um || null,
-        PrecioVenta: p.precio_venta ? Number(p.precio_venta) : null,
-        Stock: null, // Se actualizará desde otra fuente si es necesario
-        Barcode: p.barcode || null,
-        Activo: p.activo === 'S',
-        id: p.sfactory_id || null,
-        Color: null, // Se parseará del nombre
-        Talle: null, // Se parseará del nombre
-      } as SFactoryProduct));
+      const productos: SFactoryProduct[] = productosSfactory.map((p) => {
+        const activo = p.activo || 'S';
+        return {
+          Codigo: p.codigo,
+          Descripcion: p.descripcion || p.descrip_corta || p.codigo,
+          Rubro: p.rubro || null,
+          Subrubro: p.subrubro || null,
+          Linea: p.linea || null,
+          Material: p.material || null,
+          UM: p.um || null,
+          PrecioVenta: p.precio_venta ? Number(p.precio_venta) : null,
+          Stock: null, // Se actualizará desde otra fuente si es necesario
+          Barcode: p.barcode || null,
+          Activo: activo === 'S',
+          id: p.sfactory_id || undefined,
+          Color: null, // Se parseará del nombre
+          Talle: null, // Se parseará del nombre
+        } as SFactoryProduct;
+      });
 
       // Agrupar productos por código base
       const grupos = agruparProductosPorCodigoBase(productos);
@@ -483,6 +473,383 @@ export class ProductoSyncService {
     } catch (error: any) {
       throw error;
     }
+  }
+
+  /**
+   * Sincronizar UN SOLO producto desde SFactory (incremental)
+   * Usa items_leer_item para obtener solo ese producto
+   * Reutiliza toda la lógica de parsing existente
+   * 
+   * @param codigo - Código del producto en SFactory
+   * @param empresaId - ID de la empresa
+   * @param productoDirecto - (Opcional) Si ya tienes el producto de SFactory, pásalo aquí para evitar una llamada extra
+   */
+  async syncProductoIncremental(
+    codigo: string,
+    empresaId: number = 1,
+    productoDirecto?: SFactoryProduct
+  ) {
+    try {
+      let productoData: SFactoryProduct;
+
+      // Si ya tenemos el producto, usarlo directamente
+      if (productoDirecto) {
+        productoData = productoDirecto;
+      } else {
+        // Si no, obtenerlo de SFactory
+        try {
+          productoData = await sfactoryService.leerItem({ codigo });
+        } catch (error) {
+          // Fallback: usar search_item
+          const searchResult = await sfactoryService.buscarItems({
+            field: 'Codigo',
+            value: codigo,
+            mode: 'exact',
+          });
+
+          if (Array.isArray(searchResult) && searchResult.length > 0) {
+            productoData = searchResult[0] as SFactoryProduct;
+          } else if (searchResult && typeof searchResult === 'object' && 'data' in searchResult) {
+            const data = (searchResult as any).data;
+            productoData = Array.isArray(data) ? data[0] : data;
+          } else {
+            throw new Error(`Producto con código ${codigo} no encontrado en SFactory`);
+          }
+        }
+      }
+
+      // PASO 1: Sincronizar a productos_sfactory
+      await this.syncProductoSfactoryIndividual(productoData, empresaId);
+
+      // PASO 2: Procesar y actualizar productos_padre y productos_web
+      // Esto reutiliza TODO el parsing: agrupación, normalización, etc.
+      await this.procesarProductoIndividual(productoData, empresaId);
+
+      return {
+        success: true,
+        codigo,
+        message: 'Producto sincronizado correctamente',
+      };
+    } catch (error: any) {
+      throw new Error(`Error al sincronizar producto ${codigo}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Sincronizar un producto individual a productos_sfactory
+   * Reutiliza la lógica de syncProductosSfactory pero para un solo producto
+   */
+  private async syncProductoSfactoryIndividual(
+    producto: SFactoryProduct,
+    empresaId: number
+  ) {
+    // Pre-cargar rubros y subrubros
+    const rubros = await prisma.rubro.findMany({
+      where: { empresaId },
+      select: { id: true, sfactoryId: true },
+    });
+    const rubrosMap = new Map<number, number>();
+    rubros.forEach((r: { id: number; sfactoryId: number }) =>
+      rubrosMap.set(r.sfactoryId, r.id)
+    );
+
+    const subrubros = await prisma.subrubro.findMany({
+      where: { empresaId },
+      select: { id: true, sfactoryId: true },
+    });
+    const subrubrosMap = new Map<number, number>();
+    subrubros.forEach((s: { id: number; sfactoryId: number }) =>
+      subrubrosMap.set(s.sfactoryId, s.id)
+    );
+
+    const codigo = String((producto as any).Codigo || (producto as any).codigo || '');
+    if (!codigo) {
+      throw new Error('Producto sin código');
+    }
+
+    // Resolver rubro_id y subrubro_id locales
+    const sfactoryRubroId = (producto as any).rubro_id || (producto as any).RubroId || null;
+    const sfactorySubrubroId = (producto as any).subrubro_id || (producto as any).SubrubroId || null;
+
+    let rubroIdLocal = null;
+    let subrubroIdLocal = null;
+
+    if (sfactoryRubroId) {
+      rubroIdLocal = rubrosMap.get(sfactoryRubroId) || null;
+    }
+
+    if (sfactorySubrubroId) {
+      subrubroIdLocal = subrubrosMap.get(sfactorySubrubroId) || null;
+    }
+
+    // Mapear datos (misma lógica que syncProductosSfactory)
+    const datosProductoSfactory = {
+      empresaId,
+      codigo,
+      barcode: toStringOrNull((producto as any).Barcode || (producto as any).barcode),
+      descrip_corta: toStringOrNull((producto as any).DescripcionCorta || (producto as any).descripcionCorta),
+      descripcion: toStringOrNull((producto as any).Descripcion || (producto as any).descripcion),
+      detalle: toStringOrNull((producto as any).Detalle || (producto as any).detalle),
+      tipo: toStringOrNull((producto as any).Tipo || (producto as any).tipo),
+      stockeable: toStringOrNull((producto as any).Stockeable || (producto as any).stockeable),
+      stock_minimo: toDecimal((producto as any).StockMin || (producto as any).stockMin),
+      stock_maximo: toDecimal((producto as any).StockMax || (producto as any).stockMax),
+      precio_costo: toDecimal((producto as any).PrecioCosto || (producto as any).precioCosto),
+      precio_venta: toDecimal((producto as any).PrecioVenta || (producto as any).precioVenta),
+      iva: toDecimal((producto as any).Iva || (producto as any).iva),
+      utilidad_planificada: toDecimal((producto as any).UtilidadP || (producto as any).utilidadP),
+      utilidad_real: toDecimal((producto as any).UtilidadR || (producto as any).utilidadR),
+      rubro: toStringOrNull((producto as any).Rubro || (producto as any).rubro),
+      subrubro: toStringOrNull((producto as any).Subrubro || (producto as any).subrubro),
+      rubro_id: rubroIdLocal,
+      subrubro_id: subrubroIdLocal,
+      item_venta: toStringOrNull((producto as any).ItemDeVenta ? 'S' : (producto as any).itemVenta),
+      item_compra: toStringOrNull((producto as any).ItemDeCompra ? 'S' : (producto as any).itemCompra),
+      item_alquiler: toStringOrNull((producto as any).ItemDeAlquiler ? 'S' : (producto as any).itemAlquiler),
+      codigo_externo: toStringOrNull((producto as any).EqCodigoExterno || (producto as any).codigoExterno),
+      peso_bruto: toDecimal((producto as any).PesoBruto || (producto as any).pesoBruto),
+      activo: (producto as any).Activo !== false ? 'S' : 'N',
+      um: toStringOrNull((producto as any).UM || (producto as any).um),
+      um_compra: toStringOrNull((producto as any).UMCompra || (producto as any).umCompra),
+      precio_um_compra: toDecimal((producto as any).PrecioUMCompra || (producto as any).precioUMCompra),
+      moneda: toStringOrNull((producto as any).Moneda || (producto as any).moneda),
+      generico: toStringOrNull((producto as any).Generico || (producto as any).generico),
+      grupo_gasto: toStringOrNull((producto as any).GrupoGasto || (producto as any).grupoGasto),
+      lista_material: toStringOrNull((producto as any).ListaMaterial || (producto as any).listaMaterial),
+      deposito_consumo: toStringOrNull((producto as any).DepositoConsumo || (producto as any).depositoConsumo),
+      item_lote: toStringOrNull((producto as any).ItemLote ? 'S' : (producto as any).itemLote),
+      item_serie: toStringOrNull((producto as any).ItemSerie ? 'S' : (producto as any).itemSerie),
+      fabricar: toStringOrNull((producto as any).Fabricar ? 'S' : (producto as any).fabricar),
+      a_pedido: toStringOrNull((producto as any).APedido ? 'S' : (producto as any).aPedido),
+      clase: toStringOrNull((producto as any).Clase || (producto as any).clase),
+      linea: toStringOrNull((producto as any).Linea || (producto as any).linea),
+      material: toStringOrNull((producto as any).Material || (producto as any).material),
+      proveedor: toStringOrNull((producto as any).ProveedorPorDefecto || (producto as any).proveedor),
+      precio_costo_xlm: toDecimal((producto as any).CostoXLM || (producto as any).costoXLM),
+      flowint_sincro_enabled: toStringOrNull((producto as any).FlowintSincroEnabled ? 'S' : (producto as any).flowintSincroEnabled),
+      deposito_ubicacion: toStringOrNull((producto as any).Ubicacion || (producto as any).ubicacion),
+      actualizar_precio_xoc: toStringOrNull((producto as any).ActPrecioXOC ? 'S' : (producto as any).actPrecioXOC),
+      usuario: toStringOrNull((producto as any).Usuario || (producto as any).usuario),
+      sfactory_id: (producto as any).id || (producto as any).Id || null,
+      ultima_sync: new Date(),
+    };
+
+    // Upsert en productos_sfactory
+    await prisma.productoSfactory.upsert({
+      where: {
+        unique_empresa_codigo: {
+          empresaId,
+          codigo,
+        },
+      },
+      update: {
+        ...datosProductoSfactory,
+        updatedAt: new Date(),
+      },
+      create: datosProductoSfactory,
+    });
+  }
+
+  /**
+   * Procesar un producto individual desde productos_sfactory
+   * Reutiliza la lógica de procesarProductosDesdeSfactory pero para un solo producto
+   */
+  private async procesarProductoIndividual(
+    producto: SFactoryProduct,
+    empresaId: number
+  ) {
+    const codigo = String((producto as any).Codigo || (producto as any).codigo || '');
+
+    // Obtener el producto desde productos_sfactory (ya sincronizado)
+    const productoSfactory = await prisma.productoSfactory.findUnique({
+      where: {
+        unique_empresa_codigo: {
+          empresaId,
+          codigo,
+        },
+      },
+    });
+
+    if (!productoSfactory) {
+      throw new Error(`Producto ${codigo} no encontrado en productos_sfactory`);
+    }
+
+    // Pre-cargar rubros y subrubros
+    const rubros = await prisma.rubro.findMany({
+      where: { empresaId },
+      select: { id: true, sfactoryId: true, nombre: true },
+    });
+    const rubrosMap = new Map<number, number>();
+    rubros.forEach((r: { id: number; sfactoryId: number; nombre: string }) =>
+      rubrosMap.set(r.sfactoryId, r.id)
+    );
+
+    const subrubros = await prisma.subrubro.findMany({
+      where: { empresaId },
+      select: { id: true, sfactoryId: true, rubroId: true, nombre: true },
+    });
+    const subrubrosMap = new Map<number, number>();
+    subrubros.forEach((s: { id: number; sfactoryId: number; rubroId: number | null; nombre: string }) =>
+      subrubrosMap.set(s.sfactoryId, s.id)
+    );
+
+    // Convertir a formato SFactoryProduct
+    const productoFormateado: SFactoryProduct = {
+      Codigo: productoSfactory.codigo,
+      Descripcion: productoSfactory.descripcion || productoSfactory.descrip_corta || productoSfactory.codigo,
+      Rubro: productoSfactory.rubro || null,
+      Subrubro: productoSfactory.subrubro || null,
+      Linea: productoSfactory.linea || null,
+      Material: productoSfactory.material || null,
+      UM: productoSfactory.um || null,
+      PrecioVenta: productoSfactory.precio_venta ? Number(productoSfactory.precio_venta) : null,
+      Stock: null,
+      Barcode: productoSfactory.barcode || null,
+      Activo: productoSfactory.activo === 'S',
+      id: productoSfactory.sfactory_id || undefined,
+      Color: null,
+      Talle: null,
+    };
+
+    // Agrupar (puede que este producto sea parte de un grupo existente)
+    const grupos = agruparProductosPorCodigoBase([productoFormateado]);
+    const codigoAgrupacion = extraerCodigoAgrupacion(codigo);
+    const grupo = grupos.get(codigoAgrupacion);
+
+    if (!grupo || grupo.productos.length === 0) {
+      throw new Error(`No se pudo agrupar el producto ${codigo}`);
+    }
+
+    // Procesar el grupo (reutilizar lógica existente)
+    await prisma.$transaction(async (tx: PrismaTransaction) => {
+      const primerProducto = grupo.productos[0]?.producto;
+      if (!primerProducto) return;
+
+      // Resolver rubro y subrubro
+      let rubroId = productoSfactory.rubro_id || null;
+      let subrubroId = productoSfactory.subrubro_id || null;
+
+      if (!rubroId) {
+        const rubroNombre = normalizarRubro(productoSfactory.rubro || (primerProducto as any).Rubro);
+        if (rubroNombre) {
+          const rubroPorNombre = await tx.rubro.findFirst({
+            where: {
+              empresaId,
+              nombre: { equals: rubroNombre },
+            },
+          });
+          rubroId = rubroPorNombre?.id || null;
+        }
+      }
+
+      if (!subrubroId && rubroId) {
+        const subrubroNombre = normalizarRubro(productoSfactory.subrubro || (primerProducto as any).Subrubro);
+        if (subrubroNombre) {
+          const subrubroPorNombre = await tx.subrubro.findFirst({
+            where: {
+              empresaId,
+              rubroId,
+              nombre: { equals: subrubroNombre },
+            },
+          });
+          subrubroId = subrubroPorNombre?.id || null;
+        }
+      }
+
+      const nombre = grupo.nombreBase || codigoAgrupacion;
+      const descripcionPadre = '';
+      const sexoNormalizado = normalizarSexo(grupo.sexo);
+
+      // Crear o actualizar producto padre
+      const productoPadre = await tx.productoPadre.upsert({
+        where: {
+          unique_empresa_agrupacion: {
+            empresaId,
+            codigoAgrupacion,
+          },
+        },
+        update: {
+          nombre,
+          descripcion: descripcionPadre,
+          rubroId,
+          subrubroId,
+          linea: productoSfactory.linea || null,
+          material: productoSfactory.material || null,
+          um: productoSfactory.um || null,
+          coloresDisponibles: grupo.colores.length > 0 ? (grupo.colores as any) : null,
+          tallesDisponibles: grupo.talles.length > 0 ? (grupo.talles as any) : null,
+        },
+        create: {
+          empresaId,
+          codigoAgrupacion,
+          nombre,
+          descripcion: descripcionPadre,
+          rubroId,
+          subrubroId,
+          linea: productoSfactory.linea || null,
+          material: productoSfactory.material || null,
+          um: productoSfactory.um || null,
+          slug: generarSlug(nombre, codigoAgrupacion),
+          coloresDisponibles: grupo.colores.length > 0 ? (grupo.colores as any) : null,
+          tallesDisponibles: grupo.talles.length > 0 ? (grupo.talles as any) : null,
+        },
+      });
+
+      // Crear o actualizar variante (ProductoWeb)
+      for (const item of grupo.productos) {
+        const producto = item.producto;
+        const codigoStr = String((producto as any).Codigo || (producto as any).codigo || '');
+
+        if (!codigoStr) continue;
+
+        let color = item.color;
+        if (!color) {
+          const parseado = parsearNombreProducto(
+            productoSfactory.descripcion || productoSfactory.descrip_corta || codigoStr,
+            codigoStr
+          );
+          color = parseado.color;
+        }
+
+        const talle = item.talle;
+        const nombreVariante = nombre;
+        const descripcionCompleta = '';
+        const sfactoryId = productoSfactory.sfactory_id || (producto as any).id || (producto as any).Id || 0;
+
+        const datosProductoWeb = {
+          productoPadreId: productoPadre.id,
+          sfactoryId,
+          sfactoryBarcode: productoSfactory.barcode || null,
+          nombre: nombreVariante,
+          descripcionCompleta,
+          sexo: sexoNormalizado,
+          talle,
+          color,
+          precioCache: productoSfactory.precio_venta ? Number(productoSfactory.precio_venta) : null,
+          stockCache: null,
+          ultimaSyncSfactory: productoSfactory.ultima_sync || new Date(),
+          activoSfactory: productoSfactory.activo === 'S',
+        };
+
+        await tx.productoWeb.upsert({
+          where: {
+            unique_empresa_sfactory: {
+              empresaId,
+              sfactoryCodigo: codigoStr,
+            },
+          },
+          update: {
+            ...datosProductoWeb,
+            productoPadreId: productoPadre.id,
+          },
+          create: {
+            empresaId,
+            sfactoryCodigo: codigoStr,
+            ...datosProductoWeb,
+          },
+        });
+      }
+    });
   }
 
   /**

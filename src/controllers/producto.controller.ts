@@ -12,6 +12,7 @@ import {
   PaginatedApiResponse,
 } from '../types';
 import { validateEmpresaId, handleZodError } from '../utils/validation';
+import type { SFactoryItemCreateData, SFactoryItemEditData } from '../types/sfactory.types';
 
 export class ProductoController {
   async getAll(req: Request, res: Response, next: NextFunction) {
@@ -104,19 +105,20 @@ export class ProductoController {
   async getBySlug(req: Request, res: Response, next: NextFunction) {
     try {
       // Decodificar el slug que viene de la URL (Express ya lo decodifica, pero por si acaso)
-      const rawSlug = req.params.slug || '';
-      let decodedSlug = rawSlug;
+      const rawSlugParam = req.params.slug;
+      const rawSlug: string = Array.isArray(rawSlugParam) ? rawSlugParam[0] : (rawSlugParam || '');
+      let decodedSlug: string = rawSlug;
       
       try {
         // Intentar decodificar si está codificado
-        decodedSlug = decodeURIComponent(rawSlug);
+        decodedSlug = decodeURIComponent(String(rawSlug));
       } catch (e) {
         // Si falla la decodificación, usar el slug tal cual
         decodedSlug = rawSlug;
       }
       
       // Asegurar que decodedSlug no sea undefined
-      const cleanSlug = (decodedSlug || '').trim();
+      const cleanSlug = String(decodedSlug || '').trim();
       
       if (!cleanSlug) {
         return res.status(400).json({
@@ -185,7 +187,9 @@ export class ProductoController {
 
   async getVariantes(req: Request, res: Response, next: NextFunction) {
     try {
-      const productoPadreId = parseInt(req.params.id || '0');
+      const idParam = req.params.id;
+      const idString: string = Array.isArray(idParam) ? String(idParam[0]) : String(idParam || '0');
+      const productoPadreId = parseInt(idString);
 
       if (isNaN(productoPadreId)) {
         return res.status(400).json({
@@ -514,6 +518,564 @@ export class ProductoController {
       return res.status(500).json({
         success: false,
         error: 'Error al listar productos desde SFactory',
+        message: error.message || 'Error desconocido',
+      });
+    }
+  }
+
+  /**
+   * POST /api/productos
+   * Crear producto en SFactory y sincronizar incrementalmente
+   * Flujo: Crear en SFactory → Sincronizar → Parsear en nuestras tablas
+   */
+  async crear(req: Request, res: Response, next: NextFunction) {
+    try {
+      const empresaId = (req as any).empresaId;
+      
+      if (!empresaId) {
+        const validation = validateEmpresaId(req);
+        return res.status(400).json({
+          success: false,
+          ...validation,
+        });
+      }
+
+      // Validar body
+      const body = req.body as SFactoryItemCreateData;
+      
+      if (!body.tipo) {
+        return res.status(400).json({
+          success: false,
+          error: 'El campo "tipo" es requerido',
+          message: 'Debe especificar el tipo de producto (ej: "P" para producto)',
+        });
+      }
+
+      if (!body.descripcion) {
+        return res.status(400).json({
+          success: false,
+          error: 'El campo "descripcion" es requerido',
+          message: 'Debe especificar la descripción del producto',
+        });
+      }
+
+      // Crear producto en SFactory y sincronizar
+      const producto = await productoService.crearProducto(body, empresaId);
+
+      const response: ApiResponse = {
+        success: true,
+        data: producto,
+        message: 'Producto creado y sincronizado exitosamente',
+      };
+
+      res.status(201).json(response);
+    } catch (error: any) {
+      console.error('[ProductoController.crear] Error:', error);
+      
+      const zodError = handleZodError(error);
+      if (zodError) {
+        return res.status(400).json({
+          success: false,
+          ...zodError,
+        });
+      }
+
+      // Error de validación de SFactory
+      if (error.message && error.message.includes('SFactory')) {
+        return res.status(400).json({
+          success: false,
+          error: 'Error al crear producto en SFactory',
+          message: error.message,
+        });
+      }
+
+      return res.status(500).json({
+        success: false,
+        error: 'Error al crear producto',
+        message: error.message || 'Error desconocido',
+      });
+    }
+  }
+
+  /**
+   * POST /api/productos/validar-codigo
+   * Validar si un código existe en la base de datos local
+   */
+  async validarCodigo(req: Request, res: Response, next: NextFunction) {
+    try {
+      const empresaId = (req as any).empresaId;
+
+      if (!empresaId) {
+        const validation = validateEmpresaId(req);
+        return res.status(400).json({
+          success: false,
+          ...validation,
+        });
+      }
+
+      const { codigo } = req.body;
+
+      if (!codigo || typeof codigo !== 'string') {
+        return res.status(400).json({
+          success: false,
+          error: 'El campo "codigo" es requerido y debe ser un string',
+        });
+      }
+
+      const resultado = await productoService.validarCodigo(codigo, empresaId);
+
+      const response: ApiResponse = {
+        success: true,
+        data: resultado,
+      };
+
+      res.json(response);
+    } catch (error: any) {
+      console.error('[ProductoController.validarCodigo] Error:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Error al validar código',
+        message: error.message || 'Error desconocido',
+      });
+    }
+  }
+
+  /**
+   * GET /api/productos/variantes/:codigoBase
+   * Obtener variantes de un código base y calcular siguiente número sugerido
+   */
+  async obtenerVariantesPorCodigoBase(req: Request, res: Response, next: NextFunction) {
+    try {
+      const empresaId = (req as any).empresaId;
+
+      if (!empresaId) {
+        const validation = validateEmpresaId(req);
+        return res.status(400).json({
+          success: false,
+          ...validation,
+        });
+      }
+
+      const codigoBaseParam = req.params.codigoBase;
+      const codigoBase: string = Array.isArray(codigoBaseParam) ? String(codigoBaseParam[0]) : String(codigoBaseParam || '');
+
+      if (!codigoBase) {
+        return res.status(400).json({
+          success: false,
+          error: 'Código base es requerido',
+        });
+      }
+
+      const resultado = await productoService.obtenerVariantesPorCodigoBase(codigoBase, empresaId);
+
+      const response: ApiResponse = {
+        success: true,
+        data: resultado,
+      };
+
+      res.json(response);
+    } catch (error: any) {
+      console.error('[ProductoController.obtenerVariantesPorCodigoBase] Error:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Error al obtener variantes',
+        message: error.message || 'Error desconocido',
+      });
+    }
+  }
+
+  /**
+   * GET /api/productos/:productoPadreId/combinaciones
+   * Obtener combinaciones Talle+Color existentes de un producto padre
+   */
+  async obtenerCombinaciones(req: Request, res: Response, next: NextFunction) {
+    try {
+      const empresaId = (req as any).empresaId;
+
+      if (!empresaId) {
+        const validation = validateEmpresaId(req);
+        return res.status(400).json({
+          success: false,
+          ...validation,
+        });
+      }
+
+      const productoPadreId = parseInt(req.params.productoPadreId || '0');
+
+      if (isNaN(productoPadreId) || productoPadreId <= 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'ID de producto padre inválido',
+        });
+      }
+
+      const resultado = await productoService.obtenerCombinaciones(productoPadreId, empresaId);
+
+      const response: ApiResponse = {
+        success: true,
+        data: resultado,
+      };
+
+      res.json(response);
+    } catch (error: any) {
+      console.error('[ProductoController.obtenerCombinaciones] Error:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Error al obtener combinaciones',
+        message: error.message || 'Error desconocido',
+      });
+    }
+  }
+
+  /**
+   * GET /api/productos/buscar-padre
+   * Buscar productos padre para crear variantes
+   */
+  async buscarProductosPadre(req: Request, res: Response, next: NextFunction) {
+    try {
+      const empresaId = (req as any).empresaId;
+
+      if (!empresaId) {
+        const validation = validateEmpresaId(req);
+        return res.status(400).json({
+          success: false,
+          ...validation,
+        });
+      }
+
+      const { nombre, sexo, rubroId, limit } = req.query;
+
+      const params: {
+        empresaId: number;
+        nombre?: string;
+        sexo?: string;
+        rubroId?: number;
+        limit?: number;
+      } = {
+        empresaId,
+      };
+
+      if (nombre && typeof nombre === 'string') {
+        params.nombre = nombre;
+      }
+      if (sexo && typeof sexo === 'string') {
+        params.sexo = sexo;
+      }
+      if (rubroId) {
+        const rubroIdNum = parseInt(String(rubroId));
+        if (!isNaN(rubroIdNum)) {
+          params.rubroId = rubroIdNum;
+        }
+      }
+      if (limit) {
+        const limitNum = parseInt(String(limit));
+        if (!isNaN(limitNum) && limitNum > 0) {
+          params.limit = limitNum;
+        }
+      }
+
+      const resultado = await productoService.buscarProductosPadre(params);
+
+      const response: ApiResponse = {
+        success: true,
+        data: resultado.productos,
+        message: `${resultado.total} producto(s) encontrado(s)`,
+      };
+
+      res.json({
+        ...response,
+        total: resultado.total,
+      });
+    } catch (error: any) {
+      console.error('[ProductoController.buscarProductosPadre] Error:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Error al buscar productos padre',
+        message: error.message || 'Error desconocido',
+      });
+    }
+  }
+
+  /**
+   * GET /api/productos/:productoPadreId/datos-plantilla
+   * Obtener datos plantilla para pre-llenar formulario de variante
+   */
+  async obtenerDatosPlantilla(req: Request, res: Response, next: NextFunction) {
+    try {
+      const empresaId = (req as any).empresaId;
+
+      if (!empresaId) {
+        const validation = validateEmpresaId(req);
+        return res.status(400).json({
+          success: false,
+          ...validation,
+        });
+      }
+
+      const productoPadreId = parseInt(req.params.productoPadreId || '0');
+
+      if (isNaN(productoPadreId) || productoPadreId <= 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'ID de producto padre inválido',
+        });
+      }
+
+      const resultado = await productoService.obtenerDatosPlantilla(productoPadreId, empresaId);
+
+      const response: ApiResponse = {
+        success: true,
+        data: resultado,
+      };
+
+      res.json(response);
+    } catch (error: any) {
+      console.error('[ProductoController.obtenerDatosPlantilla] Error:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Error al obtener datos plantilla',
+        message: error.message || 'Error desconocido',
+      });
+    }
+  }
+
+  /**
+   * PATCH /api/productos/:id/local
+   * Actualizar solo datos locales (no SFactory)
+   */
+  async actualizarDatosLocales(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { id } = ProductoByIdParamsSchema.parse({
+        id: req.params.id,
+      });
+
+      const updateData = req.body;
+
+      const producto = await productoService.actualizarDatosLocales(id, updateData);
+
+      if (!producto) {
+        return res.status(404).json({
+          success: false,
+          message: 'Producto no encontrado',
+        });
+      }
+
+      const response: ApiResponse = {
+        success: true,
+        data: producto,
+        message: 'Datos locales actualizados exitosamente',
+      };
+
+      res.json(response);
+    } catch (error) {
+      const zodError = handleZodError(error);
+      if (zodError) {
+        return res.status(400).json({
+          success: false,
+          ...zodError,
+        });
+      }
+      next(error);
+    }
+  }
+
+  /**
+   * PATCH /api/productos/:productoWebId/variante
+   * Actualizar datos de variante (Talle y Color)
+   */
+  async actualizarDatosVariante(req: Request, res: Response, next: NextFunction) {
+    try {
+      const empresaId = (req as any).empresaId;
+
+      if (!empresaId) {
+        const validation = validateEmpresaId(req);
+        return res.status(400).json({
+          success: false,
+          ...validation,
+        });
+      }
+
+      const productoWebId = parseInt(req.params.productoWebId || '0');
+
+      if (isNaN(productoWebId) || productoWebId <= 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'ID de variante inválido',
+        });
+      }
+
+      const { talle, color } = req.body;
+
+      const updateData: {
+        talle?: string | null;
+        color?: string | null;
+      } = {};
+
+      if (talle !== undefined) {
+        updateData.talle = talle === '' || talle === null ? null : String(talle);
+      }
+      if (color !== undefined) {
+        updateData.color = color === '' || color === null ? null : String(color);
+      }
+
+      const resultado = await productoService.actualizarDatosVariante(
+        productoWebId,
+        updateData,
+        empresaId
+      );
+
+      const response: ApiResponse = {
+        success: true,
+        data: resultado,
+        message: 'Variante actualizada exitosamente',
+      };
+
+      res.json(response);
+    } catch (error: any) {
+      console.error('[ProductoController.actualizarDatosVariante] Error:', error);
+      
+      if (error.message && error.message.includes('ya existe')) {
+        return res.status(400).json({
+          success: false,
+          error: 'Combinación duplicada',
+          message: error.message,
+        });
+      }
+
+      return res.status(500).json({
+        success: false,
+        error: 'Error al actualizar variante',
+        message: error.message || 'Error desconocido',
+      });
+    }
+  }
+
+  /**
+   * GET /api/productos/:id/completo
+   * Obtener producto completo para edición (SFactory + Local + Variante)
+   */
+  async obtenerProductoCompleto(req: Request, res: Response, next: NextFunction) {
+    try {
+      const empresaId = (req as any).empresaId;
+
+      if (!empresaId) {
+        const validation = validateEmpresaId(req);
+        return res.status(400).json({
+          success: false,
+          ...validation,
+        });
+      }
+
+      const { id } = ProductoByIdParamsSchema.parse({
+        id: req.params.id,
+      });
+
+      const resultado = await productoService.obtenerProductoCompleto(id, empresaId);
+
+      const response: ApiResponse = {
+        success: true,
+        data: resultado,
+      };
+
+      res.json(response);
+    } catch (error: any) {
+      console.error('[ProductoController.obtenerProductoCompleto] Error:', error);
+      
+      const zodError = handleZodError(error);
+      if (zodError) {
+        return res.status(400).json({
+          success: false,
+          ...zodError,
+        });
+      }
+
+      if (error.message && error.message.includes('no encontrado')) {
+        return res.status(404).json({
+          success: false,
+          error: 'Producto no encontrado',
+          message: error.message,
+        });
+      }
+
+      return res.status(500).json({
+        success: false,
+        error: 'Error al obtener producto completo',
+        message: error.message || 'Error desconocido',
+      });
+    }
+  }
+
+  /**
+   * PUT /api/productos/:itemId/sfactory
+   * Actualizar producto en SFactory y sincronizar incrementalmente
+   * Flujo: Actualizar en SFactory → Sincronizar → Parsear en nuestras tablas
+   */
+  async actualizarEnSFactory(req: Request, res: Response, next: NextFunction) {
+    try {
+      const empresaId = (req as any).empresaId;
+      
+      if (!empresaId) {
+        const validation = validateEmpresaId(req);
+        return res.status(400).json({
+          success: false,
+          ...validation,
+        });
+      }
+
+      const itemId = parseInt(req.params.itemId || '0');
+      
+      if (isNaN(itemId) || itemId <= 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'ID de item inválido',
+          message: 'El item_id debe ser un número positivo',
+        });
+      }
+
+      // Validar body
+      const body = req.body as Partial<Omit<SFactoryItemEditData, 'item_id'>>;
+      
+      // Agregar item_id al body y asegurar campos requeridos
+      const editData: SFactoryItemEditData = {
+        tipo: body.tipo || 'P',
+        descripcion: body.descripcion || '',
+        ...body,
+        item_id: itemId,
+      };
+
+      // Actualizar producto en SFactory y sincronizar
+      const producto = await productoService.actualizarProducto(itemId, editData, empresaId);
+
+      const response: ApiResponse = {
+        success: true,
+        data: producto,
+        message: 'Producto actualizado y sincronizado exitosamente',
+      };
+
+      res.json(response);
+    } catch (error: any) {
+      console.error('[ProductoController.actualizarEnSFactory] Error:', error);
+      
+      const zodError = handleZodError(error);
+      if (zodError) {
+        return res.status(400).json({
+          success: false,
+          ...zodError,
+        });
+      }
+
+      // Error de validación de SFactory
+      if (error.message && error.message.includes('SFactory')) {
+        return res.status(400).json({
+          success: false,
+          error: 'Error al actualizar producto en SFactory',
+          message: error.message,
+        });
+      }
+
+      return res.status(500).json({
+        success: false,
+        error: 'Error al actualizar producto',
         message: error.message || 'Error desconocido',
       });
     }

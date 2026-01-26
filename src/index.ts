@@ -6,6 +6,10 @@ dotenv.config();
 
 const PORT = process.env.PORT || 3002;
 
+app.get('/health', (_req, res) => {
+  res.json({ ok: true });
+});
+
 // Start server
 app.listen(PORT, () => {
   console.log('🚀 Servidor corriendo en puerto', PORT);

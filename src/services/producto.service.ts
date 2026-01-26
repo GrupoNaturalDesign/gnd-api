@@ -11,6 +11,10 @@ import type {
   ProductoPublicado,
   VariantePublicada,
 } from '../types';
+import { sfactoryService } from './sfactory/sfactory.service';
+import { productoSyncService } from './sync/producto-sync.service';
+import type { SFactoryItemCreateData, SFactoryItemEditData, SFactoryProduct, SFactoryItemCreateResponse } from '../types/sfactory.types';
+import { extraerCodigoAgrupacion } from './producto-agrupacion.service';
 
 export class ProductoService {
   async getAll(
@@ -244,8 +248,8 @@ export class ProductoService {
       });
 
       // Buscar coincidencia case-insensitive
-      const found = allProducts.find(p => 
-        p.slug && p.slug.toLowerCase().trim() === cleanSlug.toLowerCase()
+      const found = allProducts.find((p: { id: number; slug: string | null }) => 
+        p.slug && String(p.slug).toLowerCase().trim() === cleanSlug.toLowerCase()
       );
 
       if (found) {
@@ -380,6 +384,199 @@ export class ProductoService {
         { talle: 'asc' },
       ],
     });
+  }
+
+  /**
+   * Crear producto en SFactory y sincronizar incrementalmente
+   * Reutiliza toda la lógica de parsing existente
+   */
+  async crearProducto(
+    data: SFactoryItemCreateData,
+    empresaId: number
+  ): Promise<ProductoPadreConVariantes> {
+    // 0. Validar código no existe (última validación antes de crear)
+    if (data.codigo) {
+      const validacion = await this.validarCodigo(data.codigo, empresaId);
+      if (validacion.existe) {
+        throw new Error(
+          `El código "${data.codigo}" ya existe en la base de datos. Por favor sincroniza los productos primero o usa otro código.`
+        );
+      }
+    }
+
+    // 1. Asegurar que um_id tenga un valor por defecto si no se proporciona
+    // SFactory requiere um_id, valor por defecto común es 1 (unidad estándar)
+    const dataConUmId = {
+      ...data,
+      um_id: data.um_id ?? 1,
+    };
+
+    // 2. Crear en SFactory
+    let sfactoryResponse: SFactoryItemCreateResponse;
+    try {
+      sfactoryResponse = await sfactoryService.crearItem(dataConUmId);
+    } catch (error: any) {
+      // Si SFactory rechaza por código duplicado, dar mensaje claro
+      if (error.message && (error.message.includes('duplicado') || error.message.includes('existe') || error.message.includes('ya existe'))) {
+        throw new Error(
+          `El código "${data.codigo || 'proporcionado'}" ya existe en SFactory. Por favor sincroniza los productos primero.`
+        );
+      }
+      throw error;
+    }
+
+    // 2. Obtener el código del producto creado
+    let codigo: string;
+
+    if (sfactoryResponse.codigo || sfactoryResponse.Codigo) {
+      codigo = (sfactoryResponse.codigo || sfactoryResponse.Codigo) as string;
+    } else if (sfactoryResponse.id) {
+      // Si solo tenemos el ID, leer el producto para obtener el código
+      try {
+        const productoCompleto = await sfactoryService.leerItem({ item_id: sfactoryResponse.id });
+        codigo = productoCompleto.Codigo || productoCompleto.codigo || '';
+        if (!codigo) {
+          throw new Error('No se pudo obtener el código del producto creado');
+        }
+      } catch (error) {
+        throw new Error(`Error al leer el producto creado: ${error instanceof Error ? error.message : 'Error desconocido'}`);
+      }
+    } else if (data.codigo) {
+      codigo = data.codigo;
+    } else {
+      throw new Error('No se pudo obtener el código del producto creado');
+    }
+
+    // 3. Intentar leer el producto completo desde SFactory para sincronizar
+    // Si no se puede leer, usar los datos de la respuesta de creación
+    let productoCompleto: SFactoryProduct | undefined;
+    
+    try {
+      productoCompleto = await sfactoryService.leerItem({ codigo });
+    } catch (error) {
+      // Si leerItem falla, usar la respuesta de creación directamente
+      // o construir un objeto básico con los datos que tenemos
+      console.warn(`[ProductoService.crearProducto] No se pudo leer el producto ${codigo} desde SFactory, usando datos de creación`);
+      // Construir objeto básico desde data y sfactoryResponse
+      productoCompleto = {
+        Codigo: codigo,
+        Descripcion: data.descripcion || data.descrip_corta || '',
+        Tipo: data.tipo || 'P',
+        PrecioCosto: data.precio_costo || null,
+        PrecioVenta: data.precio_venta || null,
+        id: sfactoryResponse.id || null,
+      } as SFactoryProduct;
+    }
+
+    // 4. Sincronizar incrementalmente (reutiliza TODO el parsing)
+    await productoSyncService.syncProductoIncremental(codigo, empresaId, productoCompleto);
+
+    // 5. Retornar producto local actualizado
+    const producto = await this.getByCodigoAgrupacion(codigo, empresaId);
+    if (!producto) {
+      throw new Error('Producto creado pero no se pudo recuperar');
+    }
+
+    return producto;
+  }
+
+  /**
+   * Actualizar producto en SFactory y sincronizar incrementalmente
+   */
+  async actualizarProducto(
+    itemId: number,
+    data: SFactoryItemEditData,
+    empresaId: number
+  ): Promise<ProductoPadreConVariantes> {
+    // 1. Actualizar en SFactory
+    await sfactoryService.editarItem(data);
+
+    // 2. Obtener el código del producto
+    let codigo: string;
+
+    if (data.codigo) {
+      codigo = data.codigo;
+    } else {
+      // Buscar en BD local
+      const productoLocal = await prisma.productoWeb.findFirst({
+        where: {
+          empresaId,
+          sfactoryId: itemId,
+        },
+      });
+      if (!productoLocal) {
+        throw new Error('No se pudo determinar el código del producto');
+      }
+      codigo = productoLocal.sfactoryCodigo;
+    }
+
+    // 3. Intentar leer el producto actualizado desde SFactory
+    let productoCompleto: SFactoryProduct;
+    try {
+      productoCompleto = await sfactoryService.leerItem({ codigo });
+    } catch (error) {
+      // Si leerItem falla, construir objeto básico desde data
+      console.warn(`[ProductoService.actualizarProducto] No se pudo leer el producto ${codigo} desde SFactory, usando datos de actualización`);
+      productoCompleto = {
+        Codigo: codigo,
+        Descripcion: data.descripcion || data.descrip_corta || '',
+        Tipo: data.tipo || 'P',
+        PrecioCosto: data.precio_costo || null,
+        PrecioVenta: data.precio_venta || null,
+        id: itemId,
+        rubro_id: data.rubro_id || null,
+        subrubro_id: data.subrubro_id || null,
+      } as SFactoryProduct;
+    }
+
+    // 4. Sincronizar incrementalmente (reutiliza TODO el parsing)
+    await productoSyncService.syncProductoIncremental(codigo, empresaId, productoCompleto);
+
+    // 5. Retornar producto local actualizado
+    const producto = await this.getByCodigoAgrupacion(codigo, empresaId);
+    if (!producto) {
+      throw new Error('Producto actualizado pero no se pudo recuperar');
+    }
+
+    return producto;
+  }
+
+  /**
+   * Helper para obtener producto por código de agrupación
+   */
+  private async getByCodigoAgrupacion(codigo: string, empresaId: number): Promise<ProductoPadreConVariantes | null> {
+    const codigoAgrupacion = extraerCodigoAgrupacion(codigo);
+
+    return prisma.productoPadre.findUnique({
+      where: {
+        unique_empresa_agrupacion: {
+          empresaId,
+          codigoAgrupacion,
+        },
+      },
+      include: {
+        productosWeb: {
+          orderBy: [
+            { color: 'asc' },
+            { talle: 'asc' },
+          ],
+        },
+        rubro: {
+          select: {
+            id: true,
+            nombre: true,
+            slug: true,
+          },
+        },
+        subrubro: {
+          select: {
+            id: true,
+            nombre: true,
+            slug: true,
+          },
+        },
+      },
+    }) as Promise<ProductoPadreConVariantes | null>;
   }
 
   async update(
@@ -582,7 +779,7 @@ export class ProductoService {
 
     // Filtrar productos que no tengan variantes activas (por si acaso)
     const dataFiltrada = data.filter(
-      (producto) => 
+      (producto: ProductoPadreConVariantes) => 
         producto.productosWeb && 
         producto.productosWeb.length > 0
     );
@@ -727,17 +924,19 @@ export class ProductoService {
     // Transformar a estructura optimizada
     const productosFormateados: ProductoPublicado[] = productos
       .filter((p) => p.productosWeb && p.productosWeb.length > 0)
-      .map((producto) => {
-        const variantesActivas = producto.productosWeb || [];
+      .map((producto): ProductoPublicado => {
+        // Type assertion para acceder a las propiedades
+        const p = producto as any;
+        const variantesActivas = p.productosWeb || [];
         
         // Obtener precios de ProductoPrecio si están disponibles, sino usar precioCache
         const preciosProductoPrecio = variantesActivas
-          .flatMap((v) => (v as any).precios || [])
+          .flatMap((v: any) => v.precios || [])
           .filter((p: any) => p.precioLista > 0);
         
         const preciosCache = variantesActivas
-          .map((v) => Number(v.precioCache || 0))
-          .filter((p) => p > 0);
+          .map((v: any) => Number(v.precioCache || 0))
+          .filter((p: number) => p > 0);
         
         // Priorizar precios de ProductoPrecio, sino usar precioCache
         let precioLista: number | null = null;
@@ -747,8 +946,8 @@ export class ProductoService {
         
         if (preciosProductoPrecio.length > 0) {
           // Usar precios de ProductoPrecio (ya calculados)
-          const precioMinPrecio = Math.min(...preciosProductoPrecio.map((p) => Number(p.precioLista)));
-          const precioObj = preciosProductoPrecio.find((p) => Number(p.precioLista) === precioMinPrecio);
+          const precioMinPrecio = Math.min(...preciosProductoPrecio.map((p: any) => Number(p.precioLista)));
+          const precioObj = preciosProductoPrecio.find((p: any) => Number(p.precioLista) === precioMinPrecio);
           
           if (precioObj) {
             precioLista = Number(precioObj.precioLista);
@@ -769,16 +968,16 @@ export class ProductoService {
         // Seleccionar imagen principal (priorizar variante con imagen)
         let imagenPrincipal: string | null = null;
         const varianteConImagen = variantesActivas.find(
-          (v) => (v as any).imagenes && (v as any).imagenes.length > 0
+          (v: any) => v.imagenes && v.imagenes.length > 0
         );
-        if ((varianteConImagen as any)?.imagenes?.[0]?.imagenUrl) {
-          imagenPrincipal = (varianteConImagen as any).imagenes[0].imagenUrl;
+        if (varianteConImagen?.imagenes?.[0]?.imagenUrl) {
+          imagenPrincipal = varianteConImagen.imagenes[0].imagenUrl;
         } else if (varianteConImagen?.imagenVariante) {
           imagenPrincipal = varianteConImagen.imagenVariante;
-        } else if (producto.imagenes && typeof producto.imagenes === 'object') {
-          const imagenesArray = Array.isArray(producto.imagenes) 
-            ? producto.imagenes 
-            : Object.values(producto.imagenes);
+        } else if (p.imagenes && typeof p.imagenes === 'object') {
+          const imagenesArray = Array.isArray(p.imagenes) 
+            ? p.imagenes 
+            : Object.values(p.imagenes);
           if (imagenesArray.length > 0 && typeof imagenesArray[0] === 'string') {
             imagenPrincipal = imagenesArray[0];
           }
@@ -787,15 +986,15 @@ export class ProductoService {
         // Crear mapa de imágenes por color (todas las variantes del mismo color usan la misma imagen)
         const imagenesPorColor = new Map<string, string | null>();
         
-        variantesActivas.forEach((v) => {
+        variantesActivas.forEach((v: any) => {
           if (v.color && !imagenesPorColor.has(v.color)) {
             // Buscar primera variante de este color con imagen
             const varianteConImagen = variantesActivas.find(
-              (v2) => v2.color === v.color && 
-              ((v2 as any).imagenes?.[0]?.imagenUrl || v2.imagenVariante)
+              (v2: any) => v2.color === v.color && 
+              (v2.imagenes?.[0]?.imagenUrl || v2.imagenVariante)
             );
             
-            const imagen = (varianteConImagen as any)?.imagenes?.[0]?.imagenUrl || 
+            const imagen = varianteConImagen?.imagenes?.[0]?.imagenUrl || 
                            varianteConImagen?.imagenVariante || 
                            null;
             imagenesPorColor.set(v.color, imagen);
@@ -851,27 +1050,27 @@ export class ProductoService {
           : null;
         
         return {
-          id: producto.id,
-          codigoAgrupacion: producto.codigoAgrupacion,
-          slug: producto.slug,
-          nombre: producto.nombre,
-          descripcion: producto.descripcion,
-          descripcionCorta: producto.descripcionCorta,
-          destacado: producto.destacado,
-          orden: producto.orden,
+          id: p.id,
+          codigoAgrupacion: p.codigoAgrupacion,
+          slug: p.slug,
+          nombre: p.nombre,
+          descripcion: p.descripcion,
+          descripcionCorta: p.descripcionCorta,
+          destacado: p.destacado,
+          orden: p.orden,
           sexo: sexoUnico, // Sexo del producto padre (heredado por todas las variantes)
-          rubro: producto.rubro && producto.rubro.slug
+          rubro: p.rubro && p.rubro.slug
             ? {
-                id: producto.rubro.id,
-                nombre: producto.rubro.nombre,
-                slug: producto.rubro.slug,
+                id: p.rubro.id,
+                nombre: p.rubro.nombre,
+                slug: p.rubro.slug,
               }
             : null,
-          subrubro: producto.subrubro && producto.subrubro.slug
+          subrubro: p.subrubro && p.subrubro.slug
             ? {
-                id: producto.subrubro.id,
-                nombre: producto.subrubro.nombre,
-                slug: producto.subrubro.slug,
+                id: p.subrubro.id,
+                nombre: p.subrubro.nombre,
+                slug: p.subrubro.slug,
               }
             : null,
           imagenPrincipal,
@@ -880,8 +1079,8 @@ export class ProductoService {
           precio3Cuotas,
           precioSinImp,
           variantes,
-          colores,
-          talles,
+          colores: colores as string[],
+          talles: talles as string[],
           totalVariantes: variantesActivas.length,
           tieneStock: stockTotal > 0,
           stockTotal,
@@ -914,6 +1113,737 @@ export class ProductoService {
       ...params,
       destacado: true, // Siempre filtrar por destacados
     });
+  }
+
+  /**
+   * Validar si un código existe en la base de datos local
+   * Busca en productos_sfactory (fuente de verdad sincronizada desde SFactory)
+   */
+  async validarCodigo(codigo: string, empresaId: number): Promise<{
+    existe: boolean;
+    disponible: boolean;
+    codigo: string;
+    mensaje?: string;
+  }> {
+    const producto = await prisma.productoSfactory.findUnique({
+      where: {
+        unique_empresa_codigo: {
+          empresaId,
+          codigo,
+        },
+      },
+    });
+
+    if (producto) {
+      return {
+        existe: true,
+        disponible: false,
+        codigo,
+        mensaje: 'Este código ya existe en la base de datos',
+      };
+    }
+
+    return {
+      existe: false,
+      disponible: true,
+      codigo,
+    };
+  }
+
+  /**
+   * Obtener variantes de un código base y calcular siguiente número sugerido
+   */
+  async obtenerVariantesPorCodigoBase(
+    codigoBase: string,
+    empresaId: number
+  ): Promise<{
+    codigoBase: string;
+    variantes: Array<{
+      codigo: string;
+      talle: string | null;
+      color: string | null;
+      numero: number;
+    }>;
+    ultimoNumero: number;
+    siguienteSugerido: number;
+    productoPadre: {
+      id: number;
+      nombre: string;
+      sexo: string | null;
+    } | null;
+  }> {
+    // Buscar producto padre por código base
+    const productoPadre = await prisma.productoPadre.findUnique({
+      where: {
+        unique_empresa_agrupacion: {
+          empresaId,
+          codigoAgrupacion: codigoBase,
+        },
+      },
+      select: {
+        id: true,
+        nombre: true,
+        productosWeb: {
+          where: {
+            activoSfactory: true,
+          },
+          select: {
+            sfactoryCodigo: true,
+            talle: true,
+            color: true,
+            sexo: true,
+          },
+          orderBy: {
+            id: 'asc',
+          },
+        },
+      },
+    });
+
+    if (!productoPadre) {
+      return {
+        codigoBase,
+        variantes: [],
+        ultimoNumero: 0,
+        siguienteSugerido: 1,
+        productoPadre: null,
+      };
+    }
+
+    // Obtener sexo de la primera variante
+    const sexo = productoPadre.productosWeb[0]?.sexo || null;
+
+    // Extraer números de variantes
+    const variantes = productoPadre.productosWeb.map((pw) => {
+      const codigo = pw.sfactoryCodigo;
+      const match = codigo.match(/(\d+)$/);
+      const numero = match && match[1] ? parseInt(match[1], 10) : 0;
+
+      return {
+        codigo,
+        talle: pw.talle,
+        color: pw.color,
+        numero,
+      };
+    });
+
+    // Ordenar por número y obtener el último
+    variantes.sort((a, b) => a.numero - b.numero);
+    const ultimaVariante = variantes.length > 0 ? variantes[variantes.length - 1] : undefined;
+    const ultimoNumero = ultimaVariante ? ultimaVariante.numero : 0;
+    const siguienteSugerido = ultimoNumero + 1;
+
+    return {
+      codigoBase,
+      variantes,
+      ultimoNumero,
+      siguienteSugerido,
+      productoPadre: {
+        id: productoPadre.id,
+        nombre: productoPadre.nombre,
+        sexo,
+      },
+    };
+  }
+
+  /**
+   * Obtener combinaciones Talle+Color existentes de un producto padre
+   */
+  async obtenerCombinaciones(
+    productoPadreId: number,
+    empresaId: number
+  ): Promise<{
+    combinaciones: Array<{ talle: string | null; color: string | null }>;
+    total: number;
+  }> {
+    const variantes = await prisma.productoWeb.findMany({
+      where: {
+        productoPadreId,
+        empresaId,
+        activoSfactory: true,
+      },
+      select: {
+        talle: true,
+        color: true,
+      },
+    });
+
+    // Crear combinaciones únicas
+    const combinacionesMap = new Map<string, { talle: string | null; color: string | null }>();
+    variantes.forEach((v) => {
+      const key = `${v.talle || ''}_${v.color || ''}`;
+      if (!combinacionesMap.has(key)) {
+        combinacionesMap.set(key, {
+          talle: v.talle,
+          color: v.color,
+        });
+      }
+    });
+
+    const combinaciones = Array.from(combinacionesMap.values());
+
+    return {
+      combinaciones,
+      total: combinaciones.length,
+    };
+  }
+
+  /**
+   * Buscar productos padre para crear variantes
+   */
+  async buscarProductosPadre(params: {
+    empresaId: number;
+    nombre?: string;
+    sexo?: string;
+    rubroId?: number;
+    limit?: number;
+  }): Promise<{
+    productos: Array<{
+      id: number;
+      nombre: string;
+      sexo: string | null;
+      codigoAgrupacion: string;
+      rubro: { id: number; nombre: string } | null;
+      variantesCount: number;
+    }>;
+    total: number;
+  }> {
+    // Construir condiciones de búsqueda por nombre/código
+    // Buscar por: nombre, descripción, código de agrupación, y códigos individuales de variantes (SKU)
+    const nombreConditions: Prisma.ProductoPadreWhereInput[] = params.nombre
+      ? [
+          {
+            nombre: {
+              contains: params.nombre,
+            },
+          },
+          {
+            descripcion: {
+              contains: params.nombre,
+            },
+          },
+          {
+            codigoAgrupacion: {
+              contains: params.nombre,
+            },
+          },
+          {
+            productosWeb: {
+              some: {
+                sfactoryCodigo: {
+                  contains: params.nombre,
+                },
+                ...(params.sexo && {
+                  sexo: params.sexo,
+                }),
+              },
+            },
+          },
+        ]
+      : [];
+
+    const where: Prisma.ProductoPadreWhereInput = {
+      empresaId: params.empresaId,
+      ...(params.nombre && {
+        OR: nombreConditions,
+      }),
+      // Si hay filtro de sexo, aplicarlo a todas las variantes del producto
+      // Esto asegura que solo se muestren productos que tienen variantes con ese sexo
+      ...(params.sexo && {
+        productosWeb: {
+          some: {
+            sexo: params.sexo,
+          },
+        },
+      }),
+      ...(params.rubroId && {
+        rubroId: params.rubroId,
+      }),
+    };
+
+    const [productos, total] = await Promise.all([
+      prisma.productoPadre.findMany({
+        where,
+        select: {
+          id: true,
+          nombre: true,
+          codigoAgrupacion: true,
+          rubro: {
+            select: {
+              id: true,
+              nombre: true,
+            },
+          },
+          productosWeb: {
+            select: {
+              id: true,
+              sexo: true,
+            },
+          },
+        },
+        take: params.limit || 50,
+        orderBy: {
+          nombre: 'asc',
+        },
+      }),
+      prisma.productoPadre.count({ where }),
+    ]);
+
+    // Obtener sexo de la primera variante
+    const productosConSexo = productos.map((p) => {
+      const primeraVariante = p.productosWeb[0];
+      return {
+        id: p.id,
+        nombre: p.nombre,
+        sexo: primeraVariante?.sexo || null,
+        codigoAgrupacion: p.codigoAgrupacion,
+        rubro: p.rubro,
+        variantesCount: p.productosWeb.length,
+      };
+    });
+
+    return {
+      productos: productosConSexo,
+      total,
+    };
+  }
+
+  /**
+   * Obtener datos plantilla para pre-llenar formulario de variante
+   */
+  async obtenerDatosPlantilla(
+    productoPadreId: number,
+    empresaId: number
+  ): Promise<{
+    datosSFactory: any;
+    datosLocales: {
+      nombre: string;
+      descripcion: string | null;
+      descripcionCorta: string | null;
+      descripcionMarketing: string | null;
+      destacado: boolean;
+    };
+    primeraVariante: {
+      talle: string | null;
+      color: string | null;
+    };
+  }> {
+    // Obtener producto padre
+    const productoPadre = await prisma.productoPadre.findUnique({
+      where: {
+        id: productoPadreId,
+      },
+      select: {
+        nombre: true,
+        descripcion: true,
+        descripcionCorta: true,
+        descripcionMarketing: true,
+        destacado: true,
+        rubroId: true,
+        subrubroId: true,
+      },
+    });
+
+    if (!productoPadre) {
+      throw new Error('Producto padre no encontrado');
+    }
+
+    // Obtener primera variante
+    const primeraVariante = await prisma.productoWeb.findFirst({
+      where: {
+        productoPadreId,
+        empresaId,
+        activoSfactory: true,
+      },
+      select: {
+        sfactoryCodigo: true,
+        talle: true,
+        color: true,
+      },
+      orderBy: {
+        id: 'asc',
+      },
+    });
+
+    if (!primeraVariante) {
+      throw new Error('No se encontró ninguna variante del producto');
+    }
+
+    // Obtener rubro y subrubro con sfactoryId
+    let rubroSfactoryId: number | null = null;
+    let subrubroSfactoryId: number | null = null;
+
+    if (productoPadre.rubroId) {
+      const rubro = await prisma.rubro.findUnique({
+        where: { id: productoPadre.rubroId },
+        select: { sfactoryId: true },
+      });
+      rubroSfactoryId = rubro?.sfactoryId || null;
+    }
+
+    if (productoPadre.subrubroId) {
+      const subrubro = await prisma.subrubro.findUnique({
+        where: { id: productoPadre.subrubroId },
+        select: { sfactoryId: true },
+      });
+      subrubroSfactoryId = subrubro?.sfactoryId || null;
+    }
+
+    // Obtener datos SFactory desde productos_sfactory
+    const productoSfactory = await prisma.productoSfactory.findUnique({
+      where: {
+        unique_empresa_codigo: {
+          empresaId,
+          codigo: primeraVariante.sfactoryCodigo,
+        },
+      },
+      select: {
+        tipo: true,
+        descripcion: true,
+        descrip_corta: true,
+        detalle: true,
+        precio_costo: true,
+        precio_venta: true,
+        utilidad_planificada: true,
+        iva: true,
+        stock_minimo: true,
+        stock_maximo: true,
+        stockeable: true,
+        item_compra: true,
+        item_venta: true,
+        item_alquiler: true,
+        um_id: true, // Incluir um_id
+        um_compra_id: true,
+        item_lote: true,
+        item_serie: true,
+        usa_vencimiento: true,
+        cta_ingresos_id: true,
+        cta_costo_venta_id: true,
+        cta_egresos_id: true,
+        barcode: true,
+        clase_id: true,
+        linea_id: true,
+        ctb_id: true,
+        moneda_id: true,
+      },
+    });
+
+    if (!productoSfactory) {
+      throw new Error('No se encontraron datos de SFactory para este producto');
+    }
+
+    // Mapear datos SFactory al formato esperado
+    const datosSFactory = {
+      tipo: productoSfactory.tipo || 'P',
+      descripcion: productoSfactory.descripcion || productoSfactory.descrip_corta || '',
+      descrip_corta: productoSfactory.descrip_corta || null,
+      detalle: productoSfactory.detalle || null,
+      precio_costo: productoSfactory.precio_costo ? Number(productoSfactory.precio_costo) : null,
+      precio_venta: productoSfactory.precio_venta ? Number(productoSfactory.precio_venta) : null,
+      moneda_id: productoSfactory.moneda_id ? Number(productoSfactory.moneda_id) : null,
+      utilidad_planificada: productoSfactory.utilidad_planificada ? Number(productoSfactory.utilidad_planificada) : null,
+      iva: productoSfactory.iva ? Number(productoSfactory.iva) : null,
+      stock_minimo: productoSfactory.stock_minimo ? Number(productoSfactory.stock_minimo) : null,
+      stock_maximo: productoSfactory.stock_maximo ? Number(productoSfactory.stock_maximo) : null,
+      rubro_id: rubroSfactoryId, // Heredado del producto padre
+      subrubro_id: subrubroSfactoryId, // Heredado del producto padre
+      stockeable: productoSfactory.stockeable === 'S' ? 1 : 0,
+      item_compra: productoSfactory.item_compra === 'S' ? 1 : null,
+      item_venta: productoSfactory.item_venta === 'S' ? 1 : null,
+      item_alquiler: productoSfactory.item_alquiler === 'S' ? 1 : null,
+      um_id: productoSfactory.um_id || 1, // Heredado del producto padre, por defecto 1 si no existe
+      um_compra_id: productoSfactory.um_compra_id || null,
+      usa_lote: productoSfactory.item_lote === 'S',
+      usa_serie: productoSfactory.item_serie === 'S' ? 1 : 0,
+      usa_vencimiento: null,
+      cta_ingresos_id: null,
+      cta_costo_venta_id: null,
+      cta_egresos_id: null,
+      barcode: productoSfactory.barcode || null,
+      clase_id: null,
+      linea_id: null,
+      ctb_id: null,
+    };
+
+      return {
+        datosSFactory,
+        datosLocales: {
+          nombre: productoPadre.nombre,
+          descripcion: productoPadre.descripcion,
+          descripcionCorta: productoPadre.descripcionCorta,
+          descripcionMarketing: productoPadre.descripcionMarketing,
+          destacado: productoPadre.destacado,
+        },
+        primeraVariante: {
+          talle: primeraVariante.talle,
+          color: primeraVariante.color,
+        },
+      };
+    }
+
+  /**
+   * Actualizar solo datos locales (no SFactory)
+   */
+  async actualizarDatosLocales(
+    id: number,
+    data: {
+      descripcionMarketing?: string;
+      descripcionCorta?: string;
+      destacado?: boolean;
+      nombre?: string;
+      descripcion?: string;
+    }
+  ): Promise<ProductoPadreConVariantes> {
+    const updateData: Prisma.ProductoPadreUpdateInput = {};
+
+    if (data.descripcionMarketing !== undefined) {
+      updateData.descripcionMarketing = data.descripcionMarketing;
+    }
+    if (data.descripcionCorta !== undefined) {
+      updateData.descripcionCorta = data.descripcionCorta;
+    }
+    if (data.destacado !== undefined) {
+      updateData.destacado = data.destacado;
+    }
+    if (data.nombre !== undefined) {
+      updateData.nombre = data.nombre;
+    }
+    if (data.descripcion !== undefined) {
+      updateData.descripcion = data.descripcion;
+    }
+
+    await prisma.productoPadre.update({
+      where: { id },
+      data: updateData,
+    });
+
+    return this.getById(id, true) as Promise<ProductoPadreConVariantes>;
+  }
+
+  /**
+   * Actualizar datos de variante (Talle y Color)
+   */
+  async actualizarDatosVariante(
+    productoWebId: number,
+    data: {
+      talle?: string | null;
+      color?: string | null;
+    },
+    empresaId: number
+  ): Promise<{
+    id: number;
+    talle: string | null;
+    color: string | null;
+  }> {
+    // Validar que la nueva combinación no exista en el mismo producto padre
+    const variante = await prisma.productoWeb.findUnique({
+      where: { id: productoWebId },
+      select: {
+        productoPadreId: true,
+        talle: true,
+        color: true,
+      },
+    });
+
+    if (!variante) {
+      throw new Error('Variante no encontrada');
+    }
+
+    // Si está cambiando talle o color, validar que no exista la combinación
+    if (data.talle !== undefined || data.color !== undefined) {
+      const nuevoTalle = data.talle !== undefined ? data.talle : variante.talle;
+      const nuevoColor = data.color !== undefined ? data.color : variante.color;
+
+      const combinacionExistente = await prisma.productoWeb.findFirst({
+        where: {
+          productoPadreId: variante.productoPadreId,
+          empresaId,
+          id: { not: productoWebId },
+          talle: nuevoTalle,
+          color: nuevoColor,
+          activoSfactory: true,
+        },
+      });
+
+      if (combinacionExistente) {
+        throw new Error(
+          `La combinación Talle "${nuevoTalle}" y Color "${nuevoColor}" ya existe en este producto`
+        );
+      }
+    }
+
+    await prisma.productoWeb.update({
+      where: { id: productoWebId },
+      data: {
+        talle: data.talle !== undefined ? data.talle : undefined,
+        color: data.color !== undefined ? data.color : undefined,
+      },
+    });
+
+    const actualizado = await prisma.productoWeb.findUnique({
+      where: { id: productoWebId },
+      select: {
+        id: true,
+        talle: true,
+        color: true,
+      },
+    });
+
+    if (!actualizado) {
+      throw new Error('Error al actualizar la variante');
+    }
+
+    return actualizado;
+  }
+
+  /**
+   * Obtener producto completo para edición (SFactory + Local + Variante)
+   */
+  async obtenerProductoCompleto(
+    id: number,
+    empresaId: number
+  ): Promise<{
+    datosSFactory: any;
+    datosLocales: {
+      id: number;
+      nombre: string;
+      descripcion: string | null;
+      descripcionCorta: string | null;
+      descripcionMarketing: string | null;
+      destacado: boolean;
+      rubroId: number | null;
+      subrubroId: number | null;
+    };
+    variante: {
+      id: number;
+      talle: string | null;
+      color: string | null;
+      sfactoryCodigo: string;
+      sfactoryId: number;
+    } | null;
+    productoPadre: {
+      id: number;
+      nombre: string;
+      sexo: string | null;
+      codigoAgrupacion: string;
+    };
+  }> {
+    // Obtener producto padre
+    const productoPadre = await prisma.productoPadre.findUnique({
+      where: { id },
+      include: {
+        rubro: {
+          select: {
+            id: true,
+            sfactoryId: true,
+          },
+        },
+        subrubro: {
+          select: {
+            id: true,
+            sfactoryId: true,
+          },
+        },
+        productosWeb: {
+          where: {
+            empresaId,
+            activoSfactory: true,
+          },
+          orderBy: {
+            id: 'asc',
+          },
+          take: 1,
+        },
+      },
+    });
+
+    if (!productoPadre) {
+      throw new Error('Producto no encontrado');
+    }
+
+    const primeraVariante = productoPadre.productosWeb[0];
+
+    if (!primeraVariante) {
+      throw new Error('No se encontró ninguna variante activa del producto');
+    }
+
+    // Obtener datos SFactory
+    const productoSfactory = await prisma.productoSfactory.findUnique({
+      where: {
+        unique_empresa_codigo: {
+          empresaId,
+          codigo: primeraVariante.sfactoryCodigo,
+        },
+      },
+    });
+
+    if (!productoSfactory) {
+      throw new Error('No se encontraron datos de SFactory para este producto');
+    }
+
+    // Obtener sexo de la primera variante
+    const sexo = primeraVariante.sexo;
+
+    // Mapear datos SFactory desde la tabla productos_sfactory
+    const datosSFactory = {
+      tipo: productoSfactory.tipo || 'P',
+      descripcion: productoSfactory.descripcion || productoSfactory.descrip_corta || '',
+      descrip_corta: productoSfactory.descrip_corta || null,
+      detalle: productoSfactory.detalle || null,
+      precio_costo: productoSfactory.precio_costo ? Number(productoSfactory.precio_costo) : null,
+      precio_venta: productoSfactory.precio_venta ? Number(productoSfactory.precio_venta) : null,
+      moneda_id: productoSfactory.moneda ? (productoSfactory.moneda === '1' ? 1 : productoSfactory.moneda === '2' ? 2 : null) : null,
+      utilidad_planificada: productoSfactory.utilidad_planificada ? Number(productoSfactory.utilidad_planificada) : null,
+      iva: productoSfactory.iva ? Number(productoSfactory.iva) : null,
+      stock_minimo: productoSfactory.stock_minimo ? Number(productoSfactory.stock_minimo) : null,
+      stock_maximo: productoSfactory.stock_maximo ? Number(productoSfactory.stock_maximo) : null,
+      rubro_id: productoSfactory.rubro_id || productoPadre.rubro?.sfactoryId || null,
+      subrubro_id: productoSfactory.subrubro_id || productoPadre.subrubro?.sfactoryId || null,
+      stockeable: productoSfactory.stockeable === 'S' || productoSfactory.stockeable === '1' ? 1 : 0,
+      item_compra: productoSfactory.item_compra === 'S' || productoSfactory.item_compra === '1' ? 1 : (productoSfactory.item_compra === 'N' || productoSfactory.item_compra === '0' ? 0 : null),
+      item_venta: productoSfactory.item_venta === 'S' || productoSfactory.item_venta === '1' ? 1 : (productoSfactory.item_venta === 'N' || productoSfactory.item_venta === '0' ? 0 : null),
+      item_alquiler: productoSfactory.item_alquiler === 'S' || productoSfactory.item_alquiler === '1' ? 1 : (productoSfactory.item_alquiler === 'N' || productoSfactory.item_alquiler === '0' ? 0 : null),
+      um_id: productoSfactory.um_id || null,
+      um_compra_id: productoSfactory.um_compra_id || null,
+      usa_lote: productoSfactory.item_lote === 'S' || productoSfactory.item_lote === '1',
+      usa_serie: productoSfactory.item_serie === 'S' || productoSfactory.item_serie === '1' ? 1 : 0,
+      usa_vencimiento: null, // No está en el schema
+      cta_ingresos_id: productoSfactory.cta_ingresos_id || null,
+      cta_costo_venta_id: productoSfactory.cta_costo_venta_id || null,
+      cta_egresos_id: productoSfactory.cta_egresos_id || null,
+      barcode: productoSfactory.barcode || null,
+      clase_id: null, // No está en el schema como ID
+      linea_id: null, // No está en el schema como ID
+      ctb_id: productoSfactory.ctb_id || null,
+      item_id: productoSfactory.sfactory_id || null,
+    };
+
+    return {
+      datosSFactory,
+      datosLocales: {
+        id: productoPadre.id,
+        nombre: productoPadre.nombre,
+        descripcion: productoPadre.descripcion,
+        descripcionCorta: productoPadre.descripcionCorta,
+        descripcionMarketing: productoPadre.descripcionMarketing,
+        destacado: productoPadre.destacado,
+        rubroId: productoPadre.rubroId,
+        subrubroId: productoPadre.subrubroId,
+      },
+      variante: {
+        id: primeraVariante.id,
+        talle: primeraVariante.talle,
+        color: primeraVariante.color,
+        sfactoryCodigo: primeraVariante.sfactoryCodigo,
+        sfactoryId: primeraVariante.sfactoryId,
+      },
+      productoPadre: {
+        id: productoPadre.id,
+        nombre: productoPadre.nombre,
+        sexo: sexo,
+        codigoAgrupacion: productoPadre.codigoAgrupacion,
+      },
+    };
   }
 }
 
