@@ -347,6 +347,78 @@ export class ProductoController {
     }
   }
 
+  async bulkUpdatePublicado(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { ids, publicado } = req.body;
+      
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'ids debe ser un array no vacío',
+        });
+      }
+
+      if (typeof publicado !== 'boolean') {
+        return res.status(400).json({
+          success: false,
+          message: 'publicado debe ser un booleano',
+        });
+      }
+
+      const empresaId = (req as any).empresaId;
+      const result = await productoService.bulkUpdatePublicado(ids, publicado);
+
+      // Invalidar cache
+      await CacheService.invalidateProducts(empresaId);
+
+      const response: ApiResponse = {
+        success: true,
+        data: { count: result.count },
+        message: `${result.count} producto(s) actualizado(s) exitosamente`,
+      };
+
+      res.json(response);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async bulkUpdateDestacado(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { ids, destacado } = req.body;
+      
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'ids debe ser un array no vacío',
+        });
+      }
+
+      if (typeof destacado !== 'boolean') {
+        return res.status(400).json({
+          success: false,
+          message: 'destacado debe ser un booleano',
+        });
+      }
+
+      const empresaId = (req as any).empresaId;
+      const result = await productoService.bulkUpdateDestacado(ids, destacado);
+
+      // Invalidar cache
+      await CacheService.invalidateProducts(empresaId);
+
+      const response: ApiResponse = {
+        success: true,
+        data: { count: result.count },
+        message: `${result.count} producto(s) actualizado(s) exitosamente`,
+      };
+
+      res.json(response);
+    } catch (error) {
+      next(error);
+    }
+  }
+
   /**
    * Endpoint público para obtener productos activos del ecommerce
    * Solo devuelve productos publicados con variantes activas

@@ -57,6 +57,12 @@ router.patch('/:id/local', productoController.actualizarDatosLocales.bind(produc
 // PATCH /api/productos/:productoWebId/variante - Actualizar datos de variante
 router.patch('/:productoWebId/variante', productoController.actualizarDatosVariante.bind(productoController));
 
+// PATCH /api/productos/bulk/publicado - Actualizar publicado en bulk
+router.patch('/bulk/publicado', productoController.bulkUpdatePublicado.bind(productoController));
+
+// PATCH /api/productos/bulk/destacado - Actualizar destacado en bulk
+router.patch('/bulk/destacado', productoController.bulkUpdateDestacado.bind(productoController));
+
 // Rutas genéricas (deben ir DESPUÉS de las específicas)
 
 // POST /api/productos - Crear producto en SFactory y sincronizar

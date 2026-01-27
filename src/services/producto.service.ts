@@ -631,6 +631,36 @@ export class ProductoService {
   }
 
   /**
+   * Actualiza el campo publicado de múltiples productos
+   */
+  async bulkUpdatePublicado(ids: number[], publicado: boolean): Promise<{ count: number }> {
+    const result = await prisma.productoPadre.updateMany({
+      where: {
+        id: { in: ids },
+      },
+      data: {
+        publicado,
+      },
+    });
+    return { count: result.count };
+  }
+
+  /**
+   * Actualiza el campo destacado de múltiples productos
+   */
+  async bulkUpdateDestacado(ids: number[], destacado: boolean): Promise<{ count: number }> {
+    const result = await prisma.productoPadre.updateMany({
+      where: {
+        id: { in: ids },
+      },
+      data: {
+        destacado,
+      },
+    });
+    return { count: result.count };
+  }
+
+  /**
    * Obtiene productos activos para el ecommerce (público)
    * Solo devuelve productos publicados con al menos una variante activa
    * Optimizado para el frontend del cliente
