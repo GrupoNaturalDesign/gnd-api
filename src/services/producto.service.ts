@@ -60,17 +60,17 @@ export class ProductoService {
     const include: Prisma.ProductoPadreInclude = {
       productosWeb: params.includeVariantes
         ? {
-            where: {
-              activoSfactory: true,
-            },
-            include: {
-              precios: true,
-            },
-            orderBy: [
-              { color: 'asc' },
-              { talle: 'asc' },
-            ],
-          }
+          where: {
+            activoSfactory: true,
+          },
+          include: {
+            precios: true,
+          },
+          orderBy: [
+            { color: 'asc' },
+            { talle: 'asc' },
+          ],
+        }
         : false,
       rubro: {
         select: {
@@ -134,14 +134,14 @@ export class ProductoService {
     const include: Prisma.ProductoPadreInclude = {
       productosWeb: includeVariantes
         ? {
-            where: {
-              activoSfactory: true,
-            },
-            orderBy: [
-              { color: 'asc' },
-              { talle: 'asc' },
-            ],
-          }
+          where: {
+            activoSfactory: true,
+          },
+          orderBy: [
+            { color: 'asc' },
+            { talle: 'asc' },
+          ],
+        }
         : false,
       rubro: {
         select: {
@@ -178,21 +178,21 @@ export class ProductoService {
     const include: Prisma.ProductoPadreInclude = {
       productosWeb: includeVariantes
         ? {
-            where: {
-              activoSfactory: true,
+          where: {
+            activoSfactory: true,
+          },
+          include: {
+            precios: true,
+            imagenes: {
+              orderBy: { orden: 'asc' },
+              take: 5,
             },
-            include: {
-              precios: true,
-              imagenes: {
-                orderBy: { orden: 'asc' },
-                take: 5,
-              },
-            },
-            orderBy: [
-              { color: 'asc' },
-              { talle: 'asc' },
-            ],
-          }
+          },
+          orderBy: [
+            { color: 'asc' },
+            { talle: 'asc' },
+          ],
+        }
         : false,
       rubro: {
         select: {
@@ -217,10 +217,10 @@ export class ProductoService {
 
     // Limpiar el slug
     const cleanSlug = slug.trim();
-    
-    console.log('[ProductoService.getBySlug] Searching:', { 
-      slug: cleanSlug, 
-      empresaId 
+
+    console.log('[ProductoService.getBySlug] Searching:', {
+      slug: cleanSlug,
+      empresaId
     });
 
     // Primero intentar búsqueda exacta
@@ -236,7 +236,7 @@ export class ProductoService {
     // Si no se encuentra, intentar búsqueda case-insensitive
     if (!producto) {
       console.log('[ProductoService.getBySlug] Exact match not found, trying case-insensitive');
-      
+
       // Obtener todos los productos publicados de la empresa para buscar manualmente
       const allProducts = await prisma.productoPadre.findMany({
         where: {
@@ -248,7 +248,7 @@ export class ProductoService {
       });
 
       // Buscar coincidencia case-insensitive
-      const found = allProducts.find((p: { id: number; slug: string | null }): boolean => 
+      const found = allProducts.find((p: { id: number; slug: string | null }): boolean =>
         p.slug !== null && String(p.slug).toLowerCase().trim() === cleanSlug.toLowerCase()
       );
 
@@ -305,19 +305,19 @@ export class ProductoService {
         // Prioridad 1: Mismo subrubro
         ...(producto.subrubroId
           ? [
-              {
-                subrubroId: producto.subrubroId,
-              },
-            ]
+            {
+              subrubroId: producto.subrubroId,
+            },
+          ]
           : []),
         // Prioridad 2: Mismo rubro
         ...(producto.rubroId
           ? [
-              {
-                rubroId: producto.rubroId,
-                subrubroId: producto.subrubroId ? { not: producto.subrubroId } : undefined,
-              },
-            ]
+            {
+              rubroId: producto.rubroId,
+              subrubroId: producto.subrubroId ? { not: producto.subrubroId } : undefined,
+            },
+          ]
           : []),
       ],
     };
@@ -451,7 +451,7 @@ export class ProductoService {
     // 3. Intentar leer el producto completo desde SFactory para sincronizar
     // Si no se puede leer, usar los datos de la respuesta de creación
     let productoCompleto: SFactoryProduct | undefined;
-    
+
     try {
       productoCompleto = await sfactoryService.leerItem({ codigo });
       // CRÍTICO: Asegurar que rubro_id y subrubro_id estén presentes
@@ -602,7 +602,7 @@ export class ProductoService {
     }
   ): Promise<ProductoPadreConVariantes | null> {
     const updateData: Prisma.ProductoPadreUpdateInput = {};
-    
+
     if (data.destacado !== undefined) {
       updateData.destacado = data.destacado;
     }
@@ -697,7 +697,7 @@ export class ProductoService {
 
     // Ordenamiento
     const orderBy: Prisma.ProductoPadreOrderByWithRelationInput[] = [];
-    
+
     if (params.sortBy === 'destacado') {
       orderBy.push({ destacado: params.sortOrder || 'desc' });
     }
@@ -707,7 +707,7 @@ export class ProductoService {
     if (params.sortBy === 'orden') {
       orderBy.push({ orden: params.sortOrder || 'asc' });
     }
-    
+
     // Orden por defecto: destacados primero, luego por orden
     if (orderBy.length === 0) {
       orderBy.push(
@@ -791,8 +791,8 @@ export class ProductoService {
 
     // Filtrar productos que no tengan variantes activas (por si acaso)
     const dataFiltrada = data.filter(
-      (producto: ProductoPadreConVariantes) => 
-        producto.productosWeb && 
+      (producto: ProductoPadreConVariantes) =>
+        producto.productosWeb &&
         producto.productosWeb.length > 0
     );
 
@@ -873,7 +873,7 @@ export class ProductoService {
 
     // Ordenamiento
     const orderBy: Prisma.ProductoPadreOrderByWithRelationInput[] = [];
-    
+
     if (params.sortBy === 'destacado') {
       orderBy.push({ destacado: params.sortOrder || 'desc' });
     } else if (params.sortBy === 'nombre') {
@@ -948,27 +948,27 @@ export class ProductoService {
         // Type assertion para acceder a las propiedades
         const p = producto as any;
         const variantesActivas = p.productosWeb || [];
-        
+
         // Obtener precios de ProductoPrecio si están disponibles, sino usar precioCache
         const preciosProductoPrecio = variantesActivas
           .flatMap((v: any) => v.precios || [])
           .filter((p: any): boolean => Number(p.precioLista) > 0);
-        
+
         const preciosCache = variantesActivas
           .map((v: any): number => Number(v.precioCache || 0))
           .filter((p: number): boolean => p > 0);
-        
+
         // Priorizar precios de ProductoPrecio, sino usar precioCache
         let precioLista: number | null = null;
         let precioTransfer: number | null = null;
         let precio3Cuotas: number | null = null;
         let precioSinImp: number | null = null;
-        
+
         if (preciosProductoPrecio.length > 0) {
           // Usar precios de ProductoPrecio (ya calculados)
           const precioMinPrecio = Math.min(...preciosProductoPrecio.map((p: any): number => Number(p.precioLista)));
           const precioObj = preciosProductoPrecio.find((p: any): boolean => Number(p.precioLista) === precioMinPrecio);
-          
+
           if (precioObj) {
             precioLista = Number(precioObj.precioLista);
             precioTransfer = precioObj.precioTransfer ? Number(precioObj.precioTransfer) : null;
@@ -981,10 +981,10 @@ export class ProductoService {
           // Los precios derivados se calcularán usando las constantes si es necesario
           // Por ahora dejamos null si no hay ProductoPrecio
         }
-        
+
         const precioMin = preciosCache.length > 0 ? Math.min(...preciosCache) : precioLista;
         const precioMax = preciosCache.length > 0 ? Math.max(...preciosCache) : precioLista;
-        
+
         // Seleccionar imagen principal (priorizar variante con imagen)
         let imagenPrincipal: string | null = null;
         const varianteConImagen = variantesActivas.find(
@@ -995,36 +995,36 @@ export class ProductoService {
         } else if (varianteConImagen?.imagenVariante) {
           imagenPrincipal = varianteConImagen.imagenVariante;
         } else if (p.imagenes && typeof p.imagenes === 'object') {
-          const imagenesArray = Array.isArray(p.imagenes) 
-            ? p.imagenes 
+          const imagenesArray = Array.isArray(p.imagenes)
+            ? p.imagenes
             : Object.values(p.imagenes);
           if (imagenesArray.length > 0 && typeof imagenesArray[0] === 'string') {
             imagenPrincipal = imagenesArray[0];
           }
         }
-        
+
         // Crear mapa de imágenes por color (todas las variantes del mismo color usan la misma imagen)
         const imagenesPorColor = new Map<string, string | null>();
-        
+
         variantesActivas.forEach((v: any): void => {
           if (v.color && !imagenesPorColor.has(v.color)) {
             // Buscar primera variante de este color con imagen
             const varianteConImagen = variantesActivas.find(
-              (v2: any): boolean => v2.color === v.color && 
-              (v2.imagenes?.[0]?.imagenUrl || v2.imagenVariante)
+              (v2: any): boolean => v2.color === v.color &&
+                (v2.imagenes?.[0]?.imagenUrl || v2.imagenVariante)
             );
-            
-            const imagen = varianteConImagen?.imagenes?.[0]?.imagenUrl || 
-                           varianteConImagen?.imagenVariante || 
-                           null;
+
+            const imagen = varianteConImagen?.imagenes?.[0]?.imagenUrl ||
+              varianteConImagen?.imagenVariante ||
+              null;
             imagenesPorColor.set(v.color, imagen);
           }
         });
-        
+
         // Variantes simplificadas
         const variantes: VariantePublicada[] = variantesActivas.map((v: any): VariantePublicada => {
           const imagenColor = v.color ? imagenesPorColor.get(v.color) || null : null;
-          
+
           return {
             id: v.id,
             codigo: v.sfactoryCodigo,
@@ -1037,7 +1037,7 @@ export class ProductoService {
             tieneImagen: !!imagenColor,
           };
         });
-        
+
         // Agregados
         const colores = Array.from(
           new Set(
@@ -1046,7 +1046,7 @@ export class ProductoService {
               .filter((c: string | null): c is string => !!c)
           )
         ).sort();
-        
+
         const talles = Array.from(
           new Set(
             variantesActivas
@@ -1054,21 +1054,21 @@ export class ProductoService {
               .filter((t: string | null): t is string => !!t)
           )
         ).sort();
-        
+
         const stockTotal = variantesActivas.reduce(
           (sum: number, v: any): number => sum + Number(v.stockCache || 0),
           0
         );
-        
+
         // Obtener sexo común de todas las variantes (las variantes heredan el sexo del producto padre)
         // Si todas las variantes tienen el mismo sexo, usar ese. Si no, usar null.
         const sexos = variantesActivas
           .map((v: any): string | null => v.sexo)
           .filter((s: string | null): s is string => !!s);
-        const sexoUnico: string | null = sexos.length > 0 && new Set(sexos).size === 1 
+        const sexoUnico: string | null = sexos.length > 0 && new Set(sexos).size === 1
           ? (sexos[0] ?? null)
           : null;
-        
+
         return {
           id: p.id,
           codigoAgrupacion: p.codigoAgrupacion,
@@ -1081,17 +1081,17 @@ export class ProductoService {
           sexo: sexoUnico, // Sexo del producto padre (heredado por todas las variantes)
           rubro: p.rubro && p.rubro.slug
             ? {
-                id: p.rubro.id,
-                nombre: p.rubro.nombre,
-                slug: p.rubro.slug,
-              }
+              id: p.rubro.id,
+              nombre: p.rubro.nombre,
+              slug: p.rubro.slug,
+            }
             : null,
           subrubro: p.subrubro && p.subrubro.slug
             ? {
-                id: p.subrubro.id,
-                nombre: p.subrubro.nombre,
-                slug: p.subrubro.slug,
-              }
+              id: p.subrubro.id,
+              nombre: p.subrubro.nombre,
+              slug: p.subrubro.slug,
+            }
             : null,
           imagenPrincipal,
           precioLista,
@@ -1145,12 +1145,11 @@ export class ProductoService {
     codigo: string;
     mensaje?: string;
   }> {
-    const producto = await prisma.productoSfactory.findUnique({
+    // Usar findFirst en lugar de findUnique para evitar problemas con nombres de constraints
+    const producto = await prisma.productoSfactory.findFirst({
       where: {
-        unique_empresa_codigo: {
-          empresaId,
-          codigo,
-        },
+        empresaId,
+        codigo,
       },
     });
 
@@ -1332,34 +1331,34 @@ export class ProductoService {
     // Buscar por: nombre, descripción, código de agrupación, y códigos individuales de variantes (SKU)
     const nombreConditions: Prisma.ProductoPadreWhereInput[] = params.nombre
       ? [
-          {
-            nombre: {
-              contains: params.nombre,
-            },
+        {
+          nombre: {
+            contains: params.nombre,
           },
-          {
-            descripcion: {
-              contains: params.nombre,
-            },
+        },
+        {
+          descripcion: {
+            contains: params.nombre,
           },
-          {
-            codigoAgrupacion: {
-              contains: params.nombre,
-            },
+        },
+        {
+          codigoAgrupacion: {
+            contains: params.nombre,
           },
-          {
-            productosWeb: {
-              some: {
-                sfactoryCodigo: {
-                  contains: params.nombre,
-                },
-                ...(params.sexo && {
-                  sexo: params.sexo,
-                }),
+        },
+        {
+          productosWeb: {
+            some: {
+              sfactoryCodigo: {
+                contains: params.nombre,
               },
+              ...(params.sexo && {
+                sexo: params.sexo,
+              }),
             },
           },
-        ]
+        },
+      ]
       : [];
 
     const where: Prisma.ProductoPadreWhereInput = {
@@ -1509,13 +1508,22 @@ export class ProductoService {
       subrubroSfactoryId = subrubro?.sfactoryId || null;
     }
 
+    console.log('DEBUG obtenerDatosPlantilla:', {
+      productoPadreId,
+      empresaId,
+      empresaIdType: typeof empresaId,
+      sfactoryCodigo: primeraVariante.sfactoryCodigo,
+      sfactoryCodigoLength: primeraVariante.sfactoryCodigo?.length,
+      sfactoryCodigoHex: primeraVariante.sfactoryCodigo ? Buffer.from(primeraVariante.sfactoryCodigo).toString('hex') : null
+    });
+
     // Obtener datos SFactory desde productos_sfactory
-    const productoSfactory = await prisma.productoSfactory.findUnique({
+    // Usar findFirst en lugar de findUnique para evitar problemas con nombres de constraints
+    // y porque el registro puede no existir si no se ha sincronizado desde SFactory
+    const productoSfactory = await prisma.productoSfactory.findFirst({
       where: {
-        unique_empresa_codigo: {
-          empresaId,
-          codigo: primeraVariante.sfactoryCodigo,
-        },
+        empresaId,
+        codigo: primeraVariante.sfactoryCodigo,
       },
       select: {
         tipo: true,
@@ -1546,7 +1554,13 @@ export class ProductoService {
     });
 
     if (!productoSfactory) {
-      throw new Error('No se encontraron datos de SFactory para este producto');
+      throw new Error(
+        `No se encontraron datos de SFactory para el producto. ` +
+        `ProductoPadreId: ${productoPadreId}, EmpresaId: ${empresaId}, ` +
+        `Código: ${primeraVariante.sfactoryCodigo}. ` +
+        `El producto existe en productos_web pero no en productos_sfactory. ` +
+        `Es posible que necesite sincronizarse desde SFactory.`
+      );
     }
 
     // Mapear datos SFactory al formato esperado
@@ -1580,21 +1594,21 @@ export class ProductoService {
       ctb_id: productoSfactory.ctb_id || null,
     };
 
-      return {
-        datosSFactory,
-        datosLocales: {
-          nombre: productoPadre.nombre,
-          descripcion: productoPadre.descripcion,
-          descripcionCorta: productoPadre.descripcionCorta,
-          descripcionMarketing: productoPadre.descripcionMarketing,
-          destacado: productoPadre.destacado,
-        },
-        primeraVariante: {
-          talle: primeraVariante.talle,
-          color: primeraVariante.color,
-        },
-      };
-    }
+    return {
+      datosSFactory,
+      datosLocales: {
+        nombre: productoPadre.nombre,
+        descripcion: productoPadre.descripcion,
+        descripcionCorta: productoPadre.descripcionCorta,
+        descripcionMarketing: productoPadre.descripcionMarketing,
+        destacado: productoPadre.destacado,
+      },
+      primeraVariante: {
+        talle: primeraVariante.talle,
+        color: primeraVariante.color,
+      },
+    };
+  }
 
   /**
    * Actualizar solo datos locales (no SFactory)
@@ -1785,17 +1799,22 @@ export class ProductoService {
     }
 
     // Obtener datos SFactory
-    const productoSfactory = await prisma.productoSfactory.findUnique({
+    // Usar findFirst en lugar de findUnique para evitar problemas con nombres de constraints
+    const productoSfactory = await prisma.productoSfactory.findFirst({
       where: {
-        unique_empresa_codigo: {
-          empresaId,
-          codigo: primeraVariante.sfactoryCodigo,
-        },
+        empresaId,
+        codigo: primeraVariante.sfactoryCodigo,
       },
     });
 
     if (!productoSfactory) {
-      throw new Error('No se encontraron datos de SFactory para este producto');
+      throw new Error(
+        `No se encontraron datos de SFactory para el producto. ` +
+        `ProductoPadreId: ${productoPadre.id}, EmpresaId: ${empresaId}, ` +
+        `Código: ${primeraVariante.sfactoryCodigo}. ` +
+        `El producto existe en productos_web pero no en productos_sfactory. ` +
+        `Es posible que necesite sincronizarse desde SFactory.`
+      );
     }
 
     // Obtener sexo de la primera variante

@@ -723,12 +723,11 @@ export class ProductoSyncService {
     const codigo = String((producto as any).Codigo || (producto as any).codigo || '');
 
     // Obtener el producto desde productos_sfactory (ya sincronizado)
-    const productoSfactory = await prisma.productoSfactory.findUnique({
+    // Usar findFirst en lugar de findUnique para evitar problemas con nombres de constraints
+    const productoSfactory = await prisma.productoSfactory.findFirst({
       where: {
-        unique_empresa_codigo: {
-          empresaId,
-          codigo,
-        },
+        empresaId,
+        codigo,
       },
     });
 

@@ -21,11 +21,26 @@ export interface UploadOptions {
 }
 
 /**
- * Configuración de multer para almacenamiento
- * En producción (serverless) usa memoria, en desarrollo usa disco
+ * Detecta si estamos en un entorno serverless (Vercel, etc.)
+ * donde el sistema de archivos es de solo lectura
  */
-const storage = process.env.NODE_ENV === 'production' 
-  ? multer.memoryStorage() // Producción: memoria (Vercel es read-only)
+function isServerlessEnvironment(): boolean {
+  // Vercel proporciona estas variables de entorno automáticamente
+  return !!(
+    process.env.VERCEL || 
+    process.env.VERCEL_ENV || 
+    process.env.NODE_ENV === 'production' ||
+    process.env.AWS_LAMBDA_FUNCTION_NAME || // Para AWS Lambda
+    process.env.AZURE_FUNCTIONS_ENVIRONMENT // Para Azure Functions
+  );
+}
+
+/**
+ * Configuración de multer para almacenamiento
+ * En entornos serverless (Vercel) usa memoria, en desarrollo usa disco
+ */
+const storage = isServerlessEnvironment()
+  ? multer.memoryStorage() // Serverless: memoria (sistema de archivos read-only)
   : multer.diskStorage({  // Desarrollo: disco
       destination: (req, file, cb) => {
         const uploadDir = path.join(process.cwd(), 'uploads', 'temp');
@@ -111,7 +126,8 @@ export class ImageUploadService {
   async uploadImages(options: UploadOptions): Promise<UploadResult[]> {
     const { productoId, nombreBase, color, files } = options;
 
-    const isProduction = process.env.NODE_ENV === 'production';
+    // Usar la misma función de detección
+    const isServerless = isServerlessEnvironment();
 
     console.log('📁 [FTP UPLOAD] Iniciando proceso de subida');
     console.log('📁 [FTP UPLOAD] Opciones:', {
@@ -119,7 +135,12 @@ export class ImageUploadService {
       nombreBase,
       color,
       cantidadArchivos: files.length,
-      isProduction,
+      isServerless,
+      envVars: {
+        VERCEL: !!process.env.VERCEL,
+        VERCEL_ENV: process.env.VERCEL_ENV,
+        NODE_ENV: process.env.NODE_ENV,
+      },
     });
 
     if (!files || files.length === 0) {
@@ -182,16 +203,20 @@ export class ImageUploadService {
           console.log(`📝 [FTP UPLOAD] Nombre de archivo generado: ${filename}`);
           console.log(`📝 [FTP UPLOAD] Ruta remota: ${remotePath}`);
 
-          // En producción usar buffer, en desarrollo usar path
-          if (isProduction && file.buffer) {
-            // Producción: subir desde buffer
-            console.log(`⬆️ [FTP UPLOAD] Subiendo desde buffer (producción)...`);
+          // En serverless usar buffer, en desarrollo usar path
+          if (isServerless && file.buffer) {
+            // Serverless: subir desde buffer
+            console.log(`⬆️ [FTP UPLOAD] Subiendo desde buffer (serverless)...`);
             await ftpService.uploadFileFromBuffer(file.buffer, remotePath);
           } else if (file.path) {
             // Desarrollo: subir desde archivo temporal
             console.log(`⬆️ [FTP UPLOAD] Subiendo desde archivo temporal (desarrollo)...`);
             await ftpService.uploadFile(file.path, remotePath);
             tempFiles.push(file.path);
+          } else if (file.buffer) {
+            // Fallback: si no hay path pero hay buffer, usar buffer
+            console.log(`⬆️ [FTP UPLOAD] Subiendo desde buffer (fallback)...`);
+            await ftpService.uploadFileFromBuffer(file.buffer, remotePath);
           } else {
             throw new Error('Archivo no tiene buffer ni path disponible');
           }
@@ -226,7 +251,7 @@ export class ImageUploadService {
         throw error;
       } finally {
         // Limpiar archivos temporales solo en desarrollo
-        if (!isProduction) {
+        if (!isServerless) {
           console.log('🧹 [FTP UPLOAD] Limpiando archivos temporales...');
           for (const tempPath of tempFiles) {
             cleanupTempFile(tempPath);
@@ -238,7 +263,7 @@ export class ImageUploadService {
       }
     } catch (error) {
       // Limpiar archivos temporales en caso de error (solo desarrollo)
-      if (!isProduction) {
+      if (!isServerless) {
         console.error('❌ [FTP UPLOAD] Error general, limpiando archivos temporales:', error);
         for (const tempPath of tempFiles) {
           cleanupTempFile(tempPath);
