@@ -6,11 +6,14 @@ import type {
   RubroBySlugParams,
   PaginatedResponse,
 } from '../types';
+import { ECOMMERCE_RUBROS_SFACTORY_IDS } from '../config/ecommerce.config';
 
 export class RubroService {
   async getAll(params: RubroQueryParams & { empresaId: number }): Promise<PaginatedResponse<RubroConSubrubros>> {
     const where: Prisma.RubroWhereInput = {
       empresaId: params.empresaId,
+      // Ecommerce: solo rubros permitidos (WORKWEAR 3285, OFFICE 3314)
+      sfactoryId: { in: ECOMMERCE_RUBROS_SFACTORY_IDS },
       ...(params.visibleWeb !== undefined && {
         visibleWeb: params.visibleWeb,
       }),
@@ -85,10 +88,15 @@ export class RubroService {
       },
     };
 
-    return prisma.rubro.findUnique({
+    const rubro = await prisma.rubro.findUnique({
       where: { id },
       include,
-    }) as Promise<RubroConSubrubros | null>;
+    }) as RubroConSubrubros | null;
+    // Ecommerce: solo devolver si es uno de los rubros permitidos
+    if (rubro && !ECOMMERCE_RUBROS_SFACTORY_IDS.includes((rubro as any).sfactoryId)) {
+      return null;
+    }
+    return rubro;
   }
 
   async getBySlug(
@@ -100,6 +108,7 @@ export class RubroService {
         slug,
         empresaId,
         visibleWeb: true,
+        sfactoryId: { in: ECOMMERCE_RUBROS_SFACTORY_IDS },
       },
       include: {
         subrubros: {

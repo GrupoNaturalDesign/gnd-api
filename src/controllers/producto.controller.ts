@@ -14,6 +14,18 @@ import {
 } from '../types';
 import { validateEmpresaId, handleZodError } from '../utils/validation';
 import type { SFactoryItemCreateData, SFactoryItemEditData } from '../types/sfactory.types';
+import { logAudit } from '../services/audit.service';
+import { ECOMMERCE_RUBROS_SFACTORY_IDS } from '../config/ecommerce.config';
+
+/** Serializa producto a objeto plano para auditoría (evita relaciones circulares). */
+function toAuditProductPayload(p: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!p || typeof p !== 'object') return null;
+  const out: Record<string, unknown> = {};
+  for (const key of ['id', 'nombre', 'publicado', 'destacado', 'descripcion', 'slug', 'codigoAgrupacion', 'empresaId', 'rubroId', 'subrubroId', 'orden']) {
+    if (key in p && p[key] !== undefined) out[key] = p[key];
+  }
+  return Object.keys(out).length ? out : null;
+}
 
 export class ProductoController {
   async getAll(req: Request, res: Response, next: NextFunction) {
@@ -269,6 +281,14 @@ export class ProductoController {
       });
 
       const updateData = req.body;
+      let oldProduct: Record<string, unknown> | null = null;
+      try {
+        const prev = await productoService.getById(id, false);
+        if (prev) oldProduct = toAuditProductPayload(prev as unknown as Record<string, unknown>);
+      } catch {
+        // ignorar si no existe
+      }
+
       const producto = await productoService.update(id, updateData);
 
       if (!producto) {
@@ -277,6 +297,22 @@ export class ProductoController {
           message: 'Producto no encontrado',
         });
       }
+
+      await logAudit({
+        entity: 'producto_padre',
+        entityId: String(id),
+        action: 'UPDATE',
+        oldValues: oldProduct ?? undefined,
+        newValues: toAuditProductPayload(producto as unknown as Record<string, unknown>) ?? undefined,
+        empresaId: (req as any).empresaId,
+        userId: (req as any).userId,
+        userEmail: (req as any).userEmail,
+        ipAddress: (req as any).ip ?? (req as any).socket?.remoteAddress,
+        userAgent: (req as any).get?.('user-agent'),
+        method: req.method,
+        path: req.originalUrl?.split('?')[0] ?? req.path,
+      });
+      (req as any).auditLogged = true;
 
       // Invalidar cache de productos
       await CacheService.invalidateProducts(producto.empresaId, producto.id);
@@ -306,16 +342,33 @@ export class ProductoController {
         id: req.params.id,
       });
 
-      // Obtener empresaId antes de eliminar (si es posible)
       let empresaId: number | undefined;
+      let oldProduct: Record<string, unknown> | null = null;
       try {
         const producto = await productoService.getById(id, false);
         empresaId = producto?.empresaId;
+        if (producto) oldProduct = toAuditProductPayload(producto as unknown as Record<string, unknown>);
       } catch {
         // Si falla, continuar sin empresaId
       }
 
       await productoService.delete(id);
+
+      await logAudit({
+        entity: 'producto_padre',
+        entityId: String(id),
+        action: 'DELETE',
+        oldValues: oldProduct ?? undefined,
+        newValues: undefined,
+        empresaId,
+        userId: (req as any).userId,
+        userEmail: (req as any).userEmail,
+        ipAddress: (req as any).ip ?? (req as any).socket?.remoteAddress,
+        userAgent: (req as any).get?.('user-agent'),
+        method: req.method,
+        path: req.originalUrl?.split('?')[0] ?? req.path,
+      });
+      (req as any).auditLogged = true;
 
       // Invalidar cache de productos
       await CacheService.invalidateProducts(empresaId, id);
@@ -365,8 +418,37 @@ export class ProductoController {
         });
       }
 
+      const oldMap: Record<number, { publicado?: boolean }> = {};
+      for (const id of ids) {
+        try {
+          const p = await productoService.getById(Number(id), false);
+          if (p) oldMap[Number(id)] = { publicado: (p as any).publicado };
+        } catch {
+          // ignorar
+        }
+      }
+
       const empresaId = (req as any).empresaId;
       const result = await productoService.bulkUpdatePublicado(ids, publicado);
+
+      for (const id of ids) {
+        const numId = Number(id);
+        await logAudit({
+          entity: 'producto_padre',
+          entityId: String(numId),
+          action: 'UPDATE',
+          oldValues: oldMap[numId] ?? undefined,
+          newValues: { publicado },
+          empresaId,
+          userId: (req as any).userId,
+          userEmail: (req as any).userEmail,
+          ipAddress: (req as any).ip ?? (req as any).socket?.remoteAddress,
+          userAgent: (req as any).get?.('user-agent'),
+          method: req.method,
+          path: req.originalUrl?.split('?')[0] ?? req.path,
+        });
+      }
+      (req as any).auditLogged = true;
 
       // Invalidar cache
       await CacheService.invalidateProducts(empresaId);
@@ -401,8 +483,37 @@ export class ProductoController {
         });
       }
 
+      const oldMap: Record<number, { destacado?: boolean }> = {};
+      for (const id of ids) {
+        try {
+          const p = await productoService.getById(Number(id), false);
+          if (p) oldMap[Number(id)] = { destacado: (p as any).destacado };
+        } catch {
+          // ignorar
+        }
+      }
+
       const empresaId = (req as any).empresaId;
       const result = await productoService.bulkUpdateDestacado(ids, destacado);
+
+      for (const id of ids) {
+        const numId = Number(id);
+        await logAudit({
+          entity: 'producto_padre',
+          entityId: String(numId),
+          action: 'UPDATE',
+          oldValues: oldMap[numId] ?? undefined,
+          newValues: { destacado },
+          empresaId,
+          userId: (req as any).userId,
+          userEmail: (req as any).userEmail,
+          ipAddress: (req as any).ip ?? (req as any).socket?.remoteAddress,
+          userAgent: (req as any).get?.('user-agent'),
+          method: req.method,
+          path: req.originalUrl?.split('?')[0] ?? req.path,
+        });
+      }
+      (req as any).auditLogged = true;
 
       // Invalidar cache
       await CacheService.invalidateProducts(empresaId);
@@ -679,11 +790,21 @@ export class ProductoController {
   async listarDesdeSFactory(req: Request, res: Response, next: NextFunction) {
     try {
       const productos = await sfactoryService.listarItems();
-      
+      let lista: any[] = [];
+      if (Array.isArray(productos)) {
+        lista = productos;
+      } else if (productos && typeof productos === 'object' && 'data' in productos && Array.isArray((productos as any).data)) {
+        lista = (productos as any).data;
+      }
+      const filtrados = lista.filter((p: any) => {
+        const rid = p.rubro_id ?? p.RubroId ?? null;
+        return rid != null && ECOMMERCE_RUBROS_SFACTORY_IDS.includes(Number(rid));
+      });
+
       const response: ApiResponse = {
         success: true,
-        data: productos,
-        message: 'Productos obtenidos desde SFactory',
+        data: filtrados,
+        message: 'Productos obtenidos desde SFactory (solo rubros ecommerce)',
       };
 
       res.json(response);
@@ -730,6 +851,14 @@ export class ProductoController {
           success: false,
           error: 'El campo "descripcion" es requerido',
           message: 'Debe especificar la descripción del producto',
+        });
+      }
+
+      if (body.rubro_id == null || !ECOMMERCE_RUBROS_SFACTORY_IDS.includes(Number(body.rubro_id))) {
+        return res.status(400).json({
+          success: false,
+          error: 'Rubro no permitido',
+          message: 'Solo se permiten productos de rubros PRODUCTO WORKWEAR (3285) y PRODUCTO OFFICE (3314).',
         });
       }
 
@@ -1035,6 +1164,13 @@ export class ProductoController {
       });
 
       const updateData = req.body;
+      let oldProduct: Record<string, unknown> | null = null;
+      try {
+        const prev = await productoService.getById(id, false);
+        if (prev) oldProduct = toAuditProductPayload(prev as unknown as Record<string, unknown>);
+      } catch {
+        // ignorar
+      }
 
       const producto = await productoService.actualizarDatosLocales(id, updateData);
 
@@ -1044,6 +1180,22 @@ export class ProductoController {
           message: 'Producto no encontrado',
         });
       }
+
+      await logAudit({
+        entity: 'producto_padre',
+        entityId: String(id),
+        action: 'UPDATE',
+        oldValues: oldProduct ?? undefined,
+        newValues: toAuditProductPayload(producto as unknown as Record<string, unknown>) ?? undefined,
+        empresaId: (req as any).empresaId,
+        userId: (req as any).userId,
+        userEmail: (req as any).userEmail,
+        ipAddress: (req as any).ip ?? (req as any).socket?.remoteAddress,
+        userAgent: (req as any).get?.('user-agent'),
+        method: req.method,
+        path: req.originalUrl?.split('?')[0] ?? req.path,
+      });
+      (req as any).auditLogged = true;
 
       // Invalidar cache de productos
       await CacheService.invalidateProducts(producto.empresaId, producto.id);
@@ -1245,6 +1397,14 @@ export class ProductoController {
         ...body,
         item_id: itemId,
       };
+
+      if (editData.rubro_id != null && !ECOMMERCE_RUBROS_SFACTORY_IDS.includes(Number(editData.rubro_id))) {
+        return res.status(400).json({
+          success: false,
+          error: 'Rubro no permitido',
+          message: 'Solo se permiten rubros PRODUCTO WORKWEAR (3285) y PRODUCTO OFFICE (3314).',
+        });
+      }
 
       // Actualizar producto en SFactory y sincronizar
       const producto = await productoService.actualizarProducto(itemId, editData, empresaId);

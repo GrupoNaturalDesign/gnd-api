@@ -23,6 +23,17 @@ const DeleteImageSchema = z.object({
   imageId: z.coerce.number().int().positive(),
 });
 
+const ReorderImagesSchema = z.object({
+  images: z
+    .array(
+      z.object({
+        id: z.number().int().positive(),
+        orden: z.number().int().min(1),
+      })
+    )
+    .min(1),
+});
+
 export class ProductImagesController {
   /**
    * POST /api/product-images/upload
@@ -249,6 +260,27 @@ export class ProductImagesController {
         });
       }
 
+      next(error);
+    }
+  }
+
+  /**
+   * PATCH /api/product-images/reorder
+   * Actualiza el orden de un conjunto de imágenes
+   */
+  async reorderImages(req: Request, res: Response, next: NextFunction) {
+    try {
+      const body = ReorderImagesSchema.parse(req.body);
+      await productImageService.reorderImages(body.images);
+      res.json({
+        success: true,
+        message: 'Orden actualizado exitosamente',
+      });
+    } catch (error) {
+      const zodError = handleZodError(error);
+      if (zodError) {
+        return res.status(400).json({ success: false, ...zodError });
+      }
       next(error);
     }
   }

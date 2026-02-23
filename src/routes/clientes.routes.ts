@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { clientesController } from '../controllers/clientes.controller';
 import { empresaMiddleware } from '../middleware/empresa.middleware';
+// import { requireAuth } from '../middleware/auth.middleware';
 
 const router = Router();
 
@@ -8,7 +9,7 @@ const router = Router();
 // Debe ir ANTES de las rutas con middleware para evitar conflictos
 router.get('/sfactory', clientesController.listarDesdeSFactory.bind(clientesController));
 
-// Aplicar middleware de empresa al resto de las rutas
+// Rutas con empresa. Cuando auth esté listo: router.use(empresaMiddleware, requireAuth);
 router.use(empresaMiddleware);
 
 // GET /api/clientes - Listar todos los clientes desde nuestra BD

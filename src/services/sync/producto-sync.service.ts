@@ -10,6 +10,7 @@ import {
   extraerCodigoAgrupacion,
 } from '../producto-agrupacion.service';
 import { calcularTodosLosPrecios, CUOTAS_FINANCIADO_DEFAULT } from '../../config/precios.config';
+import { ECOMMERCE_RUBROS_SFACTORY_IDS } from '../../config/ecommerce.config';
 
 // Type helper for Prisma transaction
 type PrismaTransaction = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
@@ -64,6 +65,13 @@ export class ProductoSyncService {
           productos = response;
         }
       }
+
+      // Ecommerce: solo productos de rubros permitidos (WORKWEAR 3285, OFFICE 3314)
+      const productosFiltrados = productos.filter((p: any) => {
+        const rubroId = p.rubro_id ?? p.RubroId ?? null;
+        return rubroId != null && ECOMMERCE_RUBROS_SFACTORY_IDS.includes(Number(rubroId));
+      });
+      productos = productosFiltrados;
 
       // Pre-cargar rubros y subrubros para resolver IDs locales
       const rubros = await prisma.rubro.findMany({
@@ -215,9 +223,19 @@ export class ProductoSyncService {
    */
   async procesarProductosDesdeSfactory(empresaId: number = 1) {
     try {
-      // Leer TODOS los productos de productos_sfactory de una vez
+      // Rubros ecommerce: solo procesar productos de estos rubros
+      const rubrosEcommerce = await prisma.rubro.findMany({
+        where: { empresaId, sfactoryId: { in: ECOMMERCE_RUBROS_SFACTORY_IDS } },
+        select: { id: true },
+      });
+      const rubroIdsEcommerce = rubrosEcommerce.map((r) => r.id);
+
+      // Leer productos de productos_sfactory (solo rubros ecommerce si hay alguno)
       const productosSfactory = await prisma.productoSfactory.findMany({
-        where: { empresaId },
+        where: {
+          empresaId,
+          ...(rubroIdsEcommerce.length > 0 && { rubro_id: { in: rubroIdsEcommerce } }),
+        },
         orderBy: { codigo: 'asc' },
       });
 

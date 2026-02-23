@@ -247,6 +247,20 @@ export class ProductImageService {
   }
 
   /**
+   * Reordena imágenes actualizando el campo `orden` de cada una
+   */
+  async reorderImages(images: { id: number; orden: number }[]): Promise<void> {
+    await prisma.$transaction(
+      images.map(({ id, orden }) =>
+        prisma.productoImagen.update({
+          where: { id },
+          data: { orden },
+        })
+      )
+    );
+  }
+
+  /**
    * Obtiene imágenes de un producto padre (todas las variantes)
    */
   async getProductoPadreImages(

@@ -1,8 +1,11 @@
 import { Router } from 'express';
 import { productImagesController } from '../controllers/productImages.controller';
 import { uploadMultiple } from '../middleware/upload.middleware';
+// import { requireAuth } from '../middleware/auth.middleware';
 
 const router = Router();
+
+// Cuando auth esté listo: router.use(requireAuth);
 
 // POST /api/product-images/upload
 router.post(
@@ -33,6 +36,12 @@ router.get(
 router.get(
   '/producto-padre/:productoPadreId',
   productImagesController.getProductoPadreImages.bind(productImagesController)
+);
+
+// PATCH /api/product-images/reorder (debe ir antes de /:imageId)
+router.patch(
+  '/reorder',
+  productImagesController.reorderImages.bind(productImagesController)
 );
 
 // DELETE /api/product-images/:imageId

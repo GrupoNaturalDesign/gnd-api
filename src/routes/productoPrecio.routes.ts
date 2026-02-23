@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import { productoPrecioController } from '../controllers/productoPrecio.controller';
+// import { requireAuth } from '../middleware/auth.middleware';
 
 const router = Router();
+
+// Cuando auth esté listo: router.use(requireAuth);
 
 router.post('/', productoPrecioController.upsert.bind(productoPrecioController));
 router.patch('/:id', productoPrecioController.update.bind(productoPrecioController));

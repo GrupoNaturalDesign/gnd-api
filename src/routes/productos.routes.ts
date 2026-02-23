@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { productoController } from '../controllers';
 import { empresaMiddleware } from '../middleware/empresa.middleware';
+// import { requireAuth } from '../middleware/auth.middleware';
 
 const router = Router();
 
@@ -22,7 +23,7 @@ router.get('/sfactory', productoController.listarDesdeSFactory.bind(productoCont
 // Debe ir ANTES de las rutas con middleware para evitar conflictos
 router.get('/slug/:slug', productoController.getBySlug.bind(productoController));
 
-// Rutas protegidas con middleware de empresa
+// Rutas protegidas con empresa. Cuando auth esté listo: router.use(empresaMiddleware, requireAuth);
 router.use(empresaMiddleware);
 
 // Rutas específicas (deben ir ANTES de las genéricas)

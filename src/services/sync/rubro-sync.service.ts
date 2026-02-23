@@ -1,6 +1,7 @@
 import { sfactoryService } from '../sfactory/sfactory.service';
 import prisma from '../../lib/prisma';
 import type { SFactoryRubro, SFactorySubrubro } from '../../types/sfactory.types';
+import { ECOMMERCE_RUBROS_SFACTORY_IDS } from '../../config/ecommerce.config';
 
 function generarSlug(text: string): string {
   return text
@@ -28,6 +29,11 @@ export class RubroSyncService {
           rubros = dataValue;
         }
       }
+
+      // Ecommerce: solo sincronizar rubros WORKWEAR (3285) y OFFICE (3314)
+      rubros = rubros.filter((r: SFactoryRubro & { Id?: number }) =>
+        ECOMMERCE_RUBROS_SFACTORY_IDS.includes(Number(r.id ?? r.Id))
+      );
 
       let exitosos = 0;
       let fallidos = 0;
@@ -89,6 +95,11 @@ export class RubroSyncService {
           subrubros = dataValue;
         }
       }
+
+      // Ecommerce: solo subrubros de los rubros WORKWEAR y OFFICE
+      subrubros = subrubros.filter((s: SFactorySubrubro & { rubroId?: number }) =>
+        ECOMMERCE_RUBROS_SFACTORY_IDS.includes(Number(s.rubro_id ?? s.rubroId))
+      );
 
       let exitosos = 0;
       let fallidos = 0;

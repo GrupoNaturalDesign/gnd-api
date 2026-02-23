@@ -15,16 +15,41 @@ import { sfactoryService } from './sfactory/sfactory.service';
 import { productoSyncService } from './sync/producto-sync.service';
 import type { SFactoryItemCreateData, SFactoryItemEditData, SFactoryProduct, SFactoryItemCreateResponse } from '../types/sfactory.types';
 import { extraerCodigoAgrupacion } from './producto-agrupacion.service';
+import { ECOMMERCE_RUBROS_SFACTORY_IDS, isRubroPermitidoEcommerce } from '../config/ecommerce.config';
 
 export class ProductoService {
+  /**
+   * IDs locales de los rubros ecommerce (WORKWEAR 3285, OFFICE 3314) para una empresa.
+   * Usado para filtrar listados de productos.
+   */
+  private async getRubroIdsEcommerce(empresaId: number): Promise<number[]> {
+    const rubros = await prisma.rubro.findMany({
+      where: { empresaId, sfactoryId: { in: ECOMMERCE_RUBROS_SFACTORY_IDS } },
+      select: { id: true },
+    });
+    return rubros.map((r) => r.id);
+  }
+
   async getAll(
     params: ProductoQueryParams
   ): Promise<PaginatedResponse<ProductoPadreConVariantes>> {
+    // Ecommerce: solo productos de rubros permitidos cuando hay empresaId
+    const rubroIdsEcommerce =
+      params.empresaId !== undefined ? await this.getRubroIdsEcommerce(params.empresaId) : [];
+
     const where: Prisma.ProductoPadreWhereInput = {
       ...(params.empresaId !== undefined && {
         empresaId: params.empresaId,
       }),
-      ...(params.rubroId && {
+      // Ecommerce: solo rubros permitidos; si viene rubroId, filtrar dentro de esos
+      ...(params.empresaId !== undefined && {
+        rubroId: params.rubroId
+          ? params.rubroId
+          : rubroIdsEcommerce.length > 0
+            ? { in: rubroIdsEcommerce }
+            : { in: [] },
+      }),
+      ...(params.empresaId === undefined && params.rubroId && {
         rubroId: params.rubroId,
       }),
       ...(params.subrubroId && {
@@ -404,6 +429,12 @@ export class ProductoService {
       }
     }
 
+    if (!isRubroPermitidoEcommerce(data.rubro_id ?? undefined)) {
+      throw new Error(
+        'Solo se permiten productos de rubros PRODUCTO WORKWEAR (3285) y PRODUCTO OFFICE (3314).'
+      );
+    }
+
     // 1. Asegurar que um_id y moneda_id tengan valores por defecto si no se proporcionan
     // SFactory requiere um_id y moneda_id, valores por defecto comunes son 1
     const dataConUmId = {
@@ -500,6 +531,12 @@ export class ProductoService {
     data: SFactoryItemEditData,
     empresaId: number
   ): Promise<ProductoPadreConVariantes> {
+    if (data.rubro_id != null && !isRubroPermitidoEcommerce(data.rubro_id)) {
+      throw new Error(
+        'Solo se permiten rubros PRODUCTO WORKWEAR (3285) y PRODUCTO OFFICE (3314).'
+      );
+    }
+
     // 1. Actualizar en SFactory
     await sfactoryService.editarItem(data);
 
@@ -678,10 +715,13 @@ export class ProductoService {
     const page = Math.max(params.page || 1, 1);
     const skip = (page - 1) * limit;
 
-    // Construir where clause - SOLO productos publicados
+    const rubroIdsEcommerce = await this.getRubroIdsEcommerce(params.empresaId);
+
+    // Construir where clause - SOLO productos publicados y solo rubros ecommerce
     const where: Prisma.ProductoPadreWhereInput = {
       empresaId: params.empresaId,
       publicado: true, // SOLO productos publicados
+      rubroId: params.rubroId != null ? params.rubroId : (rubroIdsEcommerce.length > 0 ? { in: rubroIdsEcommerce } : { in: [] }),
       // Solo productos que tengan al menos una variante activa
       productosWeb: {
         some: {
@@ -691,9 +731,6 @@ export class ProductoService {
       // Filtros opcionales
       ...(params.destacado !== undefined && {
         destacado: params.destacado,
-      }),
-      ...(params.rubroId && {
-        rubroId: params.rubroId,
       }),
       ...(params.subrubroId && {
         subrubroId: params.subrubroId,
@@ -857,10 +894,13 @@ export class ProductoService {
     const page = Math.max(params.page || 1, 1);
     const skip = (page - 1) * limit;
 
-    // Construir where clause - SOLO productos publicados
+    const rubroIdsEcommerce = await this.getRubroIdsEcommerce(params.empresaId);
+
+    // Construir where clause - SOLO productos publicados y solo rubros ecommerce
     const where: Prisma.ProductoPadreWhereInput = {
       empresaId: params.empresaId,
       publicado: true, // SOLO productos publicados
+      rubroId: params.rubroId != null ? params.rubroId : (rubroIdsEcommerce.length > 0 ? { in: rubroIdsEcommerce } : { in: [] }),
       // Solo productos que tengan al menos una variante activa
       productosWeb: {
         some: {
@@ -883,9 +923,6 @@ export class ProductoService {
       // Filtros opcionales
       ...(params.destacado !== undefined && {
         destacado: params.destacado,
-      }),
-      ...(params.rubroId && {
-        rubroId: params.rubroId,
       }),
       ...(params.subrubroId && {
         subrubroId: params.subrubroId,

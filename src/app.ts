@@ -3,6 +3,8 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import routes from './routes';
+import { asyncLocalStorage } from './lib/async-context';
+import { auditMiddleware } from './middleware/audit.middleware';
 
 const app = express();
 
@@ -31,6 +33,14 @@ if (process.env.NODE_ENV === 'development') {
 // Body parser
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Contexto async por request (para auditoría y servicios que necesiten req)
+app.use((req: Request, res: Response, next: NextFunction) => {
+  asyncLocalStorage.run({ req }, () => next());
+});
+
+// Auditoría global: registra POST/PUT/PATCH/DELETE al finalizar la respuesta
+app.use(auditMiddleware);
 
 // ============================================
 // Routes

@@ -56,6 +56,7 @@ model Usuario {
   updatedAt         DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
   pedidos           Pedido[]
   sesiones          Sesion[]
+  cliente           Cliente?
   empresa           Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "usuarios_ibfk_1")
 
   @@index([email], map: "idx_email")
@@ -395,15 +396,20 @@ model Cliente {
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamp(0)
   updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
   empresa         Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "clientes_ibfk_1")
+  usuarioId       Int?      @unique(map: "usuario_id") @map("usuario_id") @db.UnsignedInt
+  usuario         Usuario?  @relation(fields: [usuarioId], references: [id], onUpdate: NoAction, map: "clientes_ibfk_usuario")
 
   tipoCliente        TipoCliente @default(minorista) @map("tipo_cliente")
   aprobado           Boolean     @default(false) @map("aprobado")
   minimoCompraGlobal Decimal?    @map("minimo_compra_global") @db.Decimal(10, 2)
 
+  pedidos         Pedido[]
+
   @@unique([empresaId, sfactoryCodigo], name: "unique_empresa_sfactory", map: "unique_empresa_sfactory")
   @@index([sfactoryId], map: "idx_sfactory_id")
   @@index([empresaId], map: "idx_empresa")
   @@index([activo], map: "idx_activo")
+  @@index([usuarioId], map: "idx_usuario")
   @@map("clientes")
 }
 model Pedido {
@@ -418,9 +424,26 @@ model Pedido {
   clienteEmail       String          @map("cliente_email") @db.VarChar(255)
   clienteTelefono    String?         @map("cliente_telefono") @db.VarChar(50)
   clienteDireccion   String?         @map("cliente_direccion") @db.Text
+  refCliente         String?         @map("ref_cliente") @db.VarChar(100)
+  numOrdenCompra     String?         @map("num_orden_compra") @db.VarChar(100)
+  entregaCp          String?         @map("entrega_cp") @db.VarChar(20)
+  entregaNotas       String?         @map("entrega_notas") @db.Text
+  entregaLocalidadId Int?            @map("entrega_localidad_id") @db.UnsignedInt
+  entregaClienteDirId Int?           @map("entrega_cliente_dir_id") @db.UnsignedInt
   subtotal           Decimal         @map("subtotal") @db.Decimal(10, 2)
+  descuento          Decimal         @default(0.00) @map("descuento") @db.Decimal(10, 2)
   iva                Decimal         @default(0.00) @map("iva") @db.Decimal(10, 2)
   total              Decimal         @map("total") @db.Decimal(10, 2)
+  costoEnvio         Decimal         @default(0.00) @map("costo_envio") @db.Decimal(10, 2)
+  formaPago          FormaPago?      @map("forma_pago")
+  mercadoPagoPaymentId String?       @map("mercado_pago_payment_id") @db.VarChar(255)
+  mercadoPagoStatus  String?         @map("mercado_pago_status") @db.VarChar(50)
+  formaEnvio         FormaEnvio?     @map("forma_envio")
+  andreaniSucursalId String?         @map("andreani_sucursal_id") @db.VarChar(100)
+  andreaniSucursalDescripcion String? @map("andreani_sucursal_descripcion") @db.VarChar(255)
+  andreaniNumeroEnvio String?        @map("andreani_numero_envio") @db.VarChar(100)
+  trackingUrl        String?         @map("tracking_url") @db.VarChar(500)
+  cantidadPrendas    Int?            @map("cantidad_prendas") @db.UnsignedInt
   observaciones      String?         @map("observaciones") @db.Text
   metodoContacto     MetodoContacto? @map("metodo_contacto")
   mensajeWhatsapp    String?         @map("mensaje_whatsapp") @db.Text
@@ -431,12 +454,15 @@ model Pedido {
   updatedAt          DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
   empresa            Empresa         @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "pedidos_ibfk_1")
   usuario            Usuario?        @relation(fields: [usuarioId], references: [id], onUpdate: NoAction, map: "pedidos_ibfk_2")
+  clienteId          Int?            @map("cliente_id") @db.UnsignedInt
+  cliente            Cliente?        @relation(fields: [clienteId], references: [id], onUpdate: NoAction, map: "pedidos_ibfk_cliente")
   items              PedidoItem[]
 
   @@index([empresaId, estadoInterno], map: "idx_empresa_estado")
   @@index([sfactoryOrdenId], map: "idx_sfactory_orden")
   @@index([fechaPedido], map: "idx_fecha")
   @@index([usuarioId], map: "usuario_id")
+  @@index([clienteId], map: "idx_cliente")
   @@map("pedidos")
 }
 model PedidoItem {
@@ -449,6 +475,7 @@ model PedidoItem {
   codigo          String         @map("codigo") @db.VarChar(100)
   cantidad        Decimal        @map("cantidad") @db.Decimal(10, 2)
   precioUnitario  Decimal        @map("precio_unitario") @db.Decimal(10, 2)
+  descuento       Decimal        @default(0.00) @map("descuento") @db.Decimal(10, 2)
   subtotal        Decimal        @map("subtotal") @db.Decimal(10, 2)
   talle           String?        @map("talle") @db.VarChar(50)
   color           String?        @map("color") @db.VarChar(100)
@@ -491,6 +518,54 @@ model SyncLog {
   @@index([empresaId, tipo], map: "idx_empresa_tipo")
   @@index([createdAt], map: "idx_fecha")
   @@map("sync_logs")
+}
+
+enum AuditEntity {
+  producto_padre
+  producto_web
+  producto_precio
+  producto_imagen
+  cliente
+  pedido
+  pedido_item
+  usuario
+  sesion
+  rubro
+  subrubro
+  empresa
+  regla_parseo
+  campo_personalizado
+  sync
+  otro
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+}
+
+model AuditLog {
+  id         Int          @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  empresaId  Int?         @map("empresa_id") @db.UnsignedInt
+  entity     AuditEntity  @map("entity")
+  entityId   String?      @map("entity_id") @db.VarChar(100)
+  action     AuditAction  @map("action")
+  oldValues  Json?        @map("old_values")
+  newValues  Json?        @map("new_values")
+  userId     Int?         @map("user_id") @db.UnsignedInt
+  userEmail  String?      @map("user_email") @db.VarChar(255)
+  ipAddress  String?      @map("ip_address") @db.VarChar(45)
+  userAgent  String?      @map("user_agent") @db.VarChar(500)
+  method     String?      @map("method") @db.VarChar(10)
+  path       String?      @map("path") @db.VarChar(500)
+  createdAt  DateTime     @default(now()) @map("created_at") @db.Timestamp(0)
+
+  @@index([empresaId, entity], map: "idx_audit_empresa_entity")
+  @@index([entity, entityId], map: "idx_audit_entity_id")
+  @@index([createdAt], map: "idx_audit_created_at")
+  @@index([userId], map: "idx_audit_user_id")
+  @@map("audit_logs")
 }
 
 enum Rol {
@@ -550,4 +625,15 @@ enum AccionSync {
 enum TipoCliente {
   minorista
   mayorista
+}
+
+enum FormaPago {
+  mercado_pago
+  efectivo
+  transferencia
+}
+
+enum FormaEnvio {
+  andreani_sucursal
+  andreani_domicilio
 }

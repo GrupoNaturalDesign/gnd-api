@@ -9,6 +9,7 @@ import pedidosRoutes from './pedidos.routes';
 import productImagesRoutes from './productImages.routes';
 import productoWebRoutes from './productoWeb.routes';
 import productoPrecioRoutes from './productoPrecio.routes';
+import auditRoutes from './audit.routes';
 import { empresaMiddleware } from '../middleware/empresa.middleware';
 
 const router = Router();
@@ -37,8 +38,8 @@ router.use('/clientes', clientesRoutes);
 // Pedidos routes
 router.use('/pedidos', pedidosRoutes);
 
-// Product Images (sin middleware de empresa por ahora, puede agregarse si es necesario)
-router.use('/product-images', productImagesRoutes);
+// Product Images (con empresa para que la auditoría tenga empresaId y aparezca en el listado)
+router.use('/product-images', empresaMiddleware, productImagesRoutes);
 
 // ProductoWeb routes (con middleware de empresa)
 router.use('/productos-web', productoWebRoutes);
@@ -48,6 +49,10 @@ router.use('/productos-precios', productoPrecioRoutes);
 
 // Sync routes (con middleware de empresa)
 router.use('/sync', syncRoutes);
+
+// Audit logs: por ahora solo empresaMiddleware (empresaId desde env/company key).
+// Cuando auth esté listo: usar requireAuth y quitar empresaMiddleware si empresaId vendrá del usuario.
+router.use('/audit-logs', empresaMiddleware, auditRoutes);
 
 export default router;
 

@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import { syncController } from '../controllers/sync.controller';
 import { empresaMiddleware } from '../middleware/empresa.middleware';
+// import { requireAuth } from '../middleware/auth.middleware';
 
 const router = Router();
 
-// Todas las rutas de sincronización requieren empresaId
+// Sincronización. Cuando auth esté listo: router.use(empresaMiddleware, requireAuth);
 router.use(empresaMiddleware);
 
 // Sincronizar rubros
