@@ -16,6 +16,10 @@ import { validateEmpresaId, handleZodError } from '../utils/validation';
 import type { SFactoryItemCreateData, SFactoryItemEditData } from '../types/sfactory.types';
 import { logAudit } from '../services/audit.service';
 import { ECOMMERCE_RUBROS_SFACTORY_IDS } from '../config/ecommerce.config';
+import { imageUploadService } from '../services/imageUpload.service';
+import prisma from '../lib/prisma';
+import type { MulterFile } from '../types/multer.types';
+import { z } from 'zod';
 
 /** Serializa producto a objeto plano para auditoría (evita relaciones circulares). */
 function toAuditProductPayload(p: Record<string, unknown> | null): Record<string, unknown> | null {
@@ -745,13 +749,19 @@ export class ProductoController {
         });
       }
 
-      // Construir key de cache
+      // Construir key de cache (todos los params que afectan el resultado)
       const cacheKey = CacheService.buildProductKey('publicados', {
         empresaId: params.empresaId,
         rubroId: params.rubroId,
         subrubroId: params.subrubroId,
         page: params.page,
         limit: params.limit,
+        destacado: params.destacado,
+        tieneStock: params.tieneStock,
+        sexo: params.sexo,
+        search: params.search,
+        sortBy: params.sortBy,
+        sortOrder: params.sortOrder,
       });
 
       // Cache-aside pattern
@@ -1445,6 +1455,127 @@ export class ProductoController {
         message: error.message || 'Error desconocido',
       });
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Documentos: Tabla de Talles y Ficha Técnica
+  // ---------------------------------------------------------------------------
+
+  private async _uploadDocumento(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+    tipo: 'tabla-talles' | 'ficha-tecnica',
+    campo: 'tablaTallesUrl' | 'fichaTecnicaUrl'
+  ) {
+    try {
+      const id = z.coerce.number().int().positive().parse(req.params.id);
+      const file = req.file as MulterFile | undefined;
+
+      if (!file) {
+        return res.status(400).json({
+          success: false,
+          error: 'No se proporcionó ningún archivo',
+        });
+      }
+
+      // Obtener nombre y empresa del producto padre para path FTP y invalidación de cache
+      const productoPadre = await prisma.productoPadre.findUnique({
+        where: { id },
+        select: { id: true, nombre: true, empresaId: true },
+      });
+
+      if (!productoPadre) {
+        return res.status(404).json({ success: false, error: 'Producto padre no encontrado' });
+      }
+
+      const url = await imageUploadService.uploadDocument({
+        nombreBase: productoPadre.nombre,
+        tipo,
+        file,
+      });
+
+      const updated = await prisma.productoPadre.update({
+        where: { id },
+        data: { [campo]: url },
+        select: { id: true, [campo]: true },
+      });
+
+      await CacheService.invalidateProducts(productoPadre.empresaId, id);
+
+      return res.json({
+        success: true,
+        data: updated,
+        message: 'Documento subido exitosamente',
+      });
+    } catch (error: any) {
+      const zodError = handleZodError(error);
+      if (zodError) return res.status(400).json({ success: false, ...zodError });
+      next(error);
+    }
+  }
+
+  private async _deleteDocumento(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+    campo: 'tablaTallesUrl' | 'fichaTecnicaUrl'
+  ) {
+    try {
+      const productoPadreId = z.coerce.number().int().positive().parse(req.params.id);
+
+      const productoPadre = await prisma.productoPadre.findUnique({
+        where: { id: productoPadreId },
+        select: { id: true, empresaId: true, tablaTallesUrl: true, fichaTecnicaUrl: true },
+      });
+
+      if (!productoPadre) {
+        return res.status(404).json({ success: false, error: 'Producto padre no encontrado' });
+      }
+
+      const empresaId = productoPadre.empresaId;
+
+      await prisma.productoPadre.update({
+        where: { id: productoPadreId },
+        data: { [campo]: null },
+      });
+
+      await CacheService.invalidateProducts(empresaId, productoPadreId);
+
+      return res.json({ success: true, message: 'Documento eliminado exitosamente' });
+    } catch (error: any) {
+      const zodError = handleZodError(error);
+      if (zodError) return res.status(400).json({ success: false, ...zodError });
+      next(error);
+    }
+  }
+
+  /**
+   * PATCH /api/productos/:id/tabla-talles
+   */
+  async uploadTablaTalles(req: Request, res: Response, next: NextFunction) {
+    return this._uploadDocumento(req, res, next, 'tabla-talles', 'tablaTallesUrl');
+  }
+
+  /**
+   * DELETE /api/productos/:id/tabla-talles
+   */
+  async deleteTablaTalles(req: Request, res: Response, next: NextFunction) {
+    return this._deleteDocumento(req, res, next, 'tablaTallesUrl');
+  }
+
+  /**
+   * PATCH /api/productos/:id/ficha-tecnica
+   */
+  async uploadFichaTecnica(req: Request, res: Response, next: NextFunction) {
+    return this._uploadDocumento(req, res, next, 'ficha-tecnica', 'fichaTecnicaUrl');
+  }
+
+  /**
+   * DELETE /api/productos/:id/ficha-tecnica
+   */
+  async deleteFichaTecnica(req: Request, res: Response, next: NextFunction) {
+    return this._deleteDocumento(req, res, next, 'fichaTecnicaUrl');
   }
 }
 

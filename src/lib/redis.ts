@@ -3,6 +3,9 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+/** Desactivar Redis: no se intenta conectar. Para activar de nuevo, definir REDIS_ENABLED=true */
+const REDIS_ENABLED = process.env.REDIS_ENABLED === 'true';
+
 /**
  * Redis Client Singleton
  * Una sola conexión Redis reutilizada en toda la aplicación
@@ -31,6 +34,9 @@ class RedisService {
    * Obtener cliente Redis (lazy initialization)
    */
   public async getClient(): Promise<RedisClientType | null> {
+    if (!REDIS_ENABLED) {
+      return null;
+    }
     // Si ya está conectado, retornar cliente
     if (this.isConnected && this.client) {
       return this.client;
@@ -53,6 +59,11 @@ class RedisService {
    */
   private async connect(): Promise<void> {
     try {
+      if (!REDIS_ENABLED) {
+        this.client = null;
+        this.isConnected = false;
+        return;
+      }
       const redisUrl = process.env.REDIS_URL;
 
       // Si no hay REDIS_URL, Redis es opcional

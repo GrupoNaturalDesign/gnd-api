@@ -16,6 +16,7 @@ import { productoSyncService } from './sync/producto-sync.service';
 import type { SFactoryItemCreateData, SFactoryItemEditData, SFactoryProduct, SFactoryItemCreateResponse } from '../types/sfactory.types';
 import { extraerCodigoAgrupacion } from './producto-agrupacion.service';
 import { ECOMMERCE_RUBROS_SFACTORY_IDS, isRubroPermitidoEcommerce } from '../config/ecommerce.config';
+import { calcularTodosLosPrecios, CUOTAS_FINANCIADO_DEFAULT } from '../config/precios.config';
 
 export class ProductoService {
   /**
@@ -717,11 +718,18 @@ export class ProductoService {
 
     const rubroIdsEcommerce = await this.getRubroIdsEcommerce(params.empresaId);
 
-    // Construir where clause - SOLO productos publicados y solo rubros ecommerce
+    const rubroFilter =
+      params.rubroId != null
+        ? params.rubroId
+        : rubroIdsEcommerce.length > 0
+          ? { in: rubroIdsEcommerce }
+          : undefined;
+
+    // Construir where clause - SOLO productos publicados y solo rubros ecommerce (si hay)
     const where: Prisma.ProductoPadreWhereInput = {
       empresaId: params.empresaId,
       publicado: true, // SOLO productos publicados
-      rubroId: params.rubroId != null ? params.rubroId : (rubroIdsEcommerce.length > 0 ? { in: rubroIdsEcommerce } : { in: [] }),
+      ...(rubroFilter !== undefined && { rubroId: rubroFilter }),
       // Solo productos que tengan al menos una variante activa
       productosWeb: {
         some: {
@@ -896,11 +904,19 @@ export class ProductoService {
 
     const rubroIdsEcommerce = await this.getRubroIdsEcommerce(params.empresaId);
 
-    // Construir where clause - SOLO productos publicados y solo rubros ecommerce
+    // Si no hay rubros ecommerce configurados, no filtrar por rubro (mostrar todos los publicados)
+    const rubroFilter =
+      params.rubroId != null
+        ? params.rubroId
+        : rubroIdsEcommerce.length > 0
+          ? { in: rubroIdsEcommerce }
+          : undefined;
+
+    // Construir where clause - SOLO productos publicados y solo rubros ecommerce (si hay)
     const where: Prisma.ProductoPadreWhereInput = {
       empresaId: params.empresaId,
       publicado: true, // SOLO productos publicados
-      rubroId: params.rubroId != null ? params.rubroId : (rubroIdsEcommerce.length > 0 ? { in: rubroIdsEcommerce } : { in: [] }),
+      ...(rubroFilter !== undefined && { rubroId: rubroFilter }),
       // Solo productos que tengan al menos una variante activa
       productosWeb: {
         some: {
@@ -954,13 +970,12 @@ export class ProductoService {
     }
 
     // Include optimizado - traer SOLO lo necesario con selects específicos
+    // Sin where en rubro/subrubro para no excluir productos cuyo rubro tenga visibleWeb: false (como en admin)
     const include: Prisma.ProductoPadreInclude = {
       rubro: {
-        where: { visibleWeb: true },
         select: { id: true, nombre: true, slug: true },
       },
       subrubro: {
-        where: { visibleWeb: true },
         select: { id: true, nombre: true, slug: true },
       },
       productosWeb: {
@@ -1043,10 +1058,12 @@ export class ProductoService {
             precioSinImp = precioObj.precioSinImp ? Number(precioObj.precioSinImp) : null;
           }
         } else if (preciosCache.length > 0) {
-          // Fallback: usar precioCache y calcular derivados
+          // Fallback: usar precioCache y calcular derivados con precios.config
           precioLista = Math.min(...preciosCache);
-          // Los precios derivados se calcularán usando las constantes si es necesario
-          // Por ahora dejamos null si no hay ProductoPrecio
+          const derivados = calcularTodosLosPrecios(precioLista, CUOTAS_FINANCIADO_DEFAULT);
+          precioTransfer = derivados.precioTransfer;
+          precio3Cuotas = derivados.precioFinanciado;
+          precioSinImp = derivados.precioSinImp;
         }
 
         const precioMin = preciosCache.length > 0 ? Math.min(...preciosCache) : precioLista;

@@ -1,4 +1,5 @@
 import prisma from '../lib/prisma';
+import { productoPrecioService } from './productoPrecio.service';
 
 export interface UpdateProductoWebData {
   stockCache?: number | null;
@@ -8,6 +9,7 @@ export interface UpdateProductoWebData {
 export class ProductoWebService {
   /**
    * Actualiza un ProductoWeb
+   * Si se envía precioCache, también crea/actualiza ProductoPrecio (minorista) para centralizar precios.
    * Retorna el producto actualizado con su relación productoPadre
    */
   async update(id: number, data: UpdateProductoWebData) {
@@ -33,6 +35,15 @@ export class ProductoWebService {
         },
       },
     });
+
+    // Centralizar precios: si se actualizó precioCache y es > 0, upsert en ProductoPrecio (minorista)
+    if (data.precioCache !== undefined && data.precioCache !== null && Number(data.precioCache) > 0) {
+      await productoPrecioService.upsert({
+        productoWebId: id,
+        tipoCliente: 'minorista',
+        precioLista: Number(data.precioCache),
+      });
+    }
 
     return productoWeb;
   }

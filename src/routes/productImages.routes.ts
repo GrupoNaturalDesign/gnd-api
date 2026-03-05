@@ -1,11 +1,8 @@
 import { Router } from 'express';
 import { productImagesController } from '../controllers/productImages.controller';
 import { uploadMultiple } from '../middleware/upload.middleware';
-// import { requireAuth } from '../middleware/auth.middleware';
 
 const router = Router();
-
-// Cuando auth esté listo: router.use(requireAuth);
 
 // POST /api/product-images/upload
 router.post(

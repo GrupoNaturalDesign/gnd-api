@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { upload } from '../services/imageUpload.service';
+import { upload, uploadDocument } from '../services/imageUpload.service';
 
 /**
  * Middleware para manejar múltiples archivos
@@ -32,6 +32,25 @@ export const uploadSingle = (fieldName: string) => {
           success: false,
           error: err.message,
           message: 'Error al procesar archivo',
+        });
+      }
+      next();
+    });
+  };
+};
+
+/**
+ * Middleware para subir un único documento (imagen o PDF, hasta 10MB)
+ */
+export const uploadDocumentSingle = (fieldName: string) => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const uploadMiddleware = uploadDocument.single(fieldName);
+    uploadMiddleware(req, res, (err) => {
+      if (err) {
+        return res.status(400).json({
+          success: false,
+          error: err.message,
+          message: 'Error al procesar documento',
         });
       }
       next();

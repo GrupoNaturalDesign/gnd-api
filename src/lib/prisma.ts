@@ -63,26 +63,41 @@ function parseDatabaseUrl(url: string | undefined): {
 let _adapter: PrismaMariaDb | null = null;
 let _prisma: PrismaClient | null = null;
 
+// function getAdapter(): PrismaMariaDb {
+//   if (!_adapter) {
+//     try {
+//       const dbConfig = parseDatabaseUrl(process.env.DATABASE_URL);
+
+//       if (process.env.NODE_ENV === 'development') {
+//         console.log('🔌 Configurando adapter de MariaDB con pool:', {
+//           host: dbConfig.host,
+//           port: dbConfig.port,
+//           database: dbConfig.database,
+//           connectionLimit: dbConfig.connectionLimit,
+//           acquireTimeout: dbConfig.acquireTimeout,
+//         });
+//       }
+
+//       _adapter = new PrismaMariaDb(dbConfig);
+//     } catch (error) {
+//       console.error('❌ Error al crear adapter de MariaDB:', error);
+//       throw error;
+//     }
+//   }
+//   return _adapter;
+// }
+
 function getAdapter(): PrismaMariaDb {
   if (!_adapter) {
-    try {
-      const dbConfig = parseDatabaseUrl(process.env.DATABASE_URL);
-      
-      if (process.env.NODE_ENV === 'development') {
-        console.log('🔌 Configurando adapter de MariaDB con pool:', {
-          host: dbConfig.host,
-          port: dbConfig.port,
-          database: dbConfig.database,
-          connectionLimit: dbConfig.connectionLimit,
-          acquireTimeout: dbConfig.acquireTimeout,
-        });
-      }
-      
-      _adapter = new PrismaMariaDb(dbConfig);
-    } catch (error) {
-      console.error('❌ Error al crear adapter de MariaDB:', error);
-      throw error;
-    }
+    _adapter = new PrismaMariaDb({
+      host: process.env.DB_HOST!,
+      port: Number(process.env.DB_PORT) || 3306,
+      user: process.env.DB_USER!,
+      password: process.env.DB_PASS!,
+      database: process.env.DB_NAME!,
+      connectionLimit: 2,
+      connectTimeout: 10000,
+    });
   }
   return _adapter;
 }
@@ -94,7 +109,7 @@ function getPrismaClient(): PrismaClient {
         adapter: getAdapter(),
         log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
       });
-      
+
       // Manejar desconexiones y errores
       _prisma.$on('error' as never, (e: any) => {
         console.error('❌ Error de Prisma:', e);
@@ -118,6 +133,11 @@ export const prisma = (() => {
   }
   return client;
 })();
+
+// Release connections on process exit (e.g. nodemon restart)
+process.on('beforeExit', async () => {
+  await prisma.$disconnect();
+});
 
 export default prisma;
 

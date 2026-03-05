@@ -1,30 +1,21 @@
 import { Router } from 'express';
 import { productoController } from '../controllers';
 import { empresaMiddleware } from '../middleware/empresa.middleware';
-// import { requireAuth } from '../middleware/auth.middleware';
+import { uploadDocumentSingle } from '../middleware/upload.middleware';
+import { firebaseAuthMiddleware } from '../middleware/firebase-auth.middleware';
+import { requireAdmin } from '../middleware/require-admin.middleware';
 
 const router = Router();
 
-// GET /api/productos/activos - Endpoint público para ecommerce (sin middleware de empresa)
-// El cliente debe enviar empresaId en query params
+// ——— Públicos (ecommerce, sin auth) ———
 router.get('/activos', productoController.getActivos.bind(productoController));
-
-// GET /api/productos/publicados - Endpoint público optimizado para ecommerce
 router.get('/publicados', productoController.getPublicados.bind(productoController));
-
-// GET /api/productos/destacados - Endpoint público para productos destacados
 router.get('/destacados', productoController.getDestacados.bind(productoController));
-
-// GET /api/productos/sfactory - Listar productos directamente desde SFactory (sin middleware)
-// Debe ir ANTES de las rutas con middleware para evitar conflictos
 router.get('/sfactory', productoController.listarDesdeSFactory.bind(productoController));
-
-// GET /api/productos/slug/:slug - Endpoint público para obtener producto por slug (sin middleware)
-// Debe ir ANTES de las rutas con middleware para evitar conflictos
 router.get('/slug/:slug', productoController.getBySlug.bind(productoController));
 
-// Rutas protegidas con empresa. Cuando auth esté listo: router.use(empresaMiddleware, requireAuth);
-router.use(empresaMiddleware);
+// ——— Panel admin: Firebase + rol ADMIN + empresa ———
+router.use(firebaseAuthMiddleware, requireAdmin, empresaMiddleware);
 
 // Rutas específicas (deben ir ANTES de las genéricas)
 
@@ -63,6 +54,32 @@ router.patch('/bulk/publicado', productoController.bulkUpdatePublicado.bind(prod
 
 // PATCH /api/productos/bulk/destacado - Actualizar destacado en bulk
 router.patch('/bulk/destacado', productoController.bulkUpdateDestacado.bind(productoController));
+
+// PATCH /api/productos/:id/tabla-talles - Subir tabla de talles (imagen o PDF)
+router.patch(
+  '/:id/tabla-talles',
+  uploadDocumentSingle('documento'),
+  productoController.uploadTablaTalles.bind(productoController)
+);
+
+// DELETE /api/productos/:id/tabla-talles - Eliminar tabla de talles
+router.delete(
+  '/:id/tabla-talles',
+  productoController.deleteTablaTalles.bind(productoController)
+);
+
+// PATCH /api/productos/:id/ficha-tecnica - Subir ficha técnica / indicaciones de bordado
+router.patch(
+  '/:id/ficha-tecnica',
+  uploadDocumentSingle('documento'),
+  productoController.uploadFichaTecnica.bind(productoController)
+);
+
+// DELETE /api/productos/:id/ficha-tecnica - Eliminar ficha técnica
+router.delete(
+  '/:id/ficha-tecnica',
+  productoController.deleteFichaTecnica.bind(productoController)
+);
 
 // Rutas genéricas (deben ir DESPUÉS de las específicas)
 

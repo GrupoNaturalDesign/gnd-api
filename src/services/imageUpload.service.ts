@@ -76,6 +76,26 @@ export const upload = multer({
   },
 });
 
+/** Multer para documentos: acepta imágenes + PDF, hasta 10MB */
+export const uploadDocument = multer({
+  storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedExt = /jpeg|jpg|png|webp|pdf/;
+    const extname = allowedExt.test(path.extname(file.originalname).toLowerCase());
+    const mimetype =
+      allowedExt.test(file.mimetype) || file.mimetype === 'application/pdf';
+
+    if (extname && mimetype) {
+      cb(null, true);
+    } else {
+      cb(new Error('Solo se permiten imágenes (JPG, PNG, WEBP) o PDF'));
+    }
+  },
+});
+
 /**
  * Calcula el siguiente número secuencial para una imagen
  */
@@ -269,6 +289,52 @@ export class ImageUploadService {
           cleanupTempFile(tempPath);
         }
       }
+      throw error;
+    }
+  }
+
+  /**
+   * Sube un documento (tabla de talles o ficha técnica) al FTP
+   * Path resultante: products/{slugProducto}/docs/{tipo}.{ext}
+   */
+  async uploadDocument(options: {
+    nombreBase: string;
+    tipo: 'tabla-talles' | 'ficha-tecnica';
+    file: MulterFile;
+  }): Promise<string> {
+    const { nombreBase, tipo, file } = options;
+    const isServerless = isServerlessEnvironment();
+
+    const folderName = slugifyProductName(nombreBase);
+    const folderPath = `${folderName}/docs`;
+    const ext = path.extname(file.originalname).toLowerCase() || '.pdf';
+    const filename = `${tipo}${ext}`;
+    const remotePath = `${folderPath}/${filename}`;
+
+    console.log(`📄 [DOC UPLOAD] Subiendo documento: ${filename} → ${remotePath}`);
+
+    try {
+      await ftpService.connect();
+      await ftpService.ensureDirectory(folderPath);
+
+      if (isServerless && file.buffer) {
+        await ftpService.uploadFileFromBuffer(file.buffer, remotePath);
+      } else if (file.path) {
+        await ftpService.uploadFile(file.path, remotePath);
+        cleanupTempFile(file.path);
+      } else if (file.buffer) {
+        await ftpService.uploadFileFromBuffer(file.buffer, remotePath);
+      } else {
+        throw new Error('Archivo no tiene buffer ni path disponible');
+      }
+
+      await ftpService.disconnect();
+
+      const publicPath = `products/${remotePath}`;
+      console.log(`✅ [DOC UPLOAD] Documento subido: ${publicPath}`);
+      return publicPath;
+    } catch (error) {
+      try { await ftpService.disconnect(); } catch { /* ignore */ }
       throw error;
     }
   }

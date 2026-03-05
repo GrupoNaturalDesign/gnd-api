@@ -10,3 +10,5 @@ export * from './producto.types';
 // External API Types
 export * from './sfactory.types';
 
+// Auth
+export * from './auth.types';

@@ -289,14 +289,9 @@ Ejecuta en orden:
 ### Autenticación
 
 #### `POST /api/sfactory/auth/init`
-Inicializa sesión con SFactory.
+Inicializa sesión con SFactory. El `companyKey` se toma **solo desde la variable de entorno** del servidor (`SFACTORY_COMPANY_KEY`); no se acepta en el body por seguridad.
 
-**Body (opcional)**:
-```json
-{
-  "companyKey": "mi-company-key"
-}
-```
+**Body**: no requerido (se usa `SFACTORY_COMPANY_KEY` del backend).
 
 **Respuesta exitosa**:
 ```json
@@ -395,7 +390,9 @@ Sincroniza todo: rubros, subrubros y productos.
 }
 ```
 
-**⚠️ Nota**: Todas las rutas de sincronización requieren `empresaMiddleware`, que inyecta `empresaId` automáticamente.
+**⚠️ Notas**:
+- Todas las rutas de sincronización requieren `empresaMiddleware`, que inyecta `empresaId` automáticamente.
+- Las rutas de SFactory auth y de sync tienen **rate limiting** (límite de solicitudes por ventana de tiempo) para evitar abuso.
 
 ---
 
@@ -417,8 +414,12 @@ SFACTORY_PASSWORD=tu_password
 SFACTORY_USER_FACTORY=tu_user_factory
 SFACTORY_PASSWORD_FACTORY=tu_password_factory
 
-# Company Key (puede ser por empresa o usar el default)
+# Company Key (solo en backend, no viaja en el cliente)
 SFACTORY_COMPANY_KEY=tu_company_key
+
+# Cifrado del token en BD (recomendado en producción). Base64 de 32 bytes.
+# Generar con: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+SFACTORY_TOKEN_ENCRYPTION_KEY=
 ```
 
 ### Base de Datos

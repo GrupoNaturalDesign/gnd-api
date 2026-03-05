@@ -81,15 +81,16 @@ export class FTPService {
         throw new Error('FTP client not connected');
       }
 
-      // Volver al directorio base
-      await this.client.cd(this.config.basePath);
-
       const parts = dirPath.split('/').filter((p) => p);
       let currentPath = '';
 
       for (const part of parts) {
         currentPath = currentPath ? `${currentPath}/${part}` : part;
+        // Siempre partir desde base para no duplicar rutas (ej. producto/docs)
+        await this.client.cd(this.config.basePath);
         const exists = await this.directoryExists(currentPath);
+        // directoryExists hace cd() cuando existe; volver a base siempre
+        await this.client.cd(this.config.basePath);
         if (!exists) {
           await this.client.ensureDir(currentPath);
         }

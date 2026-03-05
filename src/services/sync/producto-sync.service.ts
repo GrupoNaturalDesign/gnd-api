@@ -7,7 +7,6 @@ import {
   normalizarSexo,
   normalizarRubro,
   parsearNombreProducto,
-  extraerCodigoAgrupacion,
 } from '../producto-agrupacion.service';
 import { calcularTodosLosPrecios, CUOTAS_FINANCIADO_DEFAULT } from '../../config/precios.config';
 import { ECOMMERCE_RUBROS_SFACTORY_IDS } from '../../config/ecommerce.config';
@@ -94,7 +93,7 @@ export class ProductoSyncService {
 
       // Procesar en lotes para mejor performance
       const BATCH_SIZE = 100;
-      const TRANSACTION_TIMEOUT = 30000; // 30 segundos
+      const TRANSACTION_TIMEOUT = 120000; // 2 minutos (evitar P2028 en sync largo)
       
       for (let i = 0; i < productos.length; i += BATCH_SIZE) {
         const batch = productos.slice(i, i + BATCH_SIZE);
@@ -105,19 +104,19 @@ export class ProductoSyncService {
               const codigo = String((producto as any).Codigo || (producto as any).codigo || '');
               if (!codigo) continue;
 
-              // Resolver rubro_id y subrubro_id locales desde los IDs de SFactory
-              const sfactoryRubroId = (producto as any).rubro_id || (producto as any).RubroId || null;
-              const sfactorySubrubroId = (producto as any).subrubro_id || (producto as any).SubrubroId || null;
+              // Resolver rubro_id y subrubro_id locales desde los IDs de SFactory (Number() por si la API devuelve string)
+              const sfactoryRubroId = (producto as any).rubro_id ?? (producto as any).RubroId ?? null;
+              const sfactorySubrubroId = (producto as any).subrubro_id ?? (producto as any).SubrubroId ?? null;
               
-              let rubroIdLocal = null;
-              let subrubroIdLocal = null;
+              let rubroIdLocal: number | null = null;
+              let subrubroIdLocal: number | null = null;
               
-              if (sfactoryRubroId) {
-                rubroIdLocal = rubrosMap.get(sfactoryRubroId) || null;
+              if (sfactoryRubroId != null) {
+                rubroIdLocal = rubrosMap.get(Number(sfactoryRubroId)) ?? null;
               }
               
-              if (sfactorySubrubroId) {
-                subrubroIdLocal = subrubrosMap.get(sfactorySubrubroId) || null;
+              if (sfactorySubrubroId != null) {
+                subrubroIdLocal = subrubrosMap.get(Number(sfactorySubrubroId)) ?? null;
               }
 
               // Mapear datos de SFactory a ProductoSfactory
@@ -292,8 +291,8 @@ export class ProductoSyncService {
       });
 
       // Aumentar batch size para mejor performance
-      const BATCH_SIZE = 50; // Aumentado de 20 a 50 para mejor throughput
-      const TRANSACTION_TIMEOUT = 30000; // 30 segundos
+      const BATCH_SIZE = 15; // Por transacción; timeout 2 min evita P2028
+      const TRANSACTION_TIMEOUT = 120000; // 2 minutos
       const gruposArray = Array.from(grupos.entries());
       
       for (let i = 0; i < gruposArray.length; i += BATCH_SIZE) {
@@ -635,23 +634,22 @@ export class ProductoSyncService {
       throw new Error('Producto sin código');
     }
 
-    // Resolver rubro_id y subrubro_id locales
-    // Intentar múltiples variantes de nombres de campos que SFactory puede usar
-    const sfactoryRubroId = (producto as any).rubro_id || (producto as any).RubroId || (producto as any).rubroId || null;
-    const sfactorySubrubroId = (producto as any).subrubro_id || (producto as any).SubrubroId || (producto as any).subrubroId || null;
+    // Resolver rubro_id y subrubro_id locales (Number() por si la API devuelve string)
+    const sfactoryRubroId = (producto as any).rubro_id ?? (producto as any).RubroId ?? (producto as any).rubroId ?? null;
+    const sfactorySubrubroId = (producto as any).subrubro_id ?? (producto as any).SubrubroId ?? (producto as any).subrubroId ?? null;
 
-    let rubroIdLocal = null;
-    let subrubroIdLocal = null;
+    let rubroIdLocal: number | null = null;
+    let subrubroIdLocal: number | null = null;
 
-    if (sfactoryRubroId) {
-      rubroIdLocal = rubrosMap.get(Number(sfactoryRubroId)) || null;
+    if (sfactoryRubroId != null) {
+      rubroIdLocal = rubrosMap.get(Number(sfactoryRubroId)) ?? null;
       if (!rubroIdLocal) {
         console.warn(`[syncProductoSfactoryIndividual] No se encontró rubro local para sfactoryId: ${sfactoryRubroId}`);
       }
     }
 
-    if (sfactorySubrubroId) {
-      subrubroIdLocal = subrubrosMap.get(Number(sfactorySubrubroId)) || null;
+    if (sfactorySubrubroId != null) {
+      subrubroIdLocal = subrubrosMap.get(Number(sfactorySubrubroId)) ?? null;
       if (!subrubroIdLocal) {
         console.warn(`[syncProductoSfactoryIndividual] No se encontró subrubro local para sfactoryId: ${sfactorySubrubroId}`);
       }
@@ -792,17 +790,24 @@ export class ProductoSyncService {
       Talle: null,
     };
 
-    // Agrupar (puede que este producto sea parte de un grupo existente)
+    // Agrupar: la clave del Map es codigoBase + sufijo sexo (ej. L-OF-BER-REL_H), no solo el código.
+    // Buscar el grupo que contiene este SKU original (codigo de productos_sfactory) para que coincida.
     const grupos = agruparProductosPorCodigoBase([productoFormateado]);
-    const codigoAgrupacion = extraerCodigoAgrupacion(codigo);
-    const grupo = grupos.get(codigoAgrupacion);
+    const grupo = Array.from(grupos.values()).find((g) =>
+      g.productos.some(
+        (p) => String((p.producto as any).Codigo || (p.producto as any).codigo || '') === codigo
+      )
+    ) ?? Array.from(grupos.values())[0];
 
     if (!grupo || grupo.productos.length === 0) {
       throw new Error(`No se pudo agrupar el producto ${codigo}`);
     }
 
+    // Usar siempre el codigoAgrupacion del grupo (ej. L-OF-BER-REL_H) para coincidir con productos_padre
+    const codigoAgrupacion = grupo.codigoAgrupacion;
+
     // Procesar el grupo (reutilizar lógica existente)
-    const TRANSACTION_TIMEOUT = 30000; // 30 segundos
+    const TRANSACTION_TIMEOUT = 120000; // 2 minutos
     await prisma.$transaction(async (tx: PrismaTransaction) => {
       const primerProducto = grupo.productos[0]?.producto;
       if (!primerProducto) return;

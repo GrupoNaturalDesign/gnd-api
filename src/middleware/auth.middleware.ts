@@ -64,7 +64,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 
     req.userId = usuario.id;
     req.userEmail = usuario.email;
-    req.empresaId = usuario.empresaId;
+    req.empresaId = usuario.empresaId ?? undefined;
     next();
   } catch (error: unknown) {
     console.error('[auth.middleware] Error:', error);

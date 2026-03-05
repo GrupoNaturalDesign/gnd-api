@@ -449,15 +449,17 @@ export function agruparProductosPorCodigoBase(productos: SFactoryProduct[]): Map
                   (producto as any).talle || 
                   null;
     
-    // Clave de grupo: código base del SKU
-    // Esto asegura que todos los productos con el mismo código base se agrupen
-    const claveGrupo = codigoBase;
+    // Sufijo por sexo: Hombre/Dama/Unisex → productos padre distintos (fotos, talles, etc.)
+    // Los SKU (L-WW-CAM-WR1, L-WW-CAM-WR2, ...) no se modifican; solo la clave de agrupación del padre.
+    const sufijoSexo =
+      sexoNormalizado === 'Masculino' ? 'H' : sexoNormalizado === 'Femenino' ? 'D' : 'U';
+    const claveGrupo = `${codigoBase}_${sufijoSexo}`;
     
     // Obtener o crear grupo
     if (!grupos.has(claveGrupo)) {
       const nuevoGrupo: ProductoAgrupado = {
-        codigoAgrupacion: codigoBase, // Usar código base como código de agrupación
-        codigoBase: codigoBase,
+        codigoAgrupacion: claveGrupo,
+        codigoBase: claveGrupo,
         nombreBase: parseado.nombreBase || descripcion,
         nombreBaseNormalizado,
         sexo: sexoNormalizado,

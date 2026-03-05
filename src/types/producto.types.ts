@@ -204,20 +204,41 @@ export interface ProductoPublicadoQueryParams {
   sortOrder?: 'asc' | 'desc';
 }
 
+// Query params envían "true"/"false" como string; z.coerce.boolean() trata "false" como true (truthy)
+function parseQueryBoolean(val: unknown): boolean | undefined {
+  if (val === undefined || val === null) return undefined;
+  const s = String(val).toLowerCase();
+  if (s === 'true' || s === '1') return true;
+  if (s === 'false' || s === '0' || s === '') return false;
+  return undefined;
+}
+
 export const ProductoPublicadoQueryParamsSchema = z.object({
   empresaId: z.coerce.number().int().positive().optional(), // Opcional en el schema
-  destacado: z.coerce.boolean().optional(),
+  destacado: z.preprocess(parseQueryBoolean, z.boolean().optional()),
   rubroId: z.coerce.number().int().positive().optional(),
   subrubroId: z.coerce.number().int().positive().optional(),
   search: z.string().min(1).max(200).optional(),
-  tieneStock: z.coerce.boolean().optional(),
+  tieneStock: z.preprocess(parseQueryBoolean, z.boolean().optional()),
   sexo: z.string().max(50).optional(),
   color: z.string().max(100).optional(),
   talle: z.string().max(50).optional(),
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().min(1).max(100).default(20),
-  sortBy: z.enum(['destacado', 'nombre', 'precio', 'orden']).default('orden'),
-  sortOrder: z.enum(['asc', 'desc']).default('asc'),
+  sortBy: z.preprocess(
+    (val) => {
+      const s = Array.isArray(val) ? val[0] : val;
+      return typeof s === 'string' ? s.toLowerCase() : s;
+    },
+    z.enum(['destacado', 'nombre', 'precio', 'orden']).default('orden')
+  ),
+  sortOrder: z.preprocess(
+    (val) => {
+      const s = Array.isArray(val) ? val[0] : val;
+      return typeof s === 'string' ? s.toLowerCase() : s;
+    },
+    z.enum(['asc', 'desc']).default('asc')
+  ),
 });
 
 // Estructura optimizada de respuesta

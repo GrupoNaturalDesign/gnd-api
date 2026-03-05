@@ -4,6 +4,7 @@ generator client {
 
 datasource db {
   provider = "mysql"
+  // url      = env("DATABASE_URL")
 }
 
 model Empresa {
@@ -39,29 +40,47 @@ model Empresa {
   @@map("empresas")
 }
 
+model Role {
+  id        Int       @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  code      String    @unique(map: "code") @map("code") @db.VarChar(20)
+  name      String?   @map("name") @db.VarChar(50)
+  usuarios  Usuario[]
+
+  @@map("roles")
+}
+
 model Usuario {
-  id                Int      @id @default(autoincrement()) @map("id") @db.UnsignedInt
-  auth0UserId       String?  @unique(map: "auth0_user_id") @map("auth0_user_id") @db.VarChar(255)
-  empresaId         Int      @map("empresa_id") @db.UnsignedInt
-  email             String   @unique(map: "email") @map("email") @db.VarChar(255)
-  rol               Rol      @default(cliente) @map("rol")
-  provider          String?  @map("provider") @db.VarChar(50)
-  nombre            String   @map("nombre") @db.VarChar(255)
-  apellido          String?  @map("apellido") @db.VarChar(255)
-  telefono          String?  @map("telefono") @db.VarChar(50)
-  avatarUrl         String?  @map("avatar_url") @db.VarChar(500)
-  sfactoryClienteId Int?     @unique(map: "sfactory_cliente_id") @map("sfactory_cliente_id")
-  activo            Boolean  @default(true) @map("activo")
-  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp(0)
-  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
-  pedidos           Pedido[]
-  sesiones          Sesion[]
-  cliente           Cliente?
-  empresa           Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "usuarios_ibfk_1")
+  id                Int         @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  externalId        String?     @unique(map: "auth0_user_id") @map("auth0_user_id") @db.VarChar(255)
+  empresaId         Int?        @map("empresa_id") @db.UnsignedInt
+  email             String      @unique(map: "email") @map("email") @db.VarChar(255)
+  rol               Rol         @default(cliente) @map("rol")
+  roleId            Int?        @map("role_id") @db.UnsignedInt
+  role              Role?       @relation(fields: [roleId], references: [id], onUpdate: NoAction, map: "usuarios_role_fk")
+  provider          String?     @map("provider") @db.VarChar(50)
+  nombre            String      @map("nombre") @db.VarChar(255)
+  apellido          String?     @map("apellido") @db.VarChar(255)
+  telefono          String?     @map("telefono") @db.VarChar(50)
+  avatarUrl         String?     @map("avatar_url") @db.VarChar(500)
+  passwordHash      String?     @map("password_hash") @db.VarChar(255)
+  isSystemUser          Boolean     @default(false) @map("is_system_user")
+  emailVerified         Boolean     @default(false) @map("email_verified")
+  onboardingCompleted   Boolean     @default(false) @map("onboarding_completed")
+  fechaNacimiento       DateTime?   @map("fecha_nacimiento") @db.Date
+  sfactoryClienteId     Int?        @unique(map: "sfactory_cliente_id") @map("sfactory_cliente_id")
+  activo                Boolean     @default(true) @map("activo")
+  createdAt             DateTime    @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt             DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
+  pedidos               Pedido[]
+  sesiones              Sesion[]
+  authTokens            AuthToken[]
+  cliente               Cliente?
+  empresa               Empresa?   @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "usuarios_ibfk_1")
 
   @@index([email], map: "idx_email")
   @@index([empresaId, rol], map: "idx_empresa_rol")
-  @@index([auth0UserId], map: "idx_auth0")
+  @@index([externalId], map: "idx_auth0")
+  @@index([roleId], map: "idx_role_id")
   @@map("usuarios")
 }
 
@@ -503,6 +522,27 @@ model Sesion {
   @@index([usuarioId], map: "idx_usuario")
   @@map("sesiones")
 }
+
+enum AuthTokenType {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+
+model AuthToken {
+  id        Int           @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  usuarioId Int           @map("usuario_id") @db.UnsignedInt
+  token     String        @unique(map: "token") @map("token") @db.VarChar(500)
+  type      AuthTokenType @map("type")
+  expiresAt DateTime      @map("expires_at") @db.Timestamp(0)
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamp(0)
+  usuario   Usuario       @relation(fields: [usuarioId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "auth_tokens_ibfk_1")
+
+  @@index([token], map: "idx_token")
+  @@index([usuarioId, type], map: "idx_usuario_type")
+  @@index([expiresAt], map: "idx_expires_at")
+  @@map("auth_tokens")
+}
+
 model SyncLog {
   id                  Int        @id @default(autoincrement()) @map("id") @db.UnsignedInt
   empresaId           Int        @map("empresa_id") @db.UnsignedInt

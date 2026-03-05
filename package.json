@@ -9,7 +9,11 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
-    "prisma:push": "prisma db push"
+    "prisma:push": "prisma db push",
+    "prisma:seed": "prisma db seed"
+  },
+  "prisma": {
+    "seed": "npx ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
   },
   "keywords": [],
   "author": "",
@@ -20,10 +24,13 @@
     "@prisma/client": "^7.0.1",
     "@types/multer": "^2.0.0",
     "basic-ftp": "^5.0.5",
+    "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
     "csv-parse": "^6.1.0",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
+    "express-rate-limit": "^8.2.1",
+    "firebase-admin": "^13.7.0",
     "helmet": "^8.1.0",
     "mariadb": "^3.4.5",
     "morgan": "^1.10.1",
@@ -33,6 +40,7 @@
     "zod": "^4.1.13"
   },
   "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.5",
     "@types/morgan": "^1.9.10",

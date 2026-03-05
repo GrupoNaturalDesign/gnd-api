@@ -1,4 +1,5 @@
 import prisma from '../../lib/prisma';
+import { encryptToken, decryptToken } from '../../lib/token-encryption';
 
 interface SFactoryAuthResponse {
   result: {
@@ -101,12 +102,15 @@ export class SFactoryAuthService {
         tokenExpiry = maxDate;
       }
 
+      // Cifrar token antes de guardar (si está configurada la clave de cifrado)
+      const tokenToStore = encryptToken(token);
+
       // Guardar token y datos en BD
       try {
         await prisma.empresa.update({
           where: { id: empresa.id },
           data: {
-            sfactoryToken: token,
+            sfactoryToken: tokenToStore,
             sfactoryTokenExpiry: tokenExpiry,
             ...(companyId !== undefined && { sfactoryCompanyId: companyId }),
             ...(userId !== undefined && { sfactoryUserId: userId }),
@@ -127,7 +131,7 @@ export class SFactoryAuthService {
             await prisma.empresa.update({
               where: { id: empresa.id },
               data: {
-                sfactoryToken: token,
+                sfactoryToken: tokenToStore,
                 sfactoryTokenExpiry: null, // Guardar sin fecha de expiración
                 ...(companyId !== undefined && { sfactoryCompanyId: companyId }),
                 ...(userId !== undefined && { sfactoryUserId: userId }),
@@ -180,13 +184,16 @@ export class SFactoryAuthService {
           },
         });
 
-        // Si hay token válido, retornarlo
+        // Si hay token válido, descifrarlo y retornarlo
         if (
           empresa?.sfactoryToken &&
           empresa?.sfactoryTokenExpiry &&
           new Date() < empresa.sfactoryTokenExpiry
         ) {
-          return empresa.sfactoryToken;
+          const decrypted = decryptToken(empresa.sfactoryToken);
+          if (decrypted) return decrypted;
+          // Token corrupto o antiguo en texto plano con cifrado activo: invalidar y reautenticar
+          await this.invalidateToken(key);
         }
 
         // Si no hay token o está expirado, autenticar
@@ -285,11 +292,12 @@ export class SFactoryAuthService {
           },
         });
 
-        // Si las columnas existen y hay token válido, retornar el ID
+        // Si las columnas existen y hay token válido (y descifrable), retornar el ID
         if (
           empresaConToken?.sfactoryToken &&
           empresaConToken?.sfactoryTokenExpiry &&
-          new Date() < empresaConToken.sfactoryTokenExpiry
+          new Date() < empresaConToken.sfactoryTokenExpiry &&
+          decryptToken(empresaConToken.sfactoryToken)
         ) {
           return empresaConToken.id;
         }

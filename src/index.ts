@@ -1,35 +1,46 @@
 import dotenv from 'dotenv';
 import app from './app';
-import { redisService } from './lib/redis';
+import { prisma } from './lib/prisma';
 
 // Load environment variables
 dotenv.config();
 
-// Inicializar Redis (lazy, se conecta cuando se use por primera vez)
-redisService.getClient().catch((error) => {
-  console.warn('⚠️  Redis no disponible, continuando sin cache:', error.message);
-});
+// Redis desactivado por ahora (activar con REDIS_ENABLED=true en .env)
 
-app.get('/health', (_req, res) => {
-  res.json({ ok: true });
+app.get('/health', async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ ok: true, db: 'connected' });
+  } catch {
+    res.status(503).json({ ok: false, db: 'disconnected' });
+  }
 });
 
 const PORT = process.env.PORT || 3002;
 
-// Start server
-app.listen(PORT, () => {
-  console.log('🚀 Servidor corriendo en puerto', PORT);
-  console.log(`📍 API disponible en http://localhost:${PORT}/api`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-});
+function start() {
+  app.listen(PORT, () => {
+    console.log('🚀 Servidor corriendo en puerto', PORT);
+    console.log(`📍 API disponible en http://localhost:${PORT}/api`);
+    console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  });
+}
 
-// Graceful shutdown
+start();
+
+// Graceful shutdown: disconnect DB before exit so connections are released on nodemon restart
+async function shutdown() {
+  console.log('Closing HTTP server and disconnecting DB...');
+  await prisma.$disconnect();
+  process.exit(0);
+}
+
 process.on('SIGTERM', () => {
   console.log('SIGTERM signal received: closing HTTP server');
-  process.exit(0);
+  shutdown();
 });
 
 process.on('SIGINT', () => {
   console.log('SIGINT signal received: closing HTTP server');
-  process.exit(0);
+  shutdown();
 });

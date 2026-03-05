@@ -11,14 +11,14 @@ export class SFactoryAuthController {
    */
   async initSession(req: Request, res: Response, next: NextFunction) {
     try {
-      // Manejar caso cuando req.body es undefined
-      const companyKey = req.body?.companyKey || process.env.SFACTORY_COMPANY_KEY || '';
+      // companyKey solo desde env del backend (no viaja en el cliente por seguridad)
+      const companyKey = process.env.SFACTORY_COMPANY_KEY || '';
 
       if (!companyKey) {
         return res.status(400).json({
           success: false,
           error: 'CompanyKey requerido',
-          message: 'No se proporcionó companyKey y no está configurado en variables de entorno',
+          message: 'SFACTORY_COMPANY_KEY debe estar configurado en variables de entorno del servidor.',
         });
       }
 

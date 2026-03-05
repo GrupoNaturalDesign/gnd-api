@@ -60,9 +60,6 @@ export class SFactoryClient {
         token = await sfactoryAuthService.getToken(key);
       }
       
-      console.log(`[SFactoryClient] Token obtenido (primeros 20 chars): ${token.substring(0, 20)}...`);
-      console.log(`[SFactoryClient] Token completo length: ${token.length}`);
-
       const body: SFactoryAuthBody & { credential: any } = {
         auth: {
           userdev: this.userdev,
@@ -79,9 +76,6 @@ export class SFactoryClient {
         parameters,
       };
 
-      // Log del body completo para debugging
-      console.log('[SFactoryClient] Body completo:', JSON.stringify(body, null, 2));
-
       // Para peticiones de datos, usar el endpoint /main
       let apiURL = this.baseURL;
       if (!apiURL.endsWith('/main') && !apiURL.endsWith('/main/')) {
@@ -94,19 +88,15 @@ export class SFactoryClient {
         }
       }
       
-      console.log(`[SFactoryClient] URL completa: ${apiURL}`);
-      console.log(`[SFactoryClient] Módulo: ${module}, Método: ${method}`);
-      console.log(`[SFactoryClient] Body size: ${JSON.stringify(body).length} bytes`);
-      console.log(`[SFactoryClient] Retry count: ${retryCount}`);
-      
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`[SFactoryClient] ${module}/${method} (retry ${retryCount})`);
+      }
+
       // Crear AbortController para timeout
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 segundos
       
       try {
-        console.log('[SFactoryClient] Iniciando fetch...');
-        const startTime = Date.now();
-        
         // SIMPLIFICAR HEADERS - igual que sign_in que funciona
         const response = await fetch(apiURL, {
           method: 'POST',
@@ -122,12 +112,6 @@ export class SFactoryClient {
           // Remover keepalive que podría causar problemas
           // keepalive: true,
         });
-
-        const elapsedTime = Date.now() - startTime;
-        console.log(`[SFactoryClient] Fetch completado en ${elapsedTime}ms`);
-        console.log(`[SFactoryClient] Response status: ${response.status}`);
-        console.log(`[SFactoryClient] Response ok: ${response.ok}`);
-        console.log(`[SFactoryClient] Response headers:`, Object.fromEntries(response.headers.entries()));
 
         clearTimeout(timeoutId);
 
@@ -149,15 +133,7 @@ export class SFactoryClient {
           throw new Error(`HTTP error! status: ${response.status} - ${errorText}`);
         }
 
-        console.log('[SFactoryClient] Parseando respuesta JSON...');
         const rawData = await response.json() as any;
-        console.log('[SFactoryClient] Respuesta parseada exitosamente');
-        console.log('[SFactoryClient] Estructura de respuesta:', {
-          hasResult: !!rawData.result,
-          hasResponse: !!rawData.response,
-          resultSuccess: rawData.result?.success,
-          resultMessage: rawData.result?.message,
-        });
 
         // La respuesta de SFactory tiene estructura:
         // { service: {...}, result: { success: boolean, ... }, response: { data: [...] } }
@@ -201,7 +177,6 @@ export class SFactoryClient {
           throw new Error('La respuesta de S-Factory no contiene el campo "response"');
         }
 
-        console.log('[SFactoryClient] Petición exitosa');
         return data.response as T;
       } catch (fetchError: any) {
         clearTimeout(timeoutId);

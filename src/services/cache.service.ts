@@ -250,6 +250,14 @@ export class CacheService {
         if (params?.empresaId) parts.push(`empresa:${params.empresaId}`);
         if (params?.rubroId) parts.push(`rubro:${params.rubroId}`);
         if (params?.subrubroId) parts.push(`subrubro:${params.subrubroId}`);
+        if (params?.page) parts.push(`page:${params.page}`);
+        if (params?.limit) parts.push(`limit:${params.limit}`);
+        if (params?.destacado !== undefined) parts.push(`destacado:${params.destacado}`);
+        if (params?.tieneStock !== undefined) parts.push(`tieneStock:${params.tieneStock}`);
+        if (params?.sexo) parts.push(`sexo:${params.sexo}`);
+        if (params?.search) parts.push(`search:${params.search}`);
+        if (params?.sortBy) parts.push(`sortBy:${params.sortBy}`);
+        if (params?.sortOrder) parts.push(`sortOrder:${params.sortOrder}`);
         break;
     }
 

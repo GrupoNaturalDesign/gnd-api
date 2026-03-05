@@ -1,16 +1,16 @@
 import { Router } from 'express';
 import { clientesController } from '../controllers/clientes.controller';
 import { empresaMiddleware } from '../middleware/empresa.middleware';
-// import { requireAuth } from '../middleware/auth.middleware';
+import { firebaseAuthMiddleware } from '../middleware/firebase-auth.middleware';
+import { requireAdmin } from '../middleware/require-admin.middleware';
 
 const router = Router();
 
-// GET /api/clientes/sfactory - Listar clientes directamente desde SFactory (sin middleware)
-// Debe ir ANTES de las rutas con middleware para evitar conflictos
+// Público: listado desde SFactory (sin auth)
 router.get('/sfactory', clientesController.listarDesdeSFactory.bind(clientesController));
 
-// Rutas con empresa. Cuando auth esté listo: router.use(empresaMiddleware, requireAuth);
-router.use(empresaMiddleware);
+// Resto: solo admin autenticado
+router.use(firebaseAuthMiddleware, requireAdmin, empresaMiddleware);
 
 // GET /api/clientes - Listar todos los clientes desde nuestra BD
 router.get('/', clientesController.listar.bind(clientesController));

@@ -1,6 +1,12 @@
 import { Request, Response, NextFunction } from 'express';
 import { rubroSyncService } from '../services/sync/rubro-sync.service';
 import { productoSyncService } from '../services/sync/producto-sync.service';
+import {
+  tryAcquireSyncProductosLock,
+  releaseSyncProductosLock,
+  setSyncProductosLastRun,
+  checkSyncProductosCooldown,
+} from '../services/sync/sync-productos-guard.service';
 import { ApiResponse } from '../types';
 
 export class SyncController {
@@ -67,26 +73,45 @@ export class SyncController {
   }
 
   async syncProductos(req: Request, res: Response, next: NextFunction) {
+    const empresaId = (req as any).empresaId;
+    if (!empresaId) {
+      return res.status(400).json({
+        success: false,
+        error: 'EmpresaId requerido',
+        message: 'No se pudo obtener el empresaId del request',
+      });
+    }
+
+    const acquired = await tryAcquireSyncProductosLock(empresaId);
+    if (!acquired) {
+      return res.status(429).json({
+        success: false,
+        error: 'Sync en curso',
+        message: 'Ya hay una sincronización de productos en curso. Espere a que finalice.',
+      });
+    }
+
+    const cooldown = await checkSyncProductosCooldown(empresaId);
+    if (!cooldown.allowed) {
+      await releaseSyncProductosLock(empresaId);
+      const retryAfter = cooldown.retryAfterSeconds ?? 60;
+      res.setHeader('Retry-After', String(retryAfter));
+      return res.status(429).json({
+        success: false,
+        error: 'Cooldown',
+        message: cooldown.error,
+        retryAfterSeconds: retryAfter,
+      });
+    }
+
     try {
-      // El middleware garantiza que empresaId existe, si no, ya devolvió error
-      const empresaId = (req as any).empresaId;
-      
-      if (!empresaId) {
-        return res.status(400).json({
-          success: false,
-          error: 'EmpresaId requerido',
-          message: 'No se pudo obtener el empresaId del request',
-        });
-      }
-
       const resultado = await productoSyncService.syncProductos(empresaId);
-
+      await setSyncProductosLastRun(empresaId);
       const response: ApiResponse = {
         success: true,
         data: resultado,
         message: 'Productos sincronizados exitosamente',
       };
-
       res.json(response);
     } catch (error: any) {
       res.status(500).json({
@@ -94,25 +119,48 @@ export class SyncController {
         error: 'Error al sincronizar productos',
         message: error.message,
       });
+    } finally {
+      await releaseSyncProductosLock(empresaId);
     }
   }
 
   async syncAll(req: Request, res: Response, next: NextFunction) {
-    try {
-      // El middleware garantiza que empresaId existe, si no, ya devolvió error
-      const empresaId = (req as any).empresaId;
-      
-      if (!empresaId) {
-        return res.status(400).json({
-          success: false,
-          error: 'EmpresaId requerido',
-          message: 'No se pudo obtener el empresaId del request',
-        });
-      }
+    const empresaId = (req as any).empresaId;
+    if (!empresaId) {
+      return res.status(400).json({
+        success: false,
+        error: 'EmpresaId requerido',
+        message: 'No se pudo obtener el empresaId del request',
+      });
+    }
 
+    const acquired = await tryAcquireSyncProductosLock(empresaId);
+    if (!acquired) {
+      return res.status(429).json({
+        success: false,
+        error: 'Sync en curso',
+        message: 'Ya hay una sincronización de productos en curso. Espere a que finalice.',
+      });
+    }
+
+    const cooldown = await checkSyncProductosCooldown(empresaId);
+    if (!cooldown.allowed) {
+      await releaseSyncProductosLock(empresaId);
+      const retryAfter = cooldown.retryAfterSeconds ?? 60;
+      res.setHeader('Retry-After', String(retryAfter));
+      return res.status(429).json({
+        success: false,
+        error: 'Cooldown',
+        message: cooldown.error,
+        retryAfterSeconds: retryAfter,
+      });
+    }
+
+    try {
       const rubros = await rubroSyncService.syncRubros(empresaId);
       const subrubros = await rubroSyncService.syncSubrubros(empresaId);
       const productos = await productoSyncService.syncProductos(empresaId);
+      await setSyncProductosLastRun(empresaId);
 
       const response: ApiResponse = {
         success: true,
@@ -123,7 +171,6 @@ export class SyncController {
         },
         message: 'Sincronización completa exitosa',
       };
-
       res.json(response);
     } catch (error: any) {
       res.status(500).json({
@@ -131,6 +178,8 @@ export class SyncController {
         error: 'Error al sincronizar datos',
         message: error.message,
       });
+    } finally {
+      await releaseSyncProductosLock(empresaId);
     }
   }
 }
