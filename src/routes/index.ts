@@ -49,9 +49,9 @@ router.use('/auth', authRoutes);
 // SFactory Auth routes (rate limited, companyKey solo desde env)
 router.use('/sfactory/auth', sfactoryAuthLimiter, sfactoryAuthRoutes);
 
-// Rutas de panel admin: requieren Firebase + rol ADMIN + empresa
-router.use('/rubros', firebaseAuthMiddleware, requireAdmin, empresaMiddleware, rubrosRoutes);
-router.use('/subrubros', firebaseAuthMiddleware, requireAdmin, empresaMiddleware, subrubrosRoutes);
+// Rubros y subrubros: públicos (ecommerce), solo inyectan empresa desde config
+router.use('/rubros', empresaMiddleware, rubrosRoutes);
+router.use('/subrubros', empresaMiddleware, subrubrosRoutes);
 router.use('/productos', productosRoutes); // Públicas arriba; admin en el propio router
 
 router.use('/clientes', clientesRoutes); // Públicas arriba; admin en el propio router

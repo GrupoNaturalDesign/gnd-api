@@ -918,6 +918,13 @@ export class ProductoService {
           ? { in: rubroIdsEcommerce }
           : undefined;
 
+    // "TODOS" = no filtrar por genero/sexo (valor del front para "todos los géneros")
+    const generoOSexo = params.genero || params.sexo;
+    const filtrarPorGenero =
+      generoOSexo &&
+      String(generoOSexo).toUpperCase() !== 'TODOS' &&
+      String(generoOSexo).trim() !== '';
+
     // Construir where clause - SOLO productos publicados y solo rubros ecommerce (si hay)
     const where: Prisma.ProductoPadreWhereInput = {
       empresaId: params.empresaId,
@@ -931,8 +938,8 @@ export class ProductoService {
           ...(params.tieneStock && {
             stockCache: { gt: 0 },
           }),
-          ...(params.sexo && {
-            sexo: params.sexo,
+          ...(filtrarPorGenero && {
+            sexo: (generoOSexo as string).trim(),
           }),
           ...(params.color && {
             color: params.color,
@@ -949,8 +956,8 @@ export class ProductoService {
       ...(params.subrubroId && {
         subrubroId: params.subrubroId,
       }),
-      ...((params.genero || params.sexo) && {
-        genero: (params.genero || params.sexo) as string,
+      ...(filtrarPorGenero && {
+        genero: (generoOSexo as string).trim(),
       }),
       // Búsqueda
       ...(params.search && {
@@ -990,7 +997,7 @@ export class ProductoService {
       productosWeb: {
         where: {
           activoSfactory: true,
-          ...(params.sexo && { sexo: params.sexo }),
+          ...(filtrarPorGenero && { sexo: (generoOSexo as string).trim() }),
           ...(params.color && { color: params.color }),
           ...(params.talle && { talle: params.talle }),
           ...(params.tieneStock && { stockCache: { gt: 0 } }),
