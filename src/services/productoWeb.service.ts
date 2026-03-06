@@ -49,38 +49,27 @@ export class ProductoWebService {
   }
 
   /**
-   * Actualiza múltiples ProductoWeb en lote
-   * Retorna los productos actualizados con sus relaciones (productoPadre)
+   * Actualiza múltiples ProductoWeb en lote.
+   * Ejecuta en lotes para no agotar el pool de conexiones (evita pool timeout).
+   * Retorna los productos actualizados con sus relaciones (productoPadre).
    */
+  private static BULK_BATCH_SIZE = 5;
+
   async updateBulk(updates: Array<{ id: number } & UpdateProductoWebData>) {
-    // Actualizar todos los productos en paralelo
-    const promises = updates.map((update) => {
-      const { id, ...data } = update;
-      return this.update(id, data);
-    });
+    const results: Awaited<ReturnType<ProductoWebService['update']>>[] = [];
 
-    const productosWeb = await Promise.all(promises);
-
-    // Obtener los productos actualizados con sus relaciones (productoPadre) para invalidar cache
-    const productosWebConRelaciones = await Promise.all(
-      productosWeb.map((pw) =>
-        prisma.productoWeb.findUnique({
-          where: { id: pw.id },
-          include: {
-            productoPadre: {
-              select: {
-                id: true,
-                empresaId: true,
-              },
-            },
-          },
+    for (let i = 0; i < updates.length; i += ProductoWebService.BULK_BATCH_SIZE) {
+      const batch = updates.slice(i, i + ProductoWebService.BULK_BATCH_SIZE);
+      const batchResults = await Promise.all(
+        batch.map((update) => {
+          const { id, ...data } = update;
+          return this.update(id, data);
         })
-      )
-    );
+      );
+      results.push(...batchResults);
+    }
 
-    return productosWebConRelaciones.filter((pw) => pw !== null) as Array<
-      typeof productosWebConRelaciones[0] & { productoPadre: { id: number; empresaId: number } }
-    >;
+    return results;
   }
 
   /**

@@ -89,14 +89,16 @@ let _prisma: PrismaClient | null = null;
 
 function getAdapter(): PrismaMariaDb {
   if (!_adapter) {
+    const connectionLimit = parseInt(process.env.DB_POOL_LIMIT || '10', 10);
+    const connectTimeout = parseInt(process.env.DB_CONNECT_TIMEOUT || '30000', 10);
     _adapter = new PrismaMariaDb({
       host: process.env.DB_HOST!,
       port: Number(process.env.DB_PORT) || 3306,
       user: process.env.DB_USER!,
       password: process.env.DB_PASS!,
       database: process.env.DB_NAME!,
-      connectionLimit: 2,
-      connectTimeout: 10000,
+      connectionLimit,
+      connectTimeout,
     });
   }
   return _adapter;
