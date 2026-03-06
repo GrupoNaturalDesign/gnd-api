@@ -170,6 +170,8 @@ export interface ProductoActivoQueryParams {
   destacado?: boolean | undefined;
   rubroId?: number | undefined;
   subrubroId?: number | undefined;
+  genero?: string | undefined;
+  sexo?: string | undefined;
   search?: string | undefined;
   page?: number | undefined;
   limit?: number | undefined;
@@ -182,6 +184,8 @@ export const ProductoActivoQueryParamsSchema = z.object({
   destacado: z.coerce.boolean().optional(),
   rubroId: z.coerce.number().int().positive().optional(),
   subrubroId: z.coerce.number().int().positive().optional(),
+  genero: z.string().min(1).max(50).optional(),
+  sexo: z.string().min(1).max(50).optional(),
   search: z.string().min(1).max(200).optional(),
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().min(1).max(100).default(20),
