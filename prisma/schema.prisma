@@ -160,6 +160,7 @@ model ProductoPadre {
   descripcionMarketing String?        @map("descripcion_marketing") @db.Text
   descripcionCorta     String?        @map("descripcion_corta") @db.VarChar(500)
   slug                 String?        @unique(map: "slug") @map("slug") @db.VarChar(255)
+  genero               String?        @map("genero") @db.VarChar(20)
   metaTitle            String?        @map("meta_title") @db.VarChar(255)
   metaDescription      String?        @map("meta_description") @db.VarChar(500)
   imagenes             Json?          @map("imagenes")
@@ -179,6 +180,7 @@ model ProductoPadre {
 
   @@unique([empresaId, codigoAgrupacion], name: "unique_empresa_agrupacion", map: "unique_empresa_agrupacion")
   @@index([empresaId, publicado], map: "idx_publicado")
+  @@index([empresaId, publicado, genero], map: "idx_empresa_publicado_genero")
   @@index([empresaId, publicado, destacado], map: "idx_empresa_publicado_destacado")
   @@index([empresaId, publicado, rubroId], map: "idx_empresa_publicado_rubro")
   @@index([empresaId, publicado, subrubroId], map: "idx_empresa_publicado_subrubro")

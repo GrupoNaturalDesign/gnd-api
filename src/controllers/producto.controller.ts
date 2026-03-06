@@ -67,6 +67,8 @@ export class ProductoController {
         publicado: params.publicado,
         destacado: params.destacado,
         search: params.search,
+        genero: params.genero,
+        sexo: params.sexo,
         page: params.page,
         limit: params.limit,
         includeVariantes: params.includeVariantes,

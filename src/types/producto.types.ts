@@ -70,6 +70,7 @@ export const ProductoPadreResponseSchema = z.object({
   descripcionMarketing: z.string().nullable(),
   descripcionCorta: z.string().nullable(),
   slug: z.string().nullable(),
+  genero: z.string().nullable(),
   metaTitle: z.string().nullable(),
   metaDescription: z.string().nullable(),
   imagenes: z.any().nullable(),
@@ -116,6 +117,8 @@ export interface ProductoQueryParams extends BaseQueryParams {
   publicado?: boolean;
   destacado?: boolean;
   includeVariantes?: boolean;
+  genero?: string;
+  sexo?: string;
 }
 
 export const ProductoQueryParamsSchema = BaseQueryParamsSchema.extend({
@@ -124,6 +127,8 @@ export const ProductoQueryParamsSchema = BaseQueryParamsSchema.extend({
   publicado: z.coerce.boolean().optional(),
   destacado: z.coerce.boolean().optional(),
   includeVariantes: z.coerce.boolean().optional(),
+  genero: z.string().max(50).optional(),
+  sexo: z.string().max(50).optional(),
 });
 
 // ============================================
@@ -196,6 +201,7 @@ export interface ProductoPublicadoQueryParams {
   search?: string;
   tieneStock?: boolean;
   sexo?: string;
+  genero?: string;
   color?: string;
   talle?: string;
   page?: number;
@@ -221,6 +227,7 @@ export const ProductoPublicadoQueryParamsSchema = z.object({
   search: z.string().min(1).max(200).optional(),
   tieneStock: z.preprocess(parseQueryBoolean, z.boolean().optional()),
   sexo: z.string().max(50).optional(),
+  genero: z.string().max(50).optional(),
   color: z.string().max(100).optional(),
   talle: z.string().max(50).optional(),
   page: z.coerce.number().int().positive().default(1),

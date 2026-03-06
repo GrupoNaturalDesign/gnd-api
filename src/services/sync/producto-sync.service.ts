@@ -378,6 +378,7 @@ export class ProductoSyncService {
                   um: productoSfactory?.um || (primerProducto as any).UM || null,
                   coloresDisponibles: grupo.colores.length > 0 ? (grupo.colores as any) : null,
                   tallesDisponibles: grupo.talles.length > 0 ? (grupo.talles as any) : null,
+                  genero: sexoNormalizado,
                 },
                 create: {
                   empresaId: empresaId,
@@ -392,6 +393,7 @@ export class ProductoSyncService {
                   slug: generarSlug(nombre, codigoAgrupacion),
                   coloresDisponibles: grupo.colores.length > 0 ? (grupo.colores as any) : null,
                   tallesDisponibles: grupo.talles.length > 0 ? (grupo.talles as any) : null,
+                  genero: sexoNormalizado,
                 },
               });
 
@@ -875,6 +877,7 @@ export class ProductoSyncService {
           um: productoSfactory.um || null,
           coloresDisponibles: grupo.colores.length > 0 ? (grupo.colores as any) : null,
           tallesDisponibles: grupo.talles.length > 0 ? (grupo.talles as any) : null,
+          genero: sexoNormalizado,
         },
         create: {
           empresaId,
@@ -889,6 +892,7 @@ export class ProductoSyncService {
           slug: generarSlug(nombre, codigoAgrupacion),
           coloresDisponibles: grupo.colores.length > 0 ? (grupo.colores as any) : null,
           tallesDisponibles: grupo.talles.length > 0 ? (grupo.talles as any) : null,
+          genero: sexoNormalizado,
         },
       });
 

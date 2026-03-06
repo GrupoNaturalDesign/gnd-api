@@ -62,6 +62,9 @@ export class ProductoService {
       ...(params.destacado !== undefined && {
         destacado: params.destacado,
       }),
+      ...((params.genero || params.sexo) && {
+        genero: (params.genero || params.sexo) as string,
+      }),
       ...(params.search && {
         OR: [
           {
@@ -743,6 +746,9 @@ export class ProductoService {
       ...(params.subrubroId && {
         subrubroId: params.subrubroId,
       }),
+      ...((params.genero || params.sexo) && {
+        genero: (params.genero || params.sexo) as string,
+      }),
       // Búsqueda en nombre, descripción y código (case-insensitive en MySQL por collation)
       ...(params.search && {
         OR: [
@@ -942,6 +948,9 @@ export class ProductoService {
       }),
       ...(params.subrubroId && {
         subrubroId: params.subrubroId,
+      }),
+      ...((params.genero || params.sexo) && {
+        genero: (params.genero || params.sexo) as string,
       }),
       // Búsqueda
       ...(params.search && {
@@ -1162,7 +1171,7 @@ export class ProductoService {
           descripcionCorta: p.descripcionCorta,
           destacado: p.destacado,
           orden: p.orden,
-          sexo: sexoUnico, // Sexo del producto padre (heredado por todas las variantes)
+          sexo: (p as any).genero ?? sexoUnico, // Preferir genero del padre; fallback a variantes
           rubro: p.rubro && p.rubro.slug
             ? {
               id: p.rubro.id,
@@ -1313,8 +1322,8 @@ export class ProductoService {
       };
     }
 
-    // Obtener sexo de la primera variante
-    const sexo = productoPadre.productosWeb[0]?.sexo || null;
+    // Preferir genero del padre; fallback a primera variante
+    const sexo = (productoPadre as any).genero ?? productoPadre.productosWeb[0]?.sexo ?? null;
 
     // Extraer números de variantes
     const variantes = productoPadre.productosWeb.map((pw) => {
@@ -1492,13 +1501,14 @@ export class ProductoService {
       prisma.productoPadre.count({ where }),
     ]);
 
-    // Obtener sexo de la primera variante
+    // Preferir genero del padre; fallback a primera variante
     const productosConSexo = productos.map((p) => {
       const primeraVariante = p.productosWeb[0];
+      const generoPadre = (p as any).genero;
       return {
         id: p.id,
         nombre: p.nombre,
-        sexo: primeraVariante?.sexo || null,
+        sexo: generoPadre ?? primeraVariante?.sexo ?? null,
         codigoAgrupacion: p.codigoAgrupacion,
         rubro: p.rubro,
         variantesCount: p.productosWeb.length,
@@ -1901,8 +1911,8 @@ export class ProductoService {
       );
     }
 
-    // Obtener sexo de la primera variante
-    const sexo = primeraVariante.sexo;
+    // Preferir genero del padre; fallback a primera variante
+    const sexo = (productoPadre as any).genero ?? primeraVariante.sexo;
 
     // Mapear datos SFactory desde la tabla productos_sfactory
     const datosSFactory = {
