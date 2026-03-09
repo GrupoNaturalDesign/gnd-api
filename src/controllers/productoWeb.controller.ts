@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { productoWebService } from '../services/productoWeb.service';
+import { productoWebService, BULK_VARIANTES_FORBIDDEN_MESSAGE } from '../services/productoWeb.service';
 import { CacheService } from '../services/cache.service';
 import { handleZodError } from '../utils/validation';
 import { z } from 'zod';
@@ -66,17 +66,23 @@ export class ProductoWebController {
 
   /**
    * PATCH /api/productos-web/bulk
-   * Actualiza múltiples ProductoWeb en lote
+   * Actualiza múltiples ProductoWeb en lote. Valida que todas las variantes pertenezcan a la empresa.
    */
   async updateBulk(req: Request, res: Response, next: NextFunction) {
     try {
       const empresaId = (req as any).empresaId;
+      if (!empresaId) {
+        return res.status(400).json({
+          success: false,
+          error: 'Empresa no definida',
+          message: 'Se requiere empresaId (middleware empresa).',
+        });
+      }
+
       const body = BulkUpdateProductoWebSchema.parse(req.body);
 
-      const productosWeb = await productoWebService.updateBulk(body.updates);
+      const productosWeb = await productoWebService.updateBulk(body.updates, empresaId);
 
-      // Invalidar cache de productos afectados
-      // Obtener los productoPadreId únicos de las variantes actualizadas
       const productoPadreIds = new Set<number>();
       for (const productoWeb of productosWeb) {
         if (productoWeb.productoPadreId) {
@@ -84,12 +90,9 @@ export class ProductoWebController {
         }
       }
 
-      // Invalidar cache de cada producto padre afectado
       for (const productoPadreId of productoPadreIds) {
         await CacheService.invalidateProducts(empresaId, productoPadreId);
       }
-
-      // También invalidar todas las listas de productos para asegurar consistencia
       if (empresaId) {
         await CacheService.invalidateProducts(empresaId);
       }
@@ -101,12 +104,19 @@ export class ProductoWebController {
       };
 
       res.json(response);
-    } catch (error) {
+    } catch (error: any) {
       const zodError = handleZodError(error);
       if (zodError) {
         return res.status(400).json({
           success: false,
           ...zodError,
+        });
+      }
+      if (error?.message === BULK_VARIANTES_FORBIDDEN_MESSAGE) {
+        return res.status(403).json({
+          success: false,
+          error: 'Acceso denegado',
+          message: 'Una o más variantes no pertenecen a la empresa o no pueden actualizarse en el mismo lote.',
         });
       }
       next(error);

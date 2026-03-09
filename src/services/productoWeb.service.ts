@@ -1,6 +1,9 @@
 import prisma from '../lib/prisma';
 import { productoPrecioService } from './productoPrecio.service';
 
+/** Mensaje de error cuando el bulk no pasa validación empresa/padre (controller responde 403). */
+export const BULK_VARIANTES_FORBIDDEN_MESSAGE = 'Una o más variantes no pertenecen a la empresa';
+
 export interface UpdateProductoWebData {
   stockCache?: number | null;
   precioCache?: number | null;
@@ -50,14 +53,45 @@ export class ProductoWebService {
 
   /**
    * Actualiza múltiples ProductoWeb en lote.
+   * Valida que todas las variantes pertenezcan a la empresa y, opcionalmente, al mismo producto padre.
    * Ejecuta en lotes para no agotar el pool de conexiones (evita pool timeout).
    * Retorna los productos actualizados con sus relaciones (productoPadre).
    */
   private static BULK_BATCH_SIZE = 5;
 
-  async updateBulk(updates: Array<{ id: number } & UpdateProductoWebData>) {
-    const results: Awaited<ReturnType<ProductoWebService['update']>>[] = [];
 
+  async updateBulk(updates: Array<{ id: number } & UpdateProductoWebData>, empresaId: number) {
+    if (updates.length === 0) {
+      return [];
+    }
+
+    const ids = [...new Set(updates.map((u) => u.id))];
+    const variantes = await prisma.productoWeb.findMany({
+      where: { id: { in: ids } },
+      include: {
+        productoPadre: {
+          select: { id: true, empresaId: true },
+        },
+      },
+    });
+
+    if (variantes.length !== ids.length) {
+      throw new Error(BULK_VARIANTES_FORBIDDEN_MESSAGE);
+    }
+
+    const empresaIdMismatch = variantes.some(
+      (v) => !v.productoPadre || v.productoPadre.empresaId !== empresaId
+    );
+    if (empresaIdMismatch) {
+      throw new Error(BULK_VARIANTES_FORBIDDEN_MESSAGE);
+    }
+
+    const productoPadreIds = new Set(variantes.map((v) => v.productoPadreId).filter(Boolean));
+    if (productoPadreIds.size > 1) {
+      throw new Error(BULK_VARIANTES_FORBIDDEN_MESSAGE);
+    }
+
+    const results: Awaited<ReturnType<ProductoWebService['update']>>[] = [];
     for (let i = 0; i < updates.length; i += ProductoWebService.BULK_BATCH_SIZE) {
       const batch = updates.slice(i, i + ProductoWebService.BULK_BATCH_SIZE);
       const batchResults = await Promise.all(
