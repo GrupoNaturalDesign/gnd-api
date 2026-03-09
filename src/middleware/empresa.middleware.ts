@@ -1,6 +1,7 @@
 // src/middleware/empresa.middleware.ts
 import { Request, Response, NextFunction } from 'express';
 import { sfactoryAuthService } from '../services/sfactory/sfactory-auth.service';
+import { isDbConnectionError, DB_UNAVAILABLE_MESSAGE } from '../lib/db-error-utils';
 
 /**
  * Middleware para inyectar empresaId automáticamente en las requests
@@ -28,10 +29,17 @@ export async function empresaMiddleware(
     next();
   } catch (error: any) {
     console.error('[empresaMiddleware] Error:', error);
+    if (isDbConnectionError(error)) {
+      return res.status(503).json({
+        success: false,
+        error: 'Servicio no disponible',
+        message: DB_UNAVAILABLE_MESSAGE,
+      });
+    }
     return res.status(500).json({
       success: false,
       error: 'Error al obtener información de la empresa',
-      message: error.message,
+      message: error?.message ?? 'Error inesperado',
     });
   }
 }

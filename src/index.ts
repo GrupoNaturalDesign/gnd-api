@@ -5,6 +5,18 @@ import { prisma } from './lib/prisma';
 // Load environment variables
 dotenv.config();
 
+// Evitar que el proceso se caiga por rechazos de promesas o excepciones no capturadas
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[unhandledRejection]', reason);
+  // No hacer process.exit(): el servidor sigue corriendo y las requests pueden seguir respondiendo 5xx
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err);
+  // Loguear y dar tiempo a que los handlers de SIGTERM/SIGINT cierren bien si se decide hacer exit
+  // Por ahora no hacemos exit para que el servidor no se caiga; en producción podrías hacer shutdown() aquí
+});
+
 // Redis desactivado por ahora (activar con REDIS_ENABLED=true en .env)
 
 app.get('/health', async (_req, res) => {

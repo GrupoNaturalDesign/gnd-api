@@ -5,6 +5,7 @@ import morgan from 'morgan';
 import routes from './routes';
 import { asyncLocalStorage } from './lib/async-context';
 import { auditMiddleware } from './middleware/audit.middleware';
+import { isDbConnectionError, DB_UNAVAILABLE_MESSAGE } from './lib/db-error-utils';
 
 const app = express();
 
@@ -86,6 +87,15 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
       success: false,
       error: 'Registro no encontrado',
       message: 'El registro solicitado no existe',
+    });
+  }
+
+  // Errores de conexión/pool de base de datos → 503 mensaje amigable
+  if (isDbConnectionError(err)) {
+    return res.status(503).json({
+      success: false,
+      error: 'Servicio no disponible',
+      message: DB_UNAVAILABLE_MESSAGE,
     });
   }
 

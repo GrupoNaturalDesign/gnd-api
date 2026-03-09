@@ -91,6 +91,7 @@ function getAdapter(): PrismaMariaDb {
   if (!_adapter) {
     const connectionLimit = parseInt(process.env.DB_POOL_LIMIT || '10', 10);
     const connectTimeout = parseInt(process.env.DB_CONNECT_TIMEOUT || '30000', 10);
+    const acquireTimeout = parseInt(process.env.DB_ACQUIRE_TIMEOUT || '60000', 10); // 60s para evitar pool timeout
     _adapter = new PrismaMariaDb({
       host: process.env.DB_HOST!,
       port: Number(process.env.DB_PORT) || 3306,
@@ -99,6 +100,7 @@ function getAdapter(): PrismaMariaDb {
       database: process.env.DB_NAME!,
       connectionLimit,
       connectTimeout,
+      acquireTimeout,
     });
   }
   return _adapter;

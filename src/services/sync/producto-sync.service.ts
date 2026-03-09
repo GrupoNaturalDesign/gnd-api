@@ -448,7 +448,7 @@ export class ProductoSyncService {
                     precioCache: productoSfactoryItem?.precio_venta ? Number(productoSfactoryItem.precio_venta) : null,
                     stockCache: (producto as any).Stock !== null && (producto as any).Stock !== undefined 
                       ? Number((producto as any).Stock) 
-                      : null,
+                      : 0,
                     ultimaSyncSfactory: productoSfactoryItem?.ultima_sync || new Date(),
                     activoSfactory: productoSfactoryItem?.activo === 'S' || (producto as any).Activo !== false,
                   };
@@ -784,7 +784,7 @@ export class ProductoSyncService {
       PrecioVenta: productoSfactory.precio_venta ? Number(productoSfactory.precio_venta) : null,
       Stock: (producto as any).Stock !== null && (producto as any).Stock !== undefined 
         ? Number((producto as any).Stock) 
-        : null,
+        : 0,
       Barcode: productoSfactory.barcode || null,
       Activo: productoSfactory.activo === 'S',
       id: productoSfactory.sfactory_id || undefined,
@@ -929,7 +929,7 @@ export class ProductoSyncService {
           precioCache: productoSfactory.precio_venta ? Number(productoSfactory.precio_venta) : null,
           stockCache: (producto as any).Stock !== null && (producto as any).Stock !== undefined 
             ? Number((producto as any).Stock) 
-            : null,
+            : 0,
           ultimaSyncSfactory: productoSfactory.ultima_sync || new Date(),
           activoSfactory: productoSfactory.activo === 'S',
         };

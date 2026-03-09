@@ -358,7 +358,7 @@ export class ProductoService {
         },
         include: {
           imagenes: {
-            where: { orden: 1 },
+            orderBy: { orden: 'asc' },
             take: 1,
             select: { imagenUrl: true },
           },
@@ -541,8 +541,12 @@ export class ProductoService {
       );
     }
 
+    // No enviar descripcion a SFactory en actualización: solo lecturas (el sync usa la descripción de SFactory para el padre).
+    const dataParaSFactory = { ...data };
+    delete (dataParaSFactory as Record<string, unknown>).descripcion;
+
     // 1. Actualizar en SFactory
-    await sfactoryService.editarItem(data);
+    await sfactoryService.editarItem(dataParaSFactory as SFactoryItemEditData);
 
     // 2. Obtener el código del producto
     let codigo: string;
@@ -1006,7 +1010,7 @@ export class ProductoService {
         // OPTIMIZACIÓN: Include con selects específicos en niveles anidados para reducir datos
         include: {
           imagenes: {
-            where: { orden: 1 },
+            orderBy: { orden: 'asc' },
             take: 1,
             select: { imagenUrl: true },
           },
