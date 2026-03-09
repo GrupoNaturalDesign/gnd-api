@@ -1,6 +1,7 @@
 import multer from 'multer';
 import * as path from 'path';
 import * as fs from 'fs';
+import sharp from 'sharp';
 import { ftpService } from './ftp.service';
 import { slugifyProductName, slugifyImageName } from '../utils/slugify.util';
 import { parseProductDescription } from '../utils/skuParser.util';
@@ -136,6 +137,43 @@ function cleanupTempFile(filePath: string): void {
   }
 }
 
+const IMAGE_MIMETYPES = /^image\/(jpeg|jpg|png|webp)$/i;
+const MAX_DIMENSION = 1920;
+const JPEG_QUALITY = 85;
+
+/**
+ * Comprime una imagen a JPEG para subida. Si no es imagen o falla, devuelve el buffer original.
+ */
+async function compressImageForUpload(
+  inputBuffer: Buffer,
+  mimetype: string
+): Promise<Buffer> {
+  if (!IMAGE_MIMETYPES.test(mimetype)) {
+    return inputBuffer;
+  }
+  try {
+    const compressed = await sharp(inputBuffer)
+      .resize(MAX_DIMENSION, MAX_DIMENSION, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: JPEG_QUALITY })
+      .toBuffer();
+    return compressed;
+  } catch (err) {
+    console.warn('[FTP UPLOAD] Compresión fallida, usando original:', err);
+    return inputBuffer;
+  }
+}
+
+/**
+ * Obtiene el buffer de un archivo Multer (memoria o disco)
+ */
+function getFileBuffer(file: MulterFile): Buffer {
+  if (file.buffer) return file.buffer;
+  if (file.path && fs.existsSync(file.path)) {
+    return fs.readFileSync(file.path);
+  }
+  throw new Error('Archivo no tiene buffer ni path disponible');
+}
+
 /**
  * Sube imágenes a FTP y retorna las URLs públicas
  */
@@ -211,35 +249,19 @@ export class ImageUploadService {
             hasPath: !!file.path,
           });
 
-          // Obtener número secuencial
+          if (file.path) tempFiles.push(file.path);
+
+          const inputBuffer = getFileBuffer(file);
+          const compressedBuffer = await compressImageForUpload(inputBuffer, file.mimetype);
+
           const imageNumber = await getNextImageNumber(folderPath, baseFilename);
           console.log(`🔢 [FTP UPLOAD] Número secuencial obtenido: ${imageNumber}`);
 
-          // Determinar extensión
-          const ext = path.extname(file.originalname).toLowerCase() || '.jpg';
-          const filename = `${baseFilename}-${imageNumber}${ext}`;
+          const filename = `${baseFilename}-${imageNumber}.jpg`;
           const remotePath = `${folderPath}/${filename}`;
 
           console.log(`📝 [FTP UPLOAD] Nombre de archivo generado: ${filename}`);
-          console.log(`📝 [FTP UPLOAD] Ruta remota: ${remotePath}`);
-
-          // En serverless usar buffer, en desarrollo usar path
-          if (isServerless && file.buffer) {
-            // Serverless: subir desde buffer
-            console.log(`⬆️ [FTP UPLOAD] Subiendo desde buffer (serverless)...`);
-            await ftpService.uploadFileFromBuffer(file.buffer, remotePath);
-          } else if (file.path) {
-            // Desarrollo: subir desde archivo temporal
-            console.log(`⬆️ [FTP UPLOAD] Subiendo desde archivo temporal (desarrollo)...`);
-            await ftpService.uploadFile(file.path, remotePath);
-            tempFiles.push(file.path);
-          } else if (file.buffer) {
-            // Fallback: si no hay path pero hay buffer, usar buffer
-            console.log(`⬆️ [FTP UPLOAD] Subiendo desde buffer (fallback)...`);
-            await ftpService.uploadFileFromBuffer(file.buffer, remotePath);
-          } else {
-            throw new Error('Archivo no tiene buffer ni path disponible');
-          }
+          await ftpService.uploadFileFromBuffer(compressedBuffer, remotePath);
 
           uploadedFiles.push(remotePath);
           console.log(`✅ [FTP UPLOAD] Archivo subido exitosamente: ${filename}`);
@@ -303,11 +325,11 @@ export class ImageUploadService {
     file: MulterFile;
   }): Promise<string> {
     const { nombreBase, tipo, file } = options;
-    const isServerless = isServerlessEnvironment();
 
     const folderName = slugifyProductName(nombreBase);
     const folderPath = `${folderName}/docs`;
-    const ext = path.extname(file.originalname).toLowerCase() || '.pdf';
+    const isImage = file.mimetype.startsWith('image/');
+    const ext = isImage ? '.jpg' : (path.extname(file.originalname).toLowerCase() || '.pdf');
     const filename = `${tipo}${ext}`;
     const remotePath = `${folderPath}/${filename}`;
 
@@ -317,15 +339,20 @@ export class ImageUploadService {
       await ftpService.connect();
       await ftpService.ensureDirectory(folderPath);
 
-      if (isServerless && file.buffer) {
-        await ftpService.uploadFileFromBuffer(file.buffer, remotePath);
-      } else if (file.path) {
-        await ftpService.uploadFile(file.path, remotePath);
-        cleanupTempFile(file.path);
-      } else if (file.buffer) {
-        await ftpService.uploadFileFromBuffer(file.buffer, remotePath);
+      if (isImage) {
+        const inputBuffer = getFileBuffer(file);
+        const compressedBuffer = await compressImageForUpload(inputBuffer, file.mimetype);
+        await ftpService.uploadFileFromBuffer(compressedBuffer, remotePath);
+        if (file.path) cleanupTempFile(file.path);
       } else {
-        throw new Error('Archivo no tiene buffer ni path disponible');
+        if (file.buffer) {
+          await ftpService.uploadFileFromBuffer(file.buffer, remotePath);
+        } else if (file.path) {
+          await ftpService.uploadFile(file.path, remotePath);
+          cleanupTempFile(file.path);
+        } else {
+          throw new Error('Archivo no tiene buffer ni path disponible');
+        }
       }
 
       await ftpService.disconnect();
