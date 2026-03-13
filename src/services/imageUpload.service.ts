@@ -68,8 +68,10 @@ export const upload = multer({
     const extOk = allowedTypes.test(ext);
     const mimetypeOk = allowedTypes.test(file.mimetype || '');
     const genericMimetype = !file.mimetype || file.mimetype === 'application/octet-stream';
+    // Aceptar si extensión válida O si mimetype es de imagen (p. ej. archivo "blob" tras compresión)
+    const accept = (extOk && (mimetypeOk || genericMimetype)) || mimetypeOk;
 
-    if (extOk && (mimetypeOk || genericMimetype)) {
+    if (accept) {
       cb(null, true);
     } else {
       cb(new Error('Solo se permiten archivos de imagen (jpeg, jpg, png, webp)'));
