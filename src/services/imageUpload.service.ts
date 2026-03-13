@@ -64,12 +64,12 @@ export const upload = multer({
   },
   fileFilter: (req, file, cb) => {
     const allowedTypes = /jpeg|jpg|png|webp/;
-    const extname = allowedTypes.test(
-      path.extname(file.originalname).toLowerCase()
-    );
-    const mimetype = allowedTypes.test(file.mimetype);
+    const ext = path.extname(file.originalname).toLowerCase().replace(/^\./, '');
+    const extOk = allowedTypes.test(ext);
+    const mimetypeOk = allowedTypes.test(file.mimetype || '');
+    const genericMimetype = !file.mimetype || file.mimetype === 'application/octet-stream';
 
-    if (extname && mimetype) {
+    if (extOk && (mimetypeOk || genericMimetype)) {
       cb(null, true);
     } else {
       cb(new Error('Solo se permiten archivos de imagen (jpeg, jpg, png, webp)'));
