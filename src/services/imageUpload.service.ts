@@ -87,11 +87,13 @@ export const uploadDocument = multer({
   },
   fileFilter: (req, file, cb) => {
     const allowedExt = /jpeg|jpg|png|webp|pdf/;
-    const extname = allowedExt.test(path.extname(file.originalname).toLowerCase());
-    const mimetype =
-      allowedExt.test(file.mimetype) || file.mimetype === 'application/pdf';
+    const ext = path.extname(file.originalname).toLowerCase().replace(/^\./, '');
+    const extOk = allowedExt.test(ext);
+    const mimetypeOk = allowedExt.test(file.mimetype || '') || file.mimetype === 'application/pdf';
+    const genericMimetype = !file.mimetype || file.mimetype === 'application/octet-stream';
+    const accept = (extOk && (mimetypeOk || genericMimetype)) || mimetypeOk;
 
-    if (extname && mimetype) {
+    if (accept) {
       cb(null, true);
     } else {
       cb(new Error('Solo se permiten imágenes (JPG, PNG, WEBP) o PDF'));
