@@ -6,6 +6,11 @@ import type {
   SFactoryItemCreateResponse,
   SFactoryItemEditResponse,
   SFactoryProduct,
+  SFactoryListarOrdenPedidoParams,
+  SFactoryCrearOrdenPedidoParams,
+  SFactoryEditarOrdenPedidoParams,
+  SFactoryCrearPedidoExternoParams,
+  SFactoryCrearPedidoExternoResponse,
 } from '../../types/sfactory.types';
 
 export class SFactoryService {
@@ -35,13 +40,6 @@ export class SFactoryService {
     return sfactoryClient.request('items', 'items_list', {
       ctb_id: 0,
     });
-  }
-
-  /**
-   * Buscar items con criterios
-   */
-  async buscarItems(criterios: any) {
-    return sfactoryClient.request('items', 'search_item', criterios);
   }
 
   /**
@@ -78,20 +76,155 @@ export class SFactoryService {
   }
 
   /**
-   * Listar órdenes de pedido
+   * Buscar cliente por código, nombre, CUIT o email
+   * Endpoint en SFactory: clientes_buscar_cliente
+   * field: 1=código, 2=nombre, 3=CUIT, 4=email
    */
-  async listarOrdenesPedido(parameters: any = {}) {
-    return sfactoryClient.request('ventas', 'ventas_listar_orden_pedido', parameters);
+  async buscarCliente(
+    search: string,
+    companyKey?: string
+  ): Promise<any[]> {
+    const trimmed = search.trim();
+    if (!trimmed) return [];
+
+    const searchValue = trimmed;
+    let field = 2;
+
+    const isCuit = /^\d{11}$/.test(trimmed.replace(/\D/g, ''));
+    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+    const isNumeric = /^\d+$/.test(trimmed);
+
+    if (isCuit) {
+      field = 3;
+    } else if (isEmail) {
+      field = 4;
+    } else if (isNumeric) {
+      field = 1;
+    } else {
+      field = 2;
+    }
+
+    console.log(`[sfactoryService.buscarCliente] Buscar field=${field}, value=${searchValue}`);
+
+    try {
+      const response = await sfactoryClient.request(
+        'clientes',
+        'clientes_buscar_cliente',
+        { field, value: searchValue, commercial_id: 0 },
+        companyKey
+      );
+
+      console.log(`[sfactoryService.buscarCliente] Response:`, JSON.stringify(response).slice(0, 500));
+
+      if (response && typeof response === 'object' && 'data' in response) {
+        const data = (response as any).data;
+        return Array.isArray(data) ? data : [];
+      }
+      return Array.isArray(response) ? response : [];
+    } catch (err) {
+      console.error('[sfactoryService.buscarCliente] Error:', err);
+      return [];
+    }
   }
 
   /**
-   * Crear orden de pedido
+   * Buscar productos/items
+   * Endpoint en SFactory: search_item
+   *
+   * Acepta tanto `{ search, limit }` como criterios libres (`{ field, value, mode, ... }`).
+   * Siempre devuelve un array normalizado.
    */
-  async crearOrdenPedido(data: any, items: any[]) {
-    return sfactoryClient.request('ventas', 'ventas_crear_orden_pedido', {
-      data,
-      items,
-    });
+  async buscarItems(criterios: any = {}): Promise<any[]> {
+    const params =
+      criterios && typeof criterios === 'object' && ('search' in criterios || 'limit' in criterios)
+        ? { search: criterios.search || '', limit: criterios.limit || 20 }
+        : criterios;
+
+    const response = await sfactoryClient.request('items', 'search_item', params);
+
+    if (response && typeof response === 'object' && 'data' in response) {
+      const data = (response as any).data;
+      return Array.isArray(data) ? data : [];
+    }
+    return Array.isArray(response) ? response : [];
+  }
+
+  /**
+   * Listar órdenes de pedido (`ventas_listar_orden_pedido`)
+   */
+  async listarOrdenesPedido(
+    parameters: SFactoryListarOrdenPedidoParams,
+    companyKey?: string
+  ) {
+    return sfactoryClient.request(
+      'ventas',
+      'ventas_listar_orden_pedido',
+      parameters,
+      companyKey
+    );
+  }
+
+  /**
+   * Crear orden de pedido (`ventas_crear_orden_pedido`)
+   */
+  async crearOrdenPedido(params: SFactoryCrearOrdenPedidoParams, companyKey?: string) {
+    return sfactoryClient.request(
+      'ventas',
+      'ventas_crear_orden_pedido',
+      { data: params.data, items: params.items },
+      companyKey
+    );
+  }
+
+  /**
+   * Crea un pedido desde un sistema externo (ecommerce).
+   * Endpoint: ventas_crear_pedido_externo
+   *
+   * - El cliente se resuelve por cuit > email > creación automática.
+   * - Los ítems se resuelven por SKU. Deben estar activos en SFactory.
+   * - Los totales los calcula SFactory.
+   * - Comercial, moneda, sucursal: configuración del `source` en SFactory.
+   *
+   * Prerequisito: `source` activo en external_orders_config (admin SFactory).
+   */
+  async crearPedidoExterno(
+    params: SFactoryCrearPedidoExternoParams,
+    companyKey: string
+  ): Promise<SFactoryCrearPedidoExternoResponse> {
+    return sfactoryClient.request<SFactoryCrearPedidoExternoResponse>(
+      'ventas',
+      'ventas_crear_pedido_externo',
+      params,
+      companyKey
+    );
+  }
+
+  /**
+   * Editar orden de pedido (`ventas_editar_orden_pedido`)
+   */
+  async editarOrdenPedido(params: SFactoryEditarOrdenPedidoParams, companyKey?: string) {
+    return sfactoryClient.request(
+      'ventas',
+      'ventas_editar_orden_pedido',
+      {
+        data: params.data,
+        items: params.items,
+        ...(params.items_deleted?.length ? { items_deleted: params.items_deleted } : {}),
+      },
+      companyKey
+    );
+  }
+
+  /**
+   * Leer una orden de pedido por id (`ventas_leer_orden_pedido`)
+   */
+  async leerOrdenPedido(orderId: number, companyKey?: string) {
+    return sfactoryClient.request(
+      'ventas',
+      'ventas_leer_orden_pedido',
+      { order_id: orderId },
+      companyKey
+    );
   }
 
   /**
@@ -165,6 +298,65 @@ export class SFactoryService {
     return sfactoryClient.request('items', 'items_borrar_item', {
       item_id: itemId,
     });
+  }
+
+  /**
+   * Depósitos / almacenes (module vacío según API S-Factory).
+   */
+  async listaDepositos(): Promise<{
+    data: Array<{ id: number; codigo: string; nombre: string; activo: number }>;
+  }> {
+    return sfactoryClient.request('', 'lista_depositos', {});
+  }
+
+/**
+    * Stock y precios por depósito.
+    * Con `all_items: true` la API puede rechazar; usar `field` + `items` en lotes.
+    */
+  async stockItemsByWarehouseV2(parameters: {
+    warehouse_id: number;
+    all_items?: boolean;
+    field?: 'code' | 'sku' | 'id';
+    items?: string[] | number[];
+  }): Promise<{
+    data: Array<{
+      item_id: number;
+      item_code: string;
+      stock: number;
+      sale_price: number;
+      cost_price?: number;
+      warehouse_id: number;
+    }>;
+  }> {
+    return sfactoryClient.request(
+      'inventario',
+      'inventory_stock_items_by_warehouse_v2',
+      parameters
+    );
+  }
+
+  /**
+    * Cancelar orden de pedido (`ventas_cancelar_orden_pedido`)
+    */
+  async cancelarOrdenPedido(orderId: number, companyKey?: string) {
+    return sfactoryClient.request(
+      'ventas',
+      'ventas_cancelar_orden_pedido',
+      { order_id: orderId },
+      companyKey
+    );
+  }
+
+  /**
+    * Aprobar orden de pedido (`ventas_aprobar_orden_pedido`)
+    */
+  async aprobarOrdenPedido(orderId: number, companyKey?: string) {
+    return sfactoryClient.request(
+      'ventas',
+      'ventas_aprobar_orden_pedido',
+      { order_id: orderId },
+      companyKey
+    );
   }
 }
 

@@ -16,6 +16,8 @@ const PATH_TO_ENTITY: Record<string, AuditEntity> = {
   '/api/subrubros': 'subrubro',
   '/api/sync': 'sync',
   '/api/sfactory/auth': 'sesion',
+  '/api/sfactory/ventas': 'pedido',
+  '/api/admin/pedidos': 'pedido',
 };
 
 export interface AuditLogParams {
@@ -206,6 +208,17 @@ export function computeAuditSummary(
   const newObj = newValues && typeof newValues === 'object' && !Array.isArray(newValues) ? (newValues as Record<string, unknown>) : null;
 
   if (!oldObj && !newObj) return null;
+
+  if (newObj?.origen === 'cache_precio_stock_local') {
+    const n = Array.isArray(newObj.variantes)
+      ? (newObj.variantes as unknown[]).length
+      : undefined;
+    if (n != null && n > 0) {
+      return `Caché ecommerce precio/stock: ${n} variante(s)`;
+    }
+    return 'Caché ecommerce precio/stock actualizado';
+  }
+
   if (!newObj && oldObj) {
     const parts: string[] = [];
     if (oldObj.publicado !== undefined) parts.push(`publicado: ${oldObj.publicado}`);

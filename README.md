@@ -11,6 +11,10 @@ Backend API para e-commerce de uniformes empresariales con sincronización S-Fac
 - **CORS** para cross-origin requests
 - **Morgan** para logging
 
+## 📖 Documentación de integraciones
+
+Contratos, variables de entorno y flujos (Mercado Pago, Andreani, S-Factory, checkout): **`docs/`** dentro de esta carpeta — empezar por [`docs/README.md`](./docs/README.md).
+
 ## 📋 Requisitos Previos
 
 - Node.js >= 18
@@ -72,6 +76,40 @@ npm start
 
 ### Health Check
 - `GET /api/health` - Estado del servidor
+
+### SFactory — pedido externo (ecommerce)
+
+El checkout confirma pedidos en SFactory con **`ventas_crear_pedido_externo`** (no `ventas_crear_orden_pedido`). Requiere `SFACTORY_PEDIDO_EXTERNO_SOURCE` alineado con `external_orders_config` en SFactory.
+
+- **Prueba / integración (admin):** `POST /api/sfactory/ventas/pedido-externo` — body validado con Zod; mismo auth que el resto de `/sfactory/ventas` (Firebase + admin). Esquema: `src/validation/sfactory-pedido-externo.schema.ts`.
+- **Notas:** `docs/user.md`
+
+### Pedidos admin / sincronizacion
+
+SFactory es la fuente de verdad despues de confirmar. La API local guarda checkout,
+cache operativa y auditoria.
+
+- `GET /api/pedidos` - Lista pedidos locales sincronizables.
+- `GET /api/admin/pedidos` - Lista admin con filtros.
+- `GET /api/admin/pedidos/:id` - Detalle local + logs + snapshot SFactory.
+- `POST /api/admin/pedidos/manual` - Crea pedido manual pendiente de confirmacion.
+- `PATCH /api/admin/pedidos/:id` - Edita datos antes de confirmar.
+- `POST /api/admin/pedidos/:id/aprobar` - Confirma y crea pedido externo en SFactory.
+- `POST /api/admin/pedidos/:id/rechazar` - Cancela si todavia no fue enviado a SFactory.
+- `POST /api/admin/pedidos/:id/reintentar-sfactory` - Reintenta creacion remota.
+- `POST /api/admin/pedidos/:id/resolver-fallido` - Reintenta o cancela pedidos fallidos.
+- `POST /api/admin/pedidos/:id/sync` - Lee SFactory y actualiza cache local.
+- `POST /api/admin/pedidos/sync-activos` - Sincroniza pedidos activos en lote.
+- `POST /api/admin/pedidos/sync-stock` - Sincroniza stock/precios desde SFactory.
+
+### Notificaciones admin realtime
+
+El panel admin recibe eventos Socket.IO por tenant y revalida dashboard/pedidos por API. Las notificaciones tambien quedan persistidas para no perder eventos si el admin esta desconectado. Detalle completo: [`docs/admin-realtime-notifications.md`](./docs/admin-realtime-notifications.md).
+
+- `GET /api/admin/notifications` - Ultimas notificaciones de la empresa.
+- `GET /api/admin/notifications/unread-count` - Contador de no leidas.
+- `PATCH /api/admin/notifications/:id/read` - Marca una notificacion como leida.
+- `PATCH /api/admin/notifications/read-all` - Marca todas como leidas.
 
 ### Rubros
 - `GET /api/rubros` - Listar rubros
@@ -176,5 +214,3 @@ El proyecto usa:
 ## 📄 Licencia
 
 ISC
-
-# api-gnd

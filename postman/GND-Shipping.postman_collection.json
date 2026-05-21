@@ -1,0 +1,184 @@
+{
+  "info": {
+    "name": "GND API — Shipping (Andreani + Correo)",
+    "description": "Colección para probar envíos contra la API GND.\n\n**Auth:** todas las requests usan `Authorization: Bearer {{firebaseIdToken}}`. El usuario debe ser **admin** y tener **`empresaId`** en BD (requerido por `shippingEmpresaMiddleware` en `/api/shipping/*`).\n\n**Mocks (sin pegarle a proveedores):** en `.env` del API, `ANDREANI_MOCK=true` y/o `CORREO_MOCK=true`.\n\n**Correo test:** rutas bajo `/api/shipping/correo/test` solo si `NODE_ENV !== production`.\n\nImportá también el environment `GND-Shipping.local.postman_environment.json` y completá `firebaseIdToken` (Firebase ID token del usuario admin).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3003" },
+    { "key": "firebaseIdToken", "value": "" },
+    { "key": "pedidoId", "value": "1" },
+    { "key": "shippingProvider", "value": "andreani" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{firebaseIdToken}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Shipping (unificado)",
+      "item": [
+        {
+          "name": "POST Cotización Andreani",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cpDestino\": \"5000\",\n  \"deliveryType\": \"homeDelivery\",\n  \"parcel\": {\n    \"weightGrams\": 1000,\n    \"height\": 10,\n    \"width\": 15,\n    \"depth\": 20,\n    \"declaredValue\": 10000\n  },\n  \"provider\": \"andreani\"\n}\n",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/shipping/quote",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "shipping", "quote"]
+            },
+            "description": "Solo Andreani (`quoteAndreani`). `deliveryType`: `homeDelivery` | `agency`."
+          }
+        },
+        {
+          "name": "GET Sucursales (agencies)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/shipping/agencies?provider={{shippingProvider}}&stateId=X",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "shipping", "agencies"],
+              "query": [
+                { "key": "provider", "value": "{{shippingProvider}}", "description": "correo | andreani (opcional → default BD)" },
+                { "key": "stateId", "value": "X", "description": "Código provincia (Correo) o filtro Andreani" },
+                { "key": "pickup", "value": "true", "disabled": true },
+                { "key": "reception", "value": "true", "disabled": true }
+              ]
+            },
+            "description": "Query opcionales: `pickup`, `reception` (boolean string)."
+          }
+        },
+        {
+          "name": "POST Crear orden de envío",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pedidoId\": 1,\n  \"provider\": \"andreani\",\n  \"deliveryType\": \"homeDelivery\",\n  \"recipient\": {\n    \"name\": \"Cliente Prueba\",\n    \"email\": \"cliente@ejemplo.com\",\n    \"phone\": \"3515551234\"\n  },\n  \"address\": {\n    \"streetName\": \"Av. Ejemplo\",\n    \"streetNumber\": \"100\",\n    \"city\": \"Córdoba\",\n    \"state\": \"X\",\n    \"zipCode\": \"5000\"\n  },\n  \"parcel\": {\n    \"weightGrams\": 1000,\n    \"height\": 10,\n    \"width\": 15,\n    \"depth\": 20,\n    \"declaredValue\": 10000\n  }\n}\n",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/shipping/orders",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "shipping", "orders"]
+            },
+            "description": "Ajustá `pedidoId` a un pedido existente de la empresa. `provider` opcional. Para `agency`, enviá `agencyId` y omití `address` si aplica."
+          }
+        },
+        {
+          "name": "GET Etiqueta pedido",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/shipping/orders/{{pedidoId}}/label?provider={{shippingProvider}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "shipping", "orders", "{{pedidoId}}", "label"],
+              "query": [
+                { "key": "provider", "value": "{{shippingProvider}}" },
+                { "key": "trackingNumber", "value": "", "disabled": true, "description": "Si falta, usa el del pedido" }
+              ]
+            },
+            "description": "Requiere tracking en pedido o `trackingNumber` en query."
+          }
+        },
+        {
+          "name": "GET Tracking pedido",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/shipping/orders/{{pedidoId}}/tracking?provider={{shippingProvider}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "shipping", "orders", "{{pedidoId}}", "tracking"],
+              "query": [
+                { "key": "provider", "value": "{{shippingProvider}}" },
+                { "key": "numbers", "value": "", "disabled": true, "description": "CSV; si vacío usa tracking del pedido" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Correo — test (solo desarrollo)",
+      "description": "404 si `NODE_ENV=production`. No usa `shippingEmpresaMiddleware`; sí Firebase admin.",
+      "item": [
+        {
+          "name": "GET Ping MiCorreo",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/shipping/correo/test/ping",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "shipping", "correo", "test", "ping"]
+            }
+          }
+        },
+        {
+          "name": "POST Cotización MiCorreo",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cpOrigen\": \"5000\",\n  \"cpDestino\": \"1000\",\n  \"weight\": 1,\n  \"height\": 10,\n  \"width\": 10,\n  \"length\": 10,\n  \"deliveredType\": \"D\"\n}\n",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/shipping/correo/test/quote",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "shipping", "correo", "test", "quote"]
+            }
+          }
+        },
+        {
+          "name": "GET Sucursales MiCorreo",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/shipping/correo/test/agencies?provinceCode=X",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "shipping", "correo", "test", "agencies"],
+              "query": [{ "key": "provinceCode", "value": "X" }]
+            }
+          }
+        },
+        {
+          "name": "POST Import dry-run",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pedidoId\": 1,\n  \"empresaId\": 1,\n  \"deliveryType\": \"homeDelivery\",\n  \"recipient\": {\n    \"name\": \"Test\",\n    \"email\": \"t@test.com\",\n    \"phone\": \"3515550000\"\n  },\n  \"address\": {\n    \"streetName\": \"Calle\",\n    \"streetNumber\": \"1\",\n    \"city\": \"Córdoba\",\n    \"state\": \"X\",\n    \"zipCode\": \"5000\"\n  },\n  \"parcel\": {\n    \"weightGrams\": 500,\n    \"height\": 5,\n    \"width\": 5,\n    \"depth\": 5,\n    \"declaredValue\": 1000\n  }\n}\n",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/shipping/correo/test/import-dry-run",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "shipping", "correo", "test", "import-dry-run"]
+            }
+          }
+        },
+        {
+          "name": "GET Tracking MiCorreo",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/shipping/correo/test/tracking?shippingId=TRACKING_ID",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "shipping", "correo", "test", "tracking"],
+              "query": [{ "key": "shippingId", "value": "TRACKING_ID" }]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,37 +1,47 @@
 import { sfactoryService } from './sfactory/sfactory.service';
 import type { ApiResponse } from '../types';
+import type { SFactoryListarOrdenPedidoParams } from '../types/sfactory.types';
 
 export class PedidosService {
   /**
    * Listar pedidos desde SFactory (sin guardar en BD)
    * Útil para ver la estructura de datos
    */
-  async listarDesdeSFactory(parameters: any = {}): Promise<ApiResponse> {
+  async listarDesdeSFactory(parameters: Record<string, unknown> = {}): Promise<ApiResponse> {
     try {
-      // Hardcodear fechas por ahora
-      const fechaDesde = '2025-10-14';
-      const fechaHasta = '2025-10-14';
+      const fechaDesde =
+        typeof parameters.desde === 'string' ? parameters.desde : new Date().toISOString().slice(0, 10);
+      const fechaHasta =
+        typeof parameters.hasta === 'string' ? parameters.hasta : fechaDesde;
 
-      // Construir parámetros con fechas hardcodeadas
-      // Convertir empresa_id y comercial_id a números si vienen como string
-      const params: any = {
+      const empresaIdRaw =
+        parameters.empresa_id ?? process.env.SFACTORY_EMPRESA_ID_LISTADO;
+      const comercialIdRaw =
+        parameters.comercial_id ?? process.env.SFACTORY_COMERCIAL_ID_LISTADO;
+
+      if (empresaIdRaw == null || comercialIdRaw == null) {
+        throw new Error(
+          'Se requieren empresa_id y comercial_id (query o SFACTORY_EMPRESA_ID_LISTADO / SFACTORY_COMERCIAL_ID_LISTADO)'
+        );
+      }
+
+      const empresa_id =
+        typeof empresaIdRaw === 'string' ? parseInt(empresaIdRaw, 10) : Number(empresaIdRaw);
+      const comercial_id =
+        typeof comercialIdRaw === 'string'
+          ? parseInt(comercialIdRaw, 10)
+          : Number(comercialIdRaw);
+
+      if (!Number.isFinite(empresa_id) || !Number.isFinite(comercial_id)) {
+        throw new Error('empresa_id y comercial_id deben ser numéricos');
+      }
+
+      const params: SFactoryListarOrdenPedidoParams = {
         desde: fechaDesde,
         hasta: fechaHasta,
+        empresa_id,
+        comercial_id,
       };
-
-      // Agregar empresa_id si viene en parameters
-      if (parameters.empresa_id) {
-        params.empresa_id = typeof parameters.empresa_id === 'string' 
-          ? parseInt(parameters.empresa_id, 10) 
-          : parameters.empresa_id;
-      }
-
-      // Agregar comercial_id si viene en parameters
-      if (parameters.comercial_id) {
-        params.comercial_id = typeof parameters.comercial_id === 'string' 
-          ? parseInt(parameters.comercial_id, 10) 
-          : parameters.comercial_id;
-      }
 
       console.log('[PedidosService] Llamando a SFactory con parámetros:', params);
 

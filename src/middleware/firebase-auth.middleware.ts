@@ -4,6 +4,7 @@ import { verifyIdToken } from '../lib/firebase-admin';
 export interface FirebaseAuthRequest extends Request {
   uid?: string;
   idToken?: string;
+  empresaId?: number;
 }
 
 export function firebaseAuthMiddleware(req: FirebaseAuthRequest, res: Response, next: NextFunction): void {

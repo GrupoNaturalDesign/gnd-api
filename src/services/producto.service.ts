@@ -14,6 +14,10 @@ import type {
 import { sfactoryService } from './sfactory/sfactory.service';
 import { productoSyncService } from './sync/producto-sync.service';
 import type { SFactoryItemCreateData, SFactoryItemEditData, SFactoryProduct, SFactoryItemCreateResponse } from '../types/sfactory.types';
+import {
+  buildSFactoryProductFromItemData,
+  mergeSFactoryProductWithItemData,
+} from '../utils/sfactory-product-from-item-data';
 import { extraerCodigoAgrupacion } from './producto-agrupacion.service';
 import { ECOMMERCE_RUBROS_SFACTORY_IDS, isRubroPermitidoEcommerce } from '../config/ecommerce.config';
 import { calcularTodosLosPrecios, CUOTAS_FINANCIADO_DEFAULT } from '../config/precios.config';
@@ -483,37 +487,14 @@ export class ProductoService {
       throw new Error('No se pudo obtener el código del producto creado');
     }
 
-    // 3. Intentar leer el producto completo desde SFactory para sincronizar
-    // Si no se puede leer, usar los datos de la respuesta de creación
-    let productoCompleto: SFactoryProduct | undefined;
-
-    try {
-      productoCompleto = await sfactoryService.leerItem({ codigo });
-      // CRÍTICO: Asegurar que rubro_id y subrubro_id estén presentes
-      // SFactory puede no devolver estos campos al leer, así que usamos los valores originales enviados
-      if (data.rubro_id) {
-        (productoCompleto as any).rubro_id = (productoCompleto as any).rubro_id || (productoCompleto as any).RubroId || data.rubro_id;
-      }
-      if (data.subrubro_id) {
-        (productoCompleto as any).subrubro_id = (productoCompleto as any).subrubro_id || (productoCompleto as any).SubrubroId || data.subrubro_id;
-      }
-    } catch (error) {
-      // Si leerItem falla, usar la respuesta de creación directamente
-      // o construir un objeto básico con los datos que tenemos
-      console.warn(`[ProductoService.crearProducto] No se pudo leer el producto ${codigo} desde SFactory, usando datos de creación`);
-      // Construir objeto básico desde data y sfactoryResponse
-      // CRÍTICO: Incluir rubro_id y subrubro_id para que se guarden correctamente
-      productoCompleto = {
-        Codigo: codigo,
-        Descripcion: data.descripcion || data.descrip_corta || '',
-        Tipo: data.tipo || 'P',
-        PrecioCosto: data.precio_costo || null,
-        PrecioVenta: data.precio_venta || null,
-        id: sfactoryResponse.id || null,
-        rubro_id: data.rubro_id || null,
-        subrubro_id: data.subrubro_id || null,
-      } as SFactoryProduct;
-    }
+    // 3. Leer desde SFactory para sincronizar (items_leer_item exige item_id)
+    const itemIdCreado = sfactoryResponse.id ?? null;
+    const productoCompleto = await this.leerProductoSfactoryParaSync(
+      codigo,
+      data,
+      itemIdCreado,
+      'crearProducto'
+    );
 
     // 4. Sincronizar incrementalmente (reutiliza TODO el parsing)
     await productoSyncService.syncProductoIncremental(codigo, empresaId, productoCompleto);
@@ -567,24 +548,13 @@ export class ProductoService {
       codigo = productoLocal.sfactoryCodigo;
     }
 
-    // 3. Intentar leer el producto actualizado desde SFactory
-    let productoCompleto: SFactoryProduct;
-    try {
-      productoCompleto = await sfactoryService.leerItem({ codigo });
-    } catch (error) {
-      // Si leerItem falla, construir objeto básico desde data
-      console.warn(`[ProductoService.actualizarProducto] No se pudo leer el producto ${codigo} desde SFactory, usando datos de actualización`);
-      productoCompleto = {
-        Codigo: codigo,
-        Descripcion: data.descripcion || data.descrip_corta || '',
-        Tipo: data.tipo || 'P',
-        PrecioCosto: data.precio_costo || null,
-        PrecioVenta: data.precio_venta || null,
-        id: itemId,
-        rubro_id: data.rubro_id || null,
-        subrubro_id: data.subrubro_id || null,
-      } as SFactoryProduct;
-    }
+    // 3. Leer desde SFactory para sincronizar (items_leer_item exige item_id)
+    const productoCompleto = await this.leerProductoSfactoryParaSync(
+      codigo,
+      data,
+      itemId,
+      'actualizarProducto'
+    );
 
     // 4. Sincronizar incrementalmente (reutiliza TODO el parsing)
     await productoSyncService.syncProductoIncremental(codigo, empresaId, productoCompleto);
@@ -596,6 +566,35 @@ export class ProductoService {
     }
 
     return producto;
+  }
+
+  /**
+   * Lee un ítem en SFactory para sync incremental. Prioriza item_id (requerido por la API).
+   */
+  private async leerProductoSfactoryParaSync(
+    codigo: string,
+    data: SFactoryItemCreateData,
+    itemId: number | null,
+    contexto: string
+  ): Promise<SFactoryProduct> {
+    if (itemId != null) {
+      try {
+        const producto = await sfactoryService.leerItem({ item_id: itemId });
+        return mergeSFactoryProductWithItemData(producto, data);
+      } catch {
+        // Continuar con fallback por código o datos locales
+      }
+    }
+
+    try {
+      const producto = await sfactoryService.leerItem({ codigo });
+      return mergeSFactoryProductWithItemData(producto, data);
+    } catch {
+      console.warn(
+        `[ProductoService.${contexto}] No se pudo leer ${codigo} desde SFactory, usando datos de la operación`
+      );
+      return buildSFactoryProductFromItemData(codigo, data, itemId);
+    }
   }
 
   /**
@@ -1139,6 +1138,8 @@ export class ProductoService {
             precio: Number(v.precioCache || 0),
             imagen: imagenColor, // Imagen por color, no por variante individual
             tieneImagen: !!imagenColor,
+            productoPadreId: p.id,
+            sfactoryId: Number(v.sfactoryId),
           };
         });
 

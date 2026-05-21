@@ -1,5 +1,11 @@
 // src/services/sfactory/sfactory.client.ts
 import dotenv from 'dotenv';
+import { normalizeSFactoryErrorMessage } from '../../lib/sfactory-error-message';
+import {
+  extractMissingItemCodeFromError,
+  isSFactoryMissingItemError,
+  SFactoryMissingItemError,
+} from '../../lib/sfactory-stock-errors';
 import { sfactoryAuthService } from './sfactory-auth.service';
 
 dotenv.config();
@@ -140,7 +146,7 @@ export class SFactoryClient {
         const data = rawData as {
           result?: {
             success: boolean;
-            message?: string;
+            message?: string | Record<string, unknown>;
             state?: number;
           };
           response?: T | { data?: any };
@@ -148,15 +154,22 @@ export class SFactoryClient {
 
         // Verificar si result existe y si success es false
         if (data.result && !data.result.success) {
-          const errorMsg = data.result.message || 'Error en S-Factory API';
+          const errorMsg = normalizeSFactoryErrorMessage(data.result.message);
+          const missingCode = extractMissingItemCodeFromError(errorMsg);
+          if (missingCode) {
+            throw new SFactoryMissingItemError(missingCode, errorMsg);
+          }
+
           console.error(`[SFactoryClient] Error en respuesta: ${errorMsg}`);
           console.error(`[SFactoryClient] Result completo:`, JSON.stringify(data.result, null, 2));
-          
+
+          const errorLower = errorMsg.toLowerCase();
+
           // Si el error indica token inválido y tenemos reintentos, reautenticar
           if (
-            (errorMsg.toLowerCase().includes('token') || 
-             errorMsg.toLowerCase().includes('auth') ||
-             errorMsg.toLowerCase().includes('session')) &&
+            (errorLower.includes('token') ||
+              errorLower.includes('auth') ||
+              errorLower.includes('session')) &&
             retryCount > 0
           ) {
             console.log('[SFactoryClient] Error de autenticación detectado, esperando 2 segundos antes de reautenticar...');
@@ -166,7 +179,7 @@ export class SFactoryClient {
             console.log('[SFactoryClient] Reintentando petición...');
             return this.request<T>(module, method, parameters, companyKey, retryCount - 1);
           }
-          
+
           throw new Error(errorMsg);
         }
 
@@ -180,10 +193,14 @@ export class SFactoryClient {
         return data.response as T;
       } catch (fetchError: any) {
         clearTimeout(timeoutId);
-        
+
+        if (isSFactoryMissingItemError(fetchError)) {
+          throw fetchError;
+        }
+
         const errorMessage = fetchError.message || String(fetchError);
         const errorName = fetchError.name || '';
-        
+
         console.error('[SFactoryClient] Error en fetch:', {
           name: errorName,
           message: errorMessage,

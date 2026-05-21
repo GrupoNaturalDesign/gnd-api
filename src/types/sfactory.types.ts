@@ -218,3 +218,148 @@ export interface SFactoryItemEditResponse {
   [key: string]: any;
 }
 
+// ============================================
+// S-Factory Ventas — Orden de pedido (legacy)
+// ============================================
+//
+// SFactoryCrearOrdenPedidoParams / ventas_crear_orden_pedido: IDs internos y totales manuales.
+// El checkout web usa ventas_crear_pedido_externo — ver SFactoryCrearPedidoExternoParams.
+
+export interface SFactoryListarOrdenPedidoParams {
+  desde: string;
+  hasta: string;
+  comercial_id: number;
+  empresa_id: number;
+}
+
+export interface SFactoryOrdenPedidoItem {
+  item_id: number;
+  descripcion: string;
+  cantidad: string;
+  um_id: number;
+  precio: number;
+  descuento: number;
+  iva: number;
+  importe: number;
+  fecha_entrega: string;
+  especificaciones?: string;
+  lista_precio_id: number;
+  reserva_stock: boolean;
+  reserva_deposito_id: number;
+  reserva_cantidad: number;
+  [key: string]: unknown;
+}
+
+export interface SFactoryOrdenPedidoData {
+  id?: number;
+  estado: string;
+  fecha: string;
+  titulo: string;
+  cliente_id: number;
+  fecha_entrega: string;
+  observaciones?: string;
+  ref_cliente?: string;
+  num_orden_compra?: string;
+  comercial_id: number;
+  venta_condiciones?: string;
+  unidad_negocio_id: number;
+  neto: number;
+  iva: number;
+  total: number;
+  bonificacion: number;
+  moneda_id: number;
+  cotizacion: number;
+  cotizacion_id: number;
+  origen_venta_id: number;
+  sucursal_id: number;
+  condiciones_venta?: string;
+  centro_costo: number;
+  entrega_cliente_dir_id: number;
+  entrega_localidad_id: number;
+  entrega_direccion: string;
+  entrega_cp: string;
+  entrega_notas?: string;
+  empresa_id: number;
+  [key: string]: unknown;
+}
+
+/** @deprecated Solo para pruebas o integraciones legacy con ventas_crear_orden_pedido */
+export interface SFactoryCrearOrdenPedidoParams {
+  data: SFactoryOrdenPedidoData;
+  items: SFactoryOrdenPedidoItem[];
+}
+
+export interface SFactoryEditarOrdenPedidoParams {
+  data: SFactoryOrdenPedidoData;
+  items: SFactoryOrdenPedidoItem[];
+  items_deleted?: string[];
+}
+
+// ─── ventas_crear_pedido_externo ─────────────────────────────────────────────
+
+export interface SFactoryPedidoExternoCliente {
+  /** Nombre o razón social. Obligatorio si el cliente no existe en SFactory. */
+  nombre?: string;
+  /** CUIT sin guiones, exactamente 11 dígitos. Requerido si no se envía email. */
+  cuit?: string;
+  /** Email válido. Requerido si no se envía cuit. */
+  email?: string;
+  razon_social?: string;
+  telefono?: string;
+  movil?: string;
+}
+
+export interface SFactoryPedidoExternoItem {
+  /** Código del ítem en SFactory (items.codigo). Debe estar activo. */
+  sku: string;
+  /** Cantidad mayor a 0. */
+  cantidad: number;
+  /** Precio unitario sin impuesto. Default: 0. */
+  precio?: number;
+  /** Descuento en porcentaje 0–100. Default: 0. */
+  descuento?: number;
+  /** Alícuota IVA. Si se omite usa el configurado en el ítem. */
+  iva?: 0 | 10.5 | 21 | 27;
+  descripcion?: string;
+  /** YYYY-MM-DD */
+  fecha_entrega?: string;
+  especificaciones?: string;
+  notas?: string;
+}
+
+export interface SFactoryPedidoExternoEntrega {
+  /** Obligatorio si se envía el bloque entrega. */
+  provincia: string;
+  localidad: string;
+  direccion: string;
+  cp: string;
+  localidad_id?: number;
+  notas?: string;
+}
+
+export interface SFactoryCrearPedidoExternoParams {
+  /** Identificador del sistema externo. Debe tener config activa en SFactory. */
+  source: string;
+  /** ID del pedido en el sistema externo. Para trazabilidad y evitar duplicados. */
+  ext_order_id: string;
+  /** YYYY-MM-DD. Default: fecha actual. */
+  fecha?: string;
+  /** YYYY-MM-DD. Fecha de entrega del pedido completo. */
+  fecha_entrega?: string;
+  titulo?: string;
+  observaciones?: string;
+  ref_cliente?: string;
+  num_orden_compra?: string;
+  condiciones_venta?: string;
+  cliente: SFactoryPedidoExternoCliente;
+  /** Mínimo 1 ítem. */
+  items: [SFactoryPedidoExternoItem, ...SFactoryPedidoExternoItem[]];
+  entrega?: SFactoryPedidoExternoEntrega;
+}
+
+export interface SFactoryCrearPedidoExternoResponse {
+  id: number;
+  estado: string;
+  fecha: string;
+  total: number;
+}

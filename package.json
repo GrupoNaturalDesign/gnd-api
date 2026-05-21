@@ -10,7 +10,13 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "prisma:push": "prisma db push",
-    "prisma:seed": "prisma db seed"
+    "prisma:seed": "prisma db seed",
+    "test": "node --test --require ts-node/register \"tests/shipping/**/*.test.ts\" \"tests/mp-checkout-webhook.test.ts\" \"tests/pedido-sync.test.ts\" \"tests/cupon-sfactory-payload.test.ts\" \"tests/email-domain-validation.test.ts\" \"tests/auth-session-error.util.test.ts\" \"tests/checkout/checkout-unit.test.ts\" \"tests/order-email-mapper.test.ts\" \"tests/correo-functions.test.ts\" \"tests/maintenance-mode.test.ts\" \"tests/maintenance.middleware.test.ts\"",
+    "test:unit": "node --test --require ts-node/register \"tests/shipping/**/*.test.ts\" \"tests/mp-checkout-webhook.test.ts\" \"tests/pedido-sync.test.ts\" \"tests/cupon-sfactory-payload.test.ts\" \"tests/email-domain-validation.test.ts\" \"tests/auth-session-error.util.test.ts\" \"tests/checkout/checkout-unit.test.ts\" \"tests/order-email-mapper.test.ts\" \"tests/correo-functions.test.ts\" \"tests/maintenance-mode.test.ts\" \"tests/maintenance.middleware.test.ts\" --test-name-pattern='^(?!.*integration).*$' --test-name-pattern='^(?!.*sandbox).*$'",
+    "test:ci": "node --test --require ts-node/register \"tests/shipping/**/*.test.ts\" \"tests/mp-checkout-webhook.test.ts\" \"tests/pedido-sync.test.ts\" \"tests/cupon-sfactory-payload.test.ts\" \"tests/email-domain-validation.test.ts\" \"tests/auth-session-error.util.test.ts\" \"tests/checkout/checkout-unit.test.ts\" \"tests/order-email-mapper.test.ts\" \"tests/correo-functions.test.ts\" \"tests/maintenance-mode.test.ts\" \"tests/maintenance.middleware.test.ts\"",
+    "test:shipping": "node --test --require ts-node/register \"tests/shipping/**/*.test.ts\"",
+    "test:sandbox": "node --test --require ts-node/register \"tests/shipping/sandbox/*.test.ts\"",
+    "test:integration": "node --test --require ts-node/register \"tests/cupon-engine.integration.test.ts\""
   },
   "prisma": {
     "seed": "npx ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
@@ -22,6 +28,8 @@
   "dependencies": {
     "@prisma/adapter-mariadb": "^7.1.0",
     "@prisma/client": "^7.0.1",
+    "@react-email/components": "^0.5.7",
+    "@react-email/render": "^1.4.0",
     "@types/multer": "^2.0.0",
     "basic-ftp": "^5.0.5",
     "bcrypt": "^6.0.0",
@@ -32,11 +40,15 @@
     "express-rate-limit": "^8.2.1",
     "firebase-admin": "^13.7.0",
     "helmet": "^8.1.0",
-    "mariadb": "^3.4.5",
+    "mariadb": "^3.5.2",
     "morgan": "^1.10.1",
     "multer": "^2.0.2",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
     "redis": "^4.7.1",
+    "resend": "^4.8.0",
     "sharp": "^0.34.5",
+    "socket.io": "^4.8.3",
     "xlsx": "^0.18.5",
     "zod": "^4.1.13"
   },
@@ -46,6 +58,8 @@
     "@types/express": "^5.0.5",
     "@types/morgan": "^1.9.10",
     "@types/node": "^24.10.1",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
     "nodemon": "^3.1.11",
     "prisma": "^7.0.1",
     "ts-node": "^10.9.2",

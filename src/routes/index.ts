@@ -12,9 +12,22 @@ import productoWebRoutes from './productoWeb.routes';
 import productoPrecioRoutes from './productoPrecio.routes';
 import auditRoutes from './audit.routes';
 import authRoutes from './auth.routes';
+import sfactoryVentasRoutes from './sfactory-ventas.routes';
+import pedidoAdminRoutes from './pedido-admin.routes';
+import shippingRoutes from './shipping.routes';
+import correoTestRoutes from './correo.test.routes';
+import checkoutRoutes from './checkout.routes';
+import cuentaRoutes from './cuenta.routes';
+import webhookMpRoutes from './webhook-mp.routes';
+import emailPublicRoutes from './email-public.routes';
+import orderStatusRoutes from './order-status.routes';
+import newsletterAdminRoutes from './newsletter-admin.routes';
+import newsletterPublicRoutes from './newsletter-public.routes';
+import * as newsletterAdminController from '../controllers/newsletter-admin.controller';
 import { empresaMiddleware } from '../middleware/empresa.middleware';
 import { firebaseAuthMiddleware } from '../middleware/firebase-auth.middleware';
 import { requireAdmin } from '../middleware/require-admin.middleware';
+import usuarioAdminRoutes from './usuario-admin.routes';
 
 const router = Router();
 
@@ -32,6 +45,16 @@ const syncLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, error: 'Demasiadas solicitudes de sincronización. Intente más tarde.' },
+});
+const sfactoryVentasLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: 'Demasiadas solicitudes a ventas SFactory. Intente más tarde.',
+  },
 });
 
 // Health check
@@ -56,13 +79,108 @@ router.use('/productos', productosRoutes); // Públicas arriba; admin en el prop
 
 router.use('/clientes', clientesRoutes); // Públicas arriba; admin en el propio router
 
-router.use('/pedidos', firebaseAuthMiddleware, requireAdmin, pedidosRoutes);
+router.use('/pedidos', firebaseAuthMiddleware, requireAdmin, empresaMiddleware, pedidosRoutes);
+router.use(
+  '/admin/pedidos',
+  firebaseAuthMiddleware,
+  requireAdmin,
+  empresaMiddleware,
+  pedidoAdminRoutes
+);
 
 router.use('/product-images', firebaseAuthMiddleware, requireAdmin, empresaMiddleware, productImagesRoutes);
 router.use('/productos-web', firebaseAuthMiddleware, requireAdmin, productoWebRoutes);
 router.use('/productos-precios', firebaseAuthMiddleware, requireAdmin, productoPrecioRoutes);
 router.use('/sync', syncLimiter, firebaseAuthMiddleware, requireAdmin, syncRoutes);
+router.use(
+  '/sfactory/ventas',
+  sfactoryVentasLimiter,
+  firebaseAuthMiddleware,
+  requireAdmin,
+  sfactoryVentasRoutes
+);
 router.use('/audit-logs', firebaseAuthMiddleware, requireAdmin, empresaMiddleware, auditRoutes);
 
-export default router;
+router.use('/shipping/correo/test', correoTestRoutes);
+router.use('/shipping', shippingRoutes);
 
+router.use('/checkout', checkoutRoutes);
+router.use('/cuenta', firebaseAuthMiddleware, cuentaRoutes);
+router.use('/webhooks/mercadopago', webhookMpRoutes);
+
+router.use('/emails', emailPublicRoutes);
+router.use('/orders', orderStatusRoutes);
+router.use(
+  '/admin/newsletter',
+  firebaseAuthMiddleware,
+  requireAdmin,
+  newsletterAdminRoutes
+);
+router.get(
+  '/admin/email-logs',
+  firebaseAuthMiddleware,
+  requireAdmin,
+  newsletterAdminController.getEmailLogs
+);
+
+router.use('/newsletter', newsletterPublicRoutes);
+
+import empresaAdminRoutes from './empresa.routes';
+import dashboardAdminRoutes from './dashboard-admin.routes';
+import adminNotificationsRoutes from './admin-notifications.routes';
+import adminSearchRoutes from './admin-search.routes';
+
+router.use(
+  '/admin/usuarios',
+  firebaseAuthMiddleware,
+  requireAdmin,
+  empresaMiddleware,
+  usuarioAdminRoutes
+);
+
+router.use(
+  '/admin/empresa',
+  firebaseAuthMiddleware,
+  requireAdmin,
+  empresaMiddleware,
+  empresaAdminRoutes
+);
+
+router.use(
+  '/admin/dashboard',
+  firebaseAuthMiddleware,
+  requireAdmin,
+  empresaMiddleware,
+  dashboardAdminRoutes
+);
+
+router.use(
+  '/admin/notifications',
+  firebaseAuthMiddleware,
+  requireAdmin,
+  empresaMiddleware,
+  adminNotificationsRoutes
+);
+
+router.use(
+  '/admin/search',
+  firebaseAuthMiddleware,
+  requireAdmin,
+  empresaMiddleware,
+  adminSearchRoutes
+);
+
+import cuponAdminRoutes from './cupon-admin.routes';
+import cuponRoutes from './cupon.routes';
+
+router.use('/cupones', empresaMiddleware, cuponRoutes);
+
+router.use(
+  '/admin/cupones',
+  firebaseAuthMiddleware,
+  requireAdmin,
+  empresaMiddleware,
+  cuponAdminRoutes
+);
+
+export default router;

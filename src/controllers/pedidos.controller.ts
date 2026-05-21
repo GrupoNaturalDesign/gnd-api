@@ -1,30 +1,37 @@
-import { Request, Response, NextFunction } from 'express';
-import { pedidosService } from '../services/pedidos.service';
+import { Request, Response } from 'express';
+import { pedidoListQuerySchema, pedidoSyncService } from '../services/pedido-sync.service';
 import type { ApiResponse } from '../types';
 
 export class PedidosController {
-  /**
-   * GET /api/pedidos
-   * Lista pedidos directamente desde SFactory (sin guardar en BD)
-   * Útil para ver la estructura de datos
-   */
-  async listar(req: Request, res: Response, next: NextFunction) {
+  async listar(req: Request, res: Response) {
     try {
-      const parameters = req.query || {};
+      const empresaId = Number((req as any).empresaId);
+      if (!Number.isFinite(empresaId) || empresaId <= 0) {
+        res.status(400).json({
+          success: false,
+          error: 'Empresa no encontrada',
+          message: 'No se pudo obtener empresaId.',
+        });
+        return;
+      }
 
-      const resultado = await pedidosService.listarDesdeSFactory(parameters);
-
-      res.json(resultado);
-    } catch (error: any) {
-      console.error('[PedidosController.listar] Error completo:', error);
-      return res.status(500).json({
+      const query = pedidoListQuerySchema.parse(req.query);
+      const resultado = await pedidoSyncService.listar(empresaId, query);
+      const response: ApiResponse = {
+        success: true,
+        data: resultado,
+        message: 'Pedidos locales sincronizables',
+      };
+      res.json(response);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(400).json({
         success: false,
-        error: 'Error al listar pedidos desde SFactory',
-        message: error.message || 'Error desconocido',
+        error: 'Error al listar pedidos',
+        message,
       });
     }
   }
 }
 
 export const pedidosController = new PedidosController();
-

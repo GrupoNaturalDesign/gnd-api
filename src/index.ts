@@ -1,9 +1,24 @@
 import dotenv from 'dotenv';
+import { createServer } from 'http';
 import app from './app';
 import { prisma } from './lib/prisma';
+import { startPedidoCheckoutJobs } from './jobs/pedido-checkout.jobs';
+import { initSocketServer } from './realtime/socket-server';
+import {
+  parseMaintenanceMode,
+  getMaintenanceModeLabel,
+  MaintenanceMode,
+} from './lib/maintenance-mode';
 
 // Load environment variables
 dotenv.config();
+
+const maintenanceMode = parseMaintenanceMode(process.env.MAINTENANCE_MODE);
+if (maintenanceMode !== MaintenanceMode.Off) {
+  console.warn(
+    `[maintenance] MAINTENANCE_MODE=${maintenanceMode} — ${getMaintenanceModeLabel(maintenanceMode)}`
+  );
+}
 
 // Evitar que el proceso se caiga por rechazos de promesas o excepciones no capturadas
 process.on('unhandledRejection', (reason, promise) => {
@@ -29,12 +44,15 @@ app.get('/health', async (_req, res) => {
 });
 
 const PORT = process.env.PORT || 3002;
+const httpServer = createServer(app);
+initSocketServer(httpServer);
 
 function start() {
-  app.listen(PORT, () => {
+  httpServer.listen(PORT, () => {
     console.log('🚀 Servidor corriendo en puerto', PORT);
     console.log(`📍 API disponible en http://localhost:${PORT}/api`);
     console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+    startPedidoCheckoutJobs();
   });
 }
 

@@ -5,6 +5,7 @@ import morgan from 'morgan';
 import routes from './routes';
 import { asyncLocalStorage } from './lib/async-context';
 import { auditMiddleware } from './middleware/audit.middleware';
+import { maintenanceMiddleware } from './middleware/maintenance.middleware';
 import { isDbConnectionError, DB_UNAVAILABLE_MESSAGE } from './lib/db-error-utils';
 
 const app = express();
@@ -17,9 +18,14 @@ const app = express();
 app.use(helmet());
 
 // CORS
+const corsOrigin = process.env.CORS_ORIGIN || '';
+const allowedOrigins = corsOrigin
+  ? corsOrigin.split(',').map((o) => o.trim())
+  : [];
+
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN || '*',
+    origin: allowedOrigins.length > 0 ? allowedOrigins : true,
     credentials: true,
   })
 );
@@ -42,6 +48,9 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 
 // Auditoría global: registra POST/PUT/PATCH/DELETE al finalizar la respuesta
 app.use(auditMiddleware);
+
+// Mantenimiento (MAINTENANCE_MODE: off | public | admin | all)
+app.use(maintenanceMiddleware);
 
 // ============================================
 // Routes

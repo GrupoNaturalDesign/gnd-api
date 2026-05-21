@@ -565,9 +565,18 @@ export class ProductoSyncService {
       if (productoDirecto) {
         productoData = productoDirecto;
       } else {
-        // Si no, obtenerlo de SFactory
+        // Si no, obtenerlo de SFactory (items_leer_item requiere item_id)
         try {
-          productoData = await sfactoryService.leerItem({ codigo });
+          const espejo = await prisma.productoSfactory.findFirst({
+            where: { empresaId, codigo },
+            select: { sfactory_id: true },
+          });
+          const sfactoryId = espejo?.sfactory_id;
+          if (sfactoryId != null) {
+            productoData = await sfactoryService.leerItem({ item_id: sfactoryId });
+          } else {
+            productoData = await sfactoryService.leerItem({ codigo });
+          }
         } catch (error) {
           // Fallback: usar search_item
           const searchResult = await sfactoryService.buscarItems({

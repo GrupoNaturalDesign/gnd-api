@@ -17,6 +17,18 @@ const syncProductosLimiter = rateLimit({
   },
 });
 
+/** Stock/precios por depósito: más permisivo que sync completo de catálogo. */
+const syncStockPreciosLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: 'Demasiadas sincronizaciones de stock. Espere unos minutos.',
+  },
+});
+
 router.use(empresaMiddleware);
 
 // Sincronizar rubros
@@ -27,6 +39,13 @@ router.post('/subrubros', syncController.syncSubrubros.bind(syncController));
 
 // Sincronizar productos (rate limit estricto + lock/cooldown en controller)
 router.post('/productos', syncProductosLimiter, syncController.syncProductos.bind(syncController));
+
+// Stock y precios desde depósito ecommerce (S-Factory inventario)
+router.post(
+  '/stock-precios',
+  syncStockPreciosLimiter,
+  syncController.syncStockPrecios.bind(syncController)
+);
 
 // Sincronizar todo (syncAll también usa lock/cooldown para la parte de productos)
 router.post('/all', syncProductosLimiter, syncController.syncAll.bind(syncController));

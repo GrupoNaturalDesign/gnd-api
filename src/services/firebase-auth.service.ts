@@ -2,6 +2,15 @@ import { prisma } from '../lib/prisma';
 import { verifyIdToken } from '../lib/firebase-admin';
 import { Rol } from '@prisma/client';
 import { rolToAuthRole } from '../types/auth.types';
+import { assertConsumerEmailAllowed } from '../utils/email-domain.validation';
+
+/** Formato YYYY-MM-DD para inputs date; usa UTC porque Prisma mapea MySQL DATE a medianoche UTC. */
+function formatDateOnly(d: Date): string {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 async function getRoleIdByCode(code: 'ADMIN' | 'USER'): Promise<number> {
   const role = await prisma.role.findUnique({
@@ -21,6 +30,8 @@ export interface SessionUserState {
   onboardingCompleted: boolean;
   nombre: string | null;
   apellido: string | null;
+  /** YYYY-MM-DD o null si no cargó fecha de nacimiento */
+  fechaNacimiento: string | null;
   role: string;
   empresaId: number | null;
   usuarioId: number;
@@ -48,6 +59,9 @@ export const firebaseAuthService = {
     });
 
     if (!user) {
+      if (provider !== 'google.com') {
+        assertConsumerEmailAllowed(email);
+      }
       const roleUserId = await getRoleIdByCode('USER');
       const displayName = (decoded.name || '').trim();
       const nameParts = displayName ? displayName.split(/\s+/).filter(Boolean) : [];
@@ -72,6 +86,9 @@ export const firebaseAuthService = {
         include: { role: true },
       });
     } else {
+      if (!user.activo) {
+        throw new Error('Usuario desactivado. Contacte al administrador.');
+      }
       const updatedEmailVerified = firebaseEmailVerified || user.emailVerified;
       if (user.emailVerified !== updatedEmailVerified) {
         await prisma.usuario.update({
@@ -96,6 +113,7 @@ export const firebaseAuthService = {
       onboardingCompleted: user.onboardingCompleted,
       nombre: user.nombre,
       apellido: user.apellido,
+      fechaNacimiento: user.fechaNacimiento ? formatDateOnly(user.fechaNacimiento) : null,
       role,
       empresaId: user.empresaId,
       usuarioId: user.id,
@@ -122,6 +140,7 @@ export const firebaseAuthService = {
       onboardingCompleted: user.onboardingCompleted,
       nombre: user.nombre,
       apellido: user.apellido,
+      fechaNacimiento: user.fechaNacimiento ? formatDateOnly(user.fechaNacimiento) : null,
       role,
       empresaId: user.empresaId,
       usuarioId: user.id,

@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { rubroSyncService } from '../services/sync/rubro-sync.service';
 import { productoSyncService } from '../services/sync/producto-sync.service';
+import { stockPreciosSyncService } from '../services/sync/stock-precios-sync.service';
 import {
   tryAcquireSyncProductosLock,
   releaseSyncProductosLock,
@@ -107,10 +108,26 @@ export class SyncController {
     try {
       const resultado = await productoSyncService.syncProductos(empresaId);
       await setSyncProductosLastRun(empresaId);
+
+      let stockPrecios: Awaited<
+        ReturnType<typeof stockPreciosSyncService.syncStockPreciosPorDepositoEcommerce>
+      > | null = null;
+      if (process.env.SYNC_STOCK_AFTER_PRODUCTOS === 'true') {
+        try {
+          stockPrecios = await stockPreciosSyncService.syncStockPreciosPorDepositoEcommerce(
+            empresaId
+          );
+        } catch (err: unknown) {
+          console.error('[syncProductos] SYNC_STOCK_AFTER_PRODUCTOS falló:', err);
+        }
+      }
+
       const response: ApiResponse = {
         success: true,
-        data: resultado,
-        message: 'Productos sincronizados exitosamente',
+        data: stockPrecios ? { ...resultado, stockPrecios } : resultado,
+        message: stockPrecios
+          ? 'Productos sincronizados y stock/precios actualizados desde depósito ecommerce'
+          : 'Productos sincronizados exitosamente',
       };
       res.json(response);
     } catch (error: any) {
@@ -121,6 +138,58 @@ export class SyncController {
       });
     } finally {
       await releaseSyncProductosLock(empresaId);
+    }
+  }
+
+  /**
+   * POST /api/sync/stock-precios
+   * Stock y precios desde S-Factory (depósito ECOMMERCE) solo para variantes WORKWEAR/OFFICE.
+   */
+  async syncStockPrecios(req: Request, res: Response, next: NextFunction) {
+    try {
+      const empresaId = (req as any).empresaId;
+      if (!empresaId) {
+        return res.status(400).json({
+          success: false,
+          error: 'EmpresaId requerido',
+          message: 'No se pudo obtener el empresaId del request',
+        });
+      }
+
+      const rawWh = req.body?.warehouseId;
+      const warehouseIdParsed =
+        rawWh !== undefined && rawWh !== null && rawWh !== ''
+          ? Number(rawWh)
+          : undefined;
+      const warehouseId =
+        warehouseIdParsed !== undefined && !Number.isNaN(warehouseIdParsed)
+          ? warehouseIdParsed
+          : undefined;
+
+      const data = await stockPreciosSyncService.syncStockPreciosPorDepositoEcommerce(
+        empresaId,
+        warehouseId
+      );
+
+      const omitMsg =
+        data.codigosOmitidos.length > 0
+          ? ` · ${data.codigosOmitidos.length} código(s) omitido(s) (no existen en S-Factory)`
+          : '';
+
+      const response: ApiResponse = {
+        success: true,
+        data,
+        message:
+          'Stock y precios actualizados desde S-Factory (depósito ecommerce)' +
+          omitMsg,
+      };
+      res.json(response);
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: 'Error al sincronizar stock y precios',
+        message: error.message,
+      });
     }
   }
 
@@ -162,14 +231,30 @@ export class SyncController {
       const productos = await productoSyncService.syncProductos(empresaId);
       await setSyncProductosLastRun(empresaId);
 
+      let stockPrecios: Awaited<
+        ReturnType<typeof stockPreciosSyncService.syncStockPreciosPorDepositoEcommerce>
+      > | null = null;
+      if (process.env.SYNC_STOCK_AFTER_PRODUCTOS === 'true') {
+        try {
+          stockPrecios = await stockPreciosSyncService.syncStockPreciosPorDepositoEcommerce(
+            empresaId
+          );
+        } catch (err: unknown) {
+          console.error('[syncAll] SYNC_STOCK_AFTER_PRODUCTOS falló:', err);
+        }
+      }
+
       const response: ApiResponse = {
         success: true,
         data: {
           rubros,
           subrubros,
           productos,
+          ...(stockPrecios ? { stockPrecios } : {}),
         },
-        message: 'Sincronización completa exitosa',
+        message: stockPrecios
+          ? 'Sincronización completa (incl. stock depósito ecommerce)'
+          : 'Sincronización completa exitosa',
       };
       res.json(response);
     } catch (error: any) {

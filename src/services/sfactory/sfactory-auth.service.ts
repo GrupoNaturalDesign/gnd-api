@@ -1,4 +1,5 @@
 import prisma from '../../lib/prisma';
+import { normalizeSFactoryErrorMessage } from '../../lib/sfactory-error-message';
 import { encryptToken, decryptToken } from '../../lib/token-encryption';
 
 interface SFactoryAuthResponse {
@@ -77,7 +78,9 @@ export class SFactoryAuthService {
       const data = (await response.json()) as SFactoryAuthResponse;
 
       if (!data.result.success) {
-        throw new Error(`Error de autenticación: ${data.result.message}`);
+        throw new Error(
+          `Error de autenticación: ${normalizeSFactoryErrorMessage(data.result.message)}`
+        );
       }
 
       const token = data.response.token;

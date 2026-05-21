@@ -254,6 +254,7 @@ export const ProductoPublicadoQueryParamsSchema = z.object({
 
 // Estructura optimizada de respuesta
 export interface VariantePublicada {
+  /** `productos_web.id` */
   id: number;
   codigo: string;
   color: string | null;
@@ -263,6 +264,10 @@ export interface VariantePublicada {
   precio: number;
   imagen: string | null; // Imagen por color (todas las variantes del mismo color tienen la misma)
   tieneImagen: boolean;
+  /** `productos_padre.id` del producto agrupado */
+  productoPadreId: number;
+  /** Ítem S-Factory (`productos_web.sfactory_id`) para pedidos / checkout */
+  sfactoryId: number;
 }
 
 export interface ProductoPublicado {

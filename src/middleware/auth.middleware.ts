@@ -20,6 +20,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     }
 
     const token = authHeader.slice(7).trim();
+    // console.log('token', token);
     if (!token) {
       res.status(401).json({
         success: false,

@@ -4,6 +4,23 @@ import { CacheService } from '../services/cache.service';
 import { handleZodError } from '../utils/validation';
 import { z } from 'zod';
 import type { ApiResponse } from '../types';
+import { logAudit } from '../services/audit.service';
+import prisma from '../lib/prisma';
+
+/** Serializa Decimal/number a número para JSON de auditoría */
+function auditNum(v: unknown): number | null {
+  if (v == null) return null;
+  if (
+    typeof v === 'object' &&
+    v !== null &&
+    'toNumber' in v &&
+    typeof (v as { toNumber: () => number }).toNumber === 'function'
+  ) {
+    return (v as { toNumber: () => number }).toNumber();
+  }
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
 
 const UpdateProductoWebSchema = z.object({
   stockCache: z.coerce.number().nullable().optional(),
@@ -38,7 +55,43 @@ export class ProductoWebController {
       const body = UpdateProductoWebSchema.parse(req.body);
 
       const empresaId = (req as any).empresaId;
+      const prev = await productoWebService.getById(params.id);
+      if (!prev) {
+        return res.status(404).json({
+          success: false,
+          message: 'ProductoWeb no encontrado',
+        });
+      }
+
       const productoWeb = await productoWebService.update(params.id, body);
+
+      await logAudit({
+        entity: 'producto_web',
+        entityId: String(params.id),
+        action: 'UPDATE',
+        oldValues: {
+          origen: 'cache_precio_stock_local',
+          productoPadreId: prev.productoPadreId,
+          sku: prev.sfactoryCodigo,
+          stockCache: auditNum(prev.stockCache),
+          precioCache: auditNum(prev.precioCache),
+        },
+        newValues: {
+          origen: 'cache_precio_stock_local',
+          productoPadreId: productoWeb.productoPadreId,
+          sku: productoWeb.sfactoryCodigo,
+          stockCache: auditNum(productoWeb.stockCache),
+          precioCache: auditNum(productoWeb.precioCache),
+        },
+        empresaId: empresaId ?? (prev.productoPadre as { empresaId?: number } | null)?.empresaId ?? undefined,
+        userId: (req as any).userId,
+        userEmail: (req as any).userEmail,
+        ipAddress: (req as any).ip ?? (req as any).socket?.remoteAddress,
+        userAgent: (req as any).get?.('user-agent'),
+        method: req.method,
+        path: req.originalUrl?.split('?')[0] ?? req.path,
+      });
+      (req as any).auditLogged = true;
 
       // Invalidar cache del producto padre
       if (productoWeb.productoPadreId) {
@@ -81,7 +134,81 @@ export class ProductoWebController {
 
       const body = BulkUpdateProductoWebSchema.parse(req.body);
 
+      const ids = [...new Set(body.updates.map((u) => u.id))];
+      const antes =
+        ids.length > 0
+          ? await prisma.productoWeb.findMany({
+              where: { id: { in: ids } },
+              select: {
+                id: true,
+                sfactoryCodigo: true,
+                stockCache: true,
+                precioCache: true,
+                productoPadreId: true,
+              },
+            })
+          : [];
+
+      const antesMap = new Map(antes.map((a) => [a.id, a]));
+
       const productosWeb = await productoWebService.updateBulk(body.updates, empresaId);
+
+      const productoPadreId = antes[0]?.productoPadreId;
+      if (productoPadreId != null && antes.length > 0 && productosWeb.length > 0) {
+        const despuesMap = new Map(productosWeb.map((p) => [p.id, p]));
+
+        const variantesAntes = body.updates
+          .map((u) => {
+            const row = antesMap.get(u.id);
+            if (!row) return null;
+            return {
+              id: row.id,
+              sku: row.sfactoryCodigo,
+              stockCache: auditNum(row.stockCache),
+              precioCache: auditNum(row.precioCache),
+            };
+          })
+          .filter((x): x is NonNullable<typeof x> => x != null);
+
+        const variantesDespues = body.updates
+          .map((u) => {
+            const p = despuesMap.get(u.id);
+            if (!p) return null;
+            return {
+              id: p.id,
+              sku: p.sfactoryCodigo,
+              stockCache: auditNum(p.stockCache),
+              precioCache: auditNum(p.precioCache),
+            };
+          })
+          .filter((x): x is NonNullable<typeof x> => x != null);
+
+        await logAudit({
+          entity: 'producto_padre',
+          entityId: String(productoPadreId),
+          action: 'UPDATE',
+          oldValues: {
+            origen: 'cache_precio_stock_local',
+            alcance: 'variantes_seleccionadas',
+            cantidadVariantes: variantesAntes.length,
+            variantes: variantesAntes,
+          },
+          newValues: {
+            origen: 'cache_precio_stock_local',
+            alcance: 'variantes_seleccionadas',
+            cantidadVariantes: variantesDespues.length,
+            variantes: variantesDespues,
+          },
+          empresaId,
+          userId: (req as any).userId,
+          userEmail: (req as any).userEmail,
+          ipAddress: (req as any).ip ?? (req as any).socket?.remoteAddress,
+          userAgent: (req as any).get?.('user-agent'),
+          method: req.method,
+          path: req.originalUrl?.split('?')[0] ?? req.path,
+        });
+      }
+      (req as any).auditLogged = true;
 
       const productoPadreIds = new Set<number>();
       for (const productoWeb of productosWeb) {

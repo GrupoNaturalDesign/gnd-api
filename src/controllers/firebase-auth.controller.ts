@@ -1,7 +1,9 @@
 import { Response } from 'express';
 import { z } from 'zod';
 import { firebaseAuthService } from '../services/firebase-auth.service';
+import { emailService } from '../lib/email/email.service';
 import type { FirebaseAuthRequest } from '../middleware/firebase-auth.middleware';
+import { resolveAuthSessionError } from '../utils/auth-session-error.util';
 
 const sessionSchema = z.object({
   idToken: z.string().min(1),
@@ -36,7 +38,9 @@ export async function register(req: FirebaseAuthRequest, res: Response): Promise
     });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : 'Error al registrar.';
-    res.status(401).json({ success: false, error: message });
+    const { status, clientMessage, logMessage } = resolveAuthSessionError(message);
+    if (logMessage) console.error('[auth/register]', logMessage, e);
+    res.status(status).json({ success: false, error: clientMessage });
   }
 }
 
@@ -62,7 +66,9 @@ export async function session(req: FirebaseAuthRequest, res: Response): Promise<
     });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : 'Error al crear sesión.';
-    res.status(401).json({ success: false, error: message });
+    const { status, clientMessage, logMessage } = resolveAuthSessionError(message);
+    if (logMessage) console.error('[auth/session]', logMessage, e);
+    res.status(status).json({ success: false, error: clientMessage });
   }
 }
 
@@ -113,6 +119,8 @@ export async function onboarding(req: FirebaseAuthRequest, res: Response): Promi
       apellido: parsed.data.apellido ?? '',
       fechaNacimiento: parsed.data.fechaNacimiento ?? '',
     });
+    const welcomeName = [parsed.data.nombre, parsed.data.apellido].filter(Boolean).join(' ').trim() || 'Cliente';
+    void emailService.sendWelcomeEmail({ name: welcomeName, email: state.email });
     res.status(200).json({ success: true, data: state });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : 'Error al completar onboarding.';

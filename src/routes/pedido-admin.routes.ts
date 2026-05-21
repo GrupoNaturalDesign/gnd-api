@@ -1,0 +1,84 @@
+// src/routes/pedido-admin.routes.ts
+import { Router } from 'express';
+import { pedidoAdminController } from '../controllers/pedido-admin.controller';
+
+const router = Router();
+
+router.get(
+  '/',
+  pedidoAdminController.listar.bind(pedidoAdminController)
+);
+router.get(
+  '/sfactory',
+  pedidoAdminController.listarSfactory.bind(pedidoAdminController)
+);
+router.post(
+  '/crear-sfactory',
+  pedidoAdminController.crearSfactory.bind(pedidoAdminController)
+);
+router.get(
+  '/sfactory/buscar-clientes',
+  pedidoAdminController.buscarClientes.bind(pedidoAdminController)
+);
+router.get(
+  '/sfactory/buscar-productos',
+  pedidoAdminController.buscarProductos.bind(pedidoAdminController)
+);
+router.get(
+  '/sfactory/:id',
+  pedidoAdminController.detalleSfactory.bind(pedidoAdminController)
+);
+router.post(
+  '/sfactory/:id/aprobar',
+  pedidoAdminController.aprobarSfactory.bind(pedidoAdminController)
+);
+router.post(
+  '/sfactory/:id/cancelar',
+  pedidoAdminController.cancelarSfactory.bind(pedidoAdminController)
+);
+router.post(
+  '/manual',
+  pedidoAdminController.crearManual.bind(pedidoAdminController)
+);
+router.post(
+  '/sync-activos',
+  pedidoAdminController.syncActivosSfactory.bind(pedidoAdminController)
+);
+router.post(
+  '/sync-stock',
+  pedidoAdminController.syncStockSfactory.bind(pedidoAdminController)
+);
+router.get(
+  '/pendientes',
+  pedidoAdminController.listar.bind(pedidoAdminController)
+);
+router.get(
+  '/:id',
+  pedidoAdminController.detalle.bind(pedidoAdminController)
+);
+router.patch(
+  '/:id',
+  pedidoAdminController.editar.bind(pedidoAdminController)
+);
+router.post(
+  '/:id/aprobar',
+  pedidoAdminController.aprobar.bind(pedidoAdminController)
+);
+router.post(
+  '/:id/rechazar',
+  pedidoAdminController.rechazar.bind(pedidoAdminController)
+);
+router.post(
+  '/:id/reintentar-sfactory',
+  pedidoAdminController.reintentarSfactory.bind(pedidoAdminController)
+);
+router.post(
+  '/:id/resolver-fallido',
+  pedidoAdminController.resolverFallido.bind(pedidoAdminController)
+);
+router.post(
+  '/:id/sync',
+  pedidoAdminController.syncSfactory.bind(pedidoAdminController)
+);
+
+export default router;
