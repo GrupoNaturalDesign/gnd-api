@@ -42,6 +42,7 @@ test('verifyMercadoPagoWebhookSignature rechaza firma incorrecta', () => {
 
 test('extractMercadoPagoWebhookDataId lee query y body', () => {
   assert.equal(extractMercadoPagoWebhookDataId({ 'data.id': '99' }, {}), '99');
+  assert.equal(extractMercadoPagoWebhookDataId({ id: '41141439264' }, {}), '41141439264');
   assert.equal(
     extractMercadoPagoWebhookDataId(
       {},

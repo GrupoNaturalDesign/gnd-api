@@ -10,6 +10,9 @@ import { isDbConnectionError, DB_UNAVAILABLE_MESSAGE } from './lib/db-error-util
 
 const app = express();
 
+// Vercel / reverse proxy: necesario para rate-limit y req.ip con X-Forwarded-For
+app.set('trust proxy', 1);
+
 // ============================================
 // Middlewares
 // ============================================

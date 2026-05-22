@@ -60,13 +60,15 @@ export function verifyMercadoPagoWebhookSignature(input: MercadoPagoWebhookSigna
   return hexEqualsSafe(expected.toLowerCase(), parts.v1.toLowerCase());
 }
 
-/** Lee `data.id` de query (clave literal `data.id`) o de `body.data.id`. */
+/** Lee `data.id` de query (clave literal `data.id`), IPN legacy `?id=` o `body.data.id`. */
 export function extractMercadoPagoWebhookDataId(
   query: Record<string, string | undefined>,
   body?: unknown
 ): string | undefined {
   const raw = query['data.id'];
   if (typeof raw === 'string' && raw.length > 0) return raw;
+  const legacyId = query.id;
+  if (typeof legacyId === 'string' && legacyId.length > 0) return legacyId;
   if (body && typeof body === 'object') {
     const d = (body as Record<string, unknown>).data;
     if (d && typeof d === 'object' && 'id' in d) {

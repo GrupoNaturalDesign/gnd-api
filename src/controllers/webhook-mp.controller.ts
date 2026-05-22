@@ -38,8 +38,21 @@ function normalizeHeaders(req: Request): Record<string, string | undefined> {
   return out;
 }
 
+function extractMercadoPagoWebhookTopic(
+  query: Record<string, string | undefined>,
+  body: unknown
+): string | undefined {
+  if (typeof query.topic === 'string' && query.topic.length > 0) return query.topic;
+  if (body && typeof body === 'object') {
+    const b = body as Record<string, unknown>;
+    if (typeof b.type === 'string' && b.type.length > 0) return b.type;
+    if (typeof b.topic === 'string' && b.topic.length > 0) return b.topic;
+  }
+  return undefined;
+}
+
 export class WebhookMpController {
-  /** POST /api/webhooks/mercadopago — sin auth; valida firma si hay secreto; 200 idempotente. */
+  /** POST /api/webhooks/mercadopago — sin auth; valida firma en live; 200 idempotente. */
   recibirWebhook(req: Request, res: Response): void {
     const query = normalizeQuery(req.query);
     const headers = normalizeHeaders(req);
@@ -55,7 +68,7 @@ export class WebhookMpController {
       return;
     }
 
-    if (secret) {
+    if (secret && mercadoPagoConfig.isWebhookSignatureRequired()) {
       const dataId =
         extractMercadoPagoWebhookDataId(query, req.body) ?? paymentId ?? undefined;
       if (
@@ -70,6 +83,12 @@ export class WebhookMpController {
         res.status(401).json({ success: false, error: 'Firma de webhook inválida' });
         return;
       }
+    }
+
+    const topic = extractMercadoPagoWebhookTopic(query, req.body);
+    if (topic === 'merchant_order') {
+      res.status(200).json({ success: true, message: 'ignored_merchant_order' });
+      return;
     }
 
     void (async () => {
