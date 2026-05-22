@@ -165,6 +165,27 @@ describe('emailService.sendNewsletter — batch', () => {
     assert.strictEqual(batchEmails[0].to[0], 'active@test.com');
   });
 
+  test('parsea respuesta batch anidada { data: [{ id }] } del SDK de Resend', async () => {
+    process.env.RESEND_API_KEY = 're_test';
+    process.env.RESEND_FROM_MARKETING = 'GND <novedades@test.com>';
+
+    mockResend.batch.send.mock.mockImplementationOnce(async () => ({
+      data: { data: [{ id: '58d1921e-1838-4f1f-8eb1-28d3d4d0c138' }] },
+      error: null,
+    }));
+
+    const { emailService } = await import('../../src/lib/email/email.service');
+
+    const result = await emailService.sendNewsletter({
+      subject: 'Nested Response',
+      htmlBody: '<p>Hola!</p>',
+      recipientList: ['user@test.com'],
+    });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.messageId, '58d1921e-1838-4f1f-8eb1-28d3d4d0c138');
+  });
+
   test('retorna error si todos los destinatarios están desuscriptos', async () => {
     process.env.RESEND_API_KEY = 're_test';
     process.env.RESEND_FROM_MARKETING = 'GND <novedades@test.com>';

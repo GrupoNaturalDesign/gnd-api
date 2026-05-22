@@ -8,6 +8,7 @@ import {
   pedidoSyncService,
   resolverFallidoSchema,
 } from '../services/pedido-sync.service';
+import { pedidoPickupService } from '../services/pedido-pickup.service';
 import { sfactoryService } from '../services/sfactory/sfactory.service';
 import { pedidosService } from '../services/pedidos.service';
 import { sfactoryCrearPedidoExternoBodySchema, toSfactoryPedidoExternoParams } from '../validation/sfactory-pedido-externo.schema';
@@ -187,6 +188,41 @@ export class PedidoAdminController {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       res.status(400).json({ success: false, error: 'No se pudo sincronizar el pedido', message });
+    }
+  }
+
+  async enviarListoRetiro(req: Request, res: Response) {
+    try {
+      const data = await pedidoPickupService.enviarListoParaRetiro(
+        getEmpresaId(req),
+        parsePedidoId(req)
+      );
+      res.json({
+        success: true,
+        data,
+        message: 'Aviso de retiro enviado al cliente',
+      } as ApiResponse);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json({ success: false, error: 'No se pudo enviar el aviso de retiro', message });
+    }
+  }
+
+  async marcarRetirado(req: Request, res: Response) {
+    try {
+      const sendEmail = req.body?.sendEmail !== false;
+      const data = await pedidoPickupService.marcarPedidoRetirado(
+        getEmpresaId(req),
+        parsePedidoId(req),
+        { sendEmail }
+      );
+      const msg = data.alreadyDelivered
+        ? 'El pedido ya estaba marcado como entregado'
+        : 'Pedido marcado como retirado';
+      res.json({ success: true, data, message: msg } as ApiResponse);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json({ success: false, error: 'No se pudo marcar como retirado', message });
     }
   }
 

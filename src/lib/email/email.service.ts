@@ -91,6 +91,20 @@ async function sendWithRetry<T extends { statusCode?: number; name?: string; mes
   return { data: null, error: null, attemptCount };
 }
 
+/** Resend batch.send puede devolver `[{ id }]` o `{ data: [{ id }] }` según versión del SDK. */
+function extractBatchSendIds(data: unknown): { id?: string }[] {
+  if (Array.isArray(data)) {
+    return data as { id?: string }[];
+  }
+  if (data && typeof data === 'object' && 'data' in data) {
+    const nested = (data as { data: unknown }).data;
+    if (Array.isArray(nested)) {
+      return nested as { id?: string }[];
+    }
+  }
+  return [];
+}
+
 async function logEmail(params: {
   type:
     | 'welcome'
@@ -313,7 +327,7 @@ export const emailService = {
       return { success: false, error: err };
     }
     const orderRef = order.orderId != null ? `#${order.orderId}` : 'Pedido';
-    const subject = getOrderStatusEmailSubject(order.status, orderRef);
+    const subject = getOrderStatusEmailSubject(order.status, orderRef, order.statusUiOverrides);
     const html = await render(createElement(OrderStatusEmail, { ...order }));
     const text = await render(createElement(OrderStatusEmail, { ...order }), { plainText: true });
     const { data, error } = await sendWithRetry(
@@ -557,7 +571,7 @@ export const emailService = {
         continue;
       }
 
-      const ids: { id?: string }[] = Array.isArray(data) ? (data as { id?: string }[]) : [];
+      const ids = extractBatchSendIds(data);
       for (let i = 0; i < chunk.length; i++) {
         const row = chunk[i];
         if (!row) continue;
@@ -577,11 +591,18 @@ export const emailService = {
       return { success: false, error: errors[0]?.error ?? 'Error desconocido en newsletter batch.' };
     }
 
+    const warnings: string[] = [];
+    if (errors.length > 0) {
+      warnings.push(`${errors.length}/${filtered.length} envíos fallidos.`);
+    }
+    if (excluded > 0) {
+      warnings.push(`${excluded} destinatarios desuscriptos, omitidos.`);
+    }
+
     return {
-      success: errors.length === 0,
+      success: true,
       messageId: sent[0],
-      ...(errors.length > 0 ? { error: `${errors.length}/${filtered.length} envíos fallidos.` } : {}),
-      ...(excluded > 0 ? { error: `${excluded} destinatarios desuscriptos, omitidos.` } : {}),
+      ...(warnings.length > 0 ? { error: warnings.join(' ') } : {}),
     };
   },
 

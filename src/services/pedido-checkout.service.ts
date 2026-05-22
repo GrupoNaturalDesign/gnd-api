@@ -14,6 +14,7 @@ import { adminNotificationService } from './admin-notification.service';
 import { CuponEngineService } from './cupon-engine.service';
 import {
   isPedidoCheckoutEcommerce,
+  sendPedidoStatusEmail,
   sendPedidoStatusEmailAsync,
 } from './pedido-email-notification.service';
 import type {
@@ -588,7 +589,7 @@ export async function procesarPedidoConfirmado(pedidoId: number): Promise<Proces
       console.log(`[cupon] Uso registrado para cupón ${pedidoAfter.cuponId}, pedido ${pedidoId}`);
     }
 
-    sendPedidoStatusEmailAsync(pedidoId, OrderStatus.CONFIRMED);
+    await sendPedidoStatusEmail(pedidoId, OrderStatus.CONFIRMED);
 
     return { ok: true, pedidoId, message: 'Pedido confirmado en SFactory' };
   } catch (e: unknown) {

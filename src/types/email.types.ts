@@ -32,6 +32,14 @@ export interface OrderLineEmailItem {
   bordado?: boolean;
 }
 
+/** Overrides opcionales del banner en `OrderStatusEmail` (p. ej. "Listo para retirar"). */
+export interface OrderStatusUiOverrides {
+  icon?: string;
+  title?: string;
+  lead?: string;
+  bannerBg?: string;
+}
+
 /**
  * Payload para emails de pedido (cliente o interno).
  * `status` define el contenido del mail al cliente; el checkout sin pedido en DB usa `PENDING`.
@@ -51,6 +59,10 @@ export interface OrderEmailPayload {
   status: OrderStatus;
   /** Notas u observaciones de pago/envío (una línea o varias). */
   notes?: string;
+  /** Instrucciones de entrega / retiro (bloque aparte en el mail). */
+  deliveryInstructions?: string;
+  /** Personaliza título, lead o colores del banner sin cambiar el enum `status`. */
+  statusUiOverrides?: OrderStatusUiOverrides;
 }
 
 export interface ContactEmailPayload {

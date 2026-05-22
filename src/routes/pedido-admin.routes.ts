@@ -80,5 +80,13 @@ router.post(
   '/:id/sync',
   pedidoAdminController.syncSfactory.bind(pedidoAdminController)
 );
+router.post(
+  '/:id/enviar-listo-retiro',
+  pedidoAdminController.enviarListoRetiro.bind(pedidoAdminController)
+);
+router.post(
+  '/:id/marcar-retirado',
+  pedidoAdminController.marcarRetirado.bind(pedidoAdminController)
+);
 
 export default router;

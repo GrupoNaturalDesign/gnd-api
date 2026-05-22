@@ -1,4 +1,5 @@
 import type { OrderStatus } from '@prisma/client';
+import type { OrderStatusUiOverrides } from '../types/email.types';
 
 /** Textos e íconos solo para presentación en `OrderStatusEmail`. */
 export interface OrderStatusUi {
@@ -47,11 +48,20 @@ const UI: Record<OrderStatus, OrderStatusUi> = {
   },
 };
 
-export function getOrderStatusUi(status: OrderStatus): OrderStatusUi {
-  return UI[status];
+export function getOrderStatusUi(
+  status: OrderStatus,
+  overrides?: OrderStatusUiOverrides
+): OrderStatusUi {
+  const base = UI[status];
+  if (!overrides) return base;
+  return { ...base, ...overrides };
 }
 
-export function getOrderStatusEmailSubject(status: OrderStatus, orderRef: string): string {
-  const short = UI[status]?.title ?? 'Actualización de pedido';
+export function getOrderStatusEmailSubject(
+  status: OrderStatus,
+  orderRef: string,
+  overrides?: OrderStatusUiOverrides
+): string {
+  const short = overrides?.title ?? UI[status]?.title ?? 'Actualización de pedido';
   return `GND — ${short}${orderRef ? ` · ${orderRef}` : ''}`;
 }

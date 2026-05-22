@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { emailService } from '../lib/email/email.service';
 import { newsletterService } from '../services/newsletter.service';
+import { getNewsletterMaxRecipients } from '../utils/newsletter-limits.util';
 import { emailLogsQuerySchema, newsletterSendBodySchema, subscribersQuerySchema } from '../validation/email.validation';
 
 export async function postNewsletterSend(req: Request, res: Response): Promise<void> {
@@ -14,8 +15,17 @@ export async function postNewsletterSend(req: Request, res: Response): Promise<v
     return;
   }
 
+  const maxRecipients = getNewsletterMaxRecipients();
   const recipientList =
     parsed.data.recipientList ?? (await newsletterService.getActiveEmails());
+
+  if (recipientList.length > maxRecipients) {
+    res.status(400).json({
+      success: false,
+      error: `Máximo ${maxRecipients} destinatarios por campaña (límite Resend). Elegí menos suscriptores o ajustá NEWSLETTER_MAX_RECIPIENTS.`,
+    });
+    return;
+  }
 
   const result = await emailService.sendNewsletter({
     subject: parsed.data.subject,

@@ -8,7 +8,7 @@ import { getOrderStatusUi } from './order-status-ui';
 export type OrderStatusEmailProps = OrderEmailPayload;
 
 export function OrderStatusEmail(props: OrderStatusEmailProps): React.ReactElement {
-  const ui = getOrderStatusUi(props.status);
+  const ui = getOrderStatusUi(props.status, props.statusUiOverrides);
   const ref = props.orderId != null ? `Pedido #${props.orderId}` : 'Tu pedido';
   return (
     <BaseLayout previewText={`${ui.title} — ${ref}`}>
@@ -47,6 +47,12 @@ export function OrderStatusEmail(props: OrderStatusEmailProps): React.ReactEleme
           <>
             <Text style={label}>Entrega</Text>
             <Text style={value}>{props.shippingSummary}</Text>
+          </>
+        ) : null}
+        {props.deliveryInstructions ? (
+          <>
+            <Text style={label}>Instrucciones</Text>
+            <Text style={value}>{props.deliveryInstructions}</Text>
           </>
         ) : null}
         {props.paymentSummary ? (

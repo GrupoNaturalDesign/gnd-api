@@ -1,8 +1,9 @@
-import { FormaPago, OrderStatus, type Pedido, type PedidoItem, Prisma } from '@prisma/client';
+import { FormaPago, OrderStatus, type Pedido, type PedidoItem } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { emailService } from '../lib/email/email.service';
 import { formatArs } from '../lib/money-format';
-import type { OrderEmailPayload } from '../types/email.types';
+import type { OrderEmailPayload, OrderStatusUiOverrides } from '../types/email.types';
+import { resolvePedidoEntregaFromPedido } from '../utils/pedido-entrega.util';
 
 function formaPagoLabel(forma: FormaPago | null | undefined): string | undefined {
   if (!forma) return undefined;
@@ -20,26 +21,42 @@ function formaPagoLabel(forma: FormaPago | null | undefined): string | undefined
 
 type PedidoConItems = Pedido & { items: PedidoItem[] };
 
+function confirmLeadForEntrega(tipo: ReturnType<typeof resolvePedidoEntregaFromPedido>['tipo']): string | undefined {
+  switch (tipo) {
+    case 'retiro_tienda':
+      return 'Recibimos tu pedido y lo estamos preparando. Te avisaremos por email cuando esté listo para retirar.';
+    case 'envio_domicilio':
+      return 'Tu pedido fue confirmado. Te avisaremos por email cuando despachemos.';
+    case 'envio_sucursal':
+      return 'Tu pedido fue confirmado. Te avisaremos por email cuando el paquete esté en la sucursal indicada.';
+    default:
+      return undefined;
+  }
+}
+
 export function buildOrderEmailPayloadFromPedido(
   pedido: PedidoConItems,
   status: OrderStatus,
-  options?: { notes?: string }
+  options?: { notes?: string; statusUiOverrides?: OrderStatusUiOverrides; deliveryInstructions?: string }
 ): OrderEmailPayload {
   const itemUnits = pedido.items.reduce((acc, it) => acc + Number(it.cantidad), 0);
-  const envioLine =
-    Number(pedido.costoEnvio) > 0 ? `Costo envío: ${formatArs(Number(pedido.costoEnvio))}` : null;
   const descuento = Number(pedido.descuento);
   const totalNeto = Number(pedido.total) - descuento;
+  const entrega = resolvePedidoEntregaFromPedido(pedido);
+
+  let statusUiOverrides = options?.statusUiOverrides;
+  if (status === OrderStatus.CONFIRMED && !statusUiOverrides) {
+    const lead = confirmLeadForEntrega(entrega.tipo);
+    if (lead) statusUiOverrides = { lead };
+  }
 
   return {
     orderId: pedido.id,
     customerName: pedido.clienteNombre,
     customerEmail: pedido.clienteEmail,
     customerPhone: pedido.clienteTelefono ?? undefined,
-    shippingSummary:
-      [pedido.formaEnvio ? String(pedido.formaEnvio) : null, pedido.clienteDireccion ?? null, envioLine]
-        .filter(Boolean)
-        .join(' · ') || undefined,
+    shippingSummary: entrega.shippingSummary,
+    deliveryInstructions: options?.deliveryInstructions ?? entrega.deliveryInstructions,
     paymentSummary: formaPagoLabel(pedido.formaPago),
     items: pedido.items.map((it) => {
       const espec = [it.talle, it.color].filter(Boolean).join(' / ');
@@ -57,6 +74,7 @@ export function buildOrderEmailPayloadFromPedido(
     totalFormatted: formatArs(totalNeto >= 0 ? totalNeto : Number(pedido.total)),
     status,
     notes: options?.notes ?? pedido.observaciones ?? undefined,
+    statusUiOverrides,
   };
 }
 
@@ -72,7 +90,12 @@ export function isPedidoCheckoutEcommerce(pedido: { usuarioId: number | null }):
 export async function sendPedidoStatusEmail(
   pedidoId: number,
   status: OrderStatus,
-  options?: { notes?: string; sendInternal?: boolean }
+  options?: {
+    notes?: string;
+    sendInternal?: boolean;
+    statusUiOverrides?: OrderStatusUiOverrides;
+    deliveryInstructions?: string;
+  }
 ): Promise<void> {
   const pedido = await prisma.pedido.findUnique({
     where: { id: pedidoId },
@@ -101,7 +124,12 @@ export async function sendPedidoStatusEmail(
 export function sendPedidoStatusEmailAsync(
   pedidoId: number,
   status: OrderStatus,
-  options?: { notes?: string; sendInternal?: boolean }
+  options?: {
+    notes?: string;
+    sendInternal?: boolean;
+    statusUiOverrides?: OrderStatusUiOverrides;
+    deliveryInstructions?: string;
+  }
 ): void {
   void sendPedidoStatusEmail(pedidoId, status, options);
 }
