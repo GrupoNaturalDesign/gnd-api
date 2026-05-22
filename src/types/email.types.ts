@@ -68,3 +68,7 @@ export interface NewsletterPayload {
   htmlBody: string;
   recipientList: string[];
 }
+
+export interface NewsletterWelcomePayload {
+  email: string;
+}

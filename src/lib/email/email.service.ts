@@ -6,6 +6,7 @@ import { prisma } from '../prisma';
 import { ContactConfirmationEmail } from '../../emails/ContactConfirmationEmail';
 import { InternalOrderNotification } from '../../emails/InternalOrderNotification';
 import { NewsletterEmail } from '../../emails/NewsletterEmail';
+import { NewsletterWelcomeEmail } from '../../emails/NewsletterWelcomeEmail';
 import { OrderStatusEmail } from '../../emails/OrderStatusEmail';
 import { getOrderStatusEmailSubject } from '../../emails/order-status-ui';
 import { WelcomeEmail } from '../../emails/WelcomeEmail';
@@ -18,6 +19,7 @@ import type {
   ContactEmailPayload,
   EmailSendResult,
   NewsletterPayload,
+  NewsletterWelcomePayload,
   OrderEmailPayload,
   WelcomeUserPayload,
 } from '../../types/email.types';
@@ -163,6 +165,67 @@ export const emailService = {
       status: 'sent',
       messageId,
       metadata: { kind: 'welcome' },
+    });
+    return { success: true, messageId };
+  },
+
+  async sendNewsletterWelcomeEmail(payload: NewsletterWelcomePayload): Promise<EmailSendResult> {
+    const resend = getResend();
+    const from = getFromMarketing();
+    const baseUrl = process.env.NEWSLETTER_UNSUBSCRIBE_BASE_URL ?? 'https://naturalonline.com.ar';
+    const to = payload.email.trim().toLowerCase();
+
+    if (!to) {
+      return { success: false, error: 'Email no disponible.' };
+    }
+
+    if (!resend || !from) {
+      const err = 'Resend marketing no configurado (RESEND_API_KEY / RESEND_FROM_MARKETING).';
+      await logEmail({
+        type: 'newsletter',
+        to,
+        status: 'failed',
+        error: err,
+        metadata: { kind: 'newsletter_welcome' },
+      });
+      return { success: false, error: err };
+    }
+
+    const unsubscribeToken = await unsubscribeService.createOrGetToken(to);
+    const emailProps = { unsubscribeToken, unsubscribeBaseUrl: baseUrl };
+    const html = await render(createElement(NewsletterWelcomeEmail, emailProps));
+    const text = await render(createElement(NewsletterWelcomeEmail, emailProps), { plainText: true });
+
+    const { data, error } = await sendWithRetry(
+      () =>
+        resend.emails.send({
+          from,
+          to,
+          subject: '¡Gracias por suscribirte al newsletter de GND Natural Design!',
+          html,
+          text,
+        }),
+      { label: 'sendNewsletterWelcomeEmail' }
+    );
+
+    if (error) {
+      await logEmail({
+        type: 'newsletter',
+        to,
+        status: 'failed',
+        error: error.message,
+        metadata: { kind: 'newsletter_welcome' },
+      });
+      return { success: false, error: error.message };
+    }
+
+    const messageId = data && typeof data === 'object' && 'id' in data ? (data as { id: string }).id : undefined;
+    await logEmail({
+      type: 'newsletter',
+      to,
+      status: 'sent',
+      messageId,
+      metadata: { kind: 'newsletter_welcome' },
     });
     return { success: true, messageId };
   },

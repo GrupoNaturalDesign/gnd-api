@@ -1,4 +1,5 @@
 import prisma from '../lib/prisma';
+import { emailService } from '../lib/email/email.service';
 
 export interface SubscribeResult {
   success: boolean;
@@ -23,6 +24,12 @@ export interface EmailLogsResult {
   pagination: { page: number; limit: number; total: number; totalPages: number };
 }
 
+function sendWelcomeEmailAsync(email: string): void {
+  void emailService.sendNewsletterWelcomeEmail({ email }).catch((err) => {
+    console.error('[newsletter.service] welcome email failed', err);
+  });
+}
+
 export const newsletterService = {
   async subscribe(email: string): Promise<SubscribeResult> {
     const normalized = email.toLowerCase().trim();
@@ -39,12 +46,14 @@ export const newsletterService = {
         where: { id: existing.id },
         data: { active: true, subscribedAt: new Date() },
       });
+      sendWelcomeEmailAsync(normalized);
       return { success: true, message: 'Tu suscripción fue reactivada.', email: normalized };
     }
 
     await prisma.newsletterSubscriber.create({
       data: { email: normalized },
     });
+    sendWelcomeEmailAsync(normalized);
     return { success: true, message: 'Te suscribiste exitosamente al newsletter.', email: normalized };
   },
 
