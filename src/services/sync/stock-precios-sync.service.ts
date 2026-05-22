@@ -7,12 +7,10 @@ import {
 import { sfactoryService } from '../sfactory/sfactory.service';
 import { ECOMMERCE_RUBROS_SFACTORY_IDS } from '../../config/ecommerce.config';
 import { calcularTodosLosPrecios, CUOTAS_FINANCIADO_DEFAULT } from '../../config/precios.config';
+import { getDbWriteConcurrency } from '../../lib/db-config';
 
 /** Códigos por request a S-Factory (evitar payloads enormes). */
 const BATCH_CODES = 80;
-
-/** Concurrencia al persistir en BD (evitar saturar el pool). */
-const DB_CONCURRENCY = 15;
 
 type StockRow = {
   item_code: string;
@@ -163,7 +161,7 @@ export class StockPreciosSyncService {
           (x): x is { row: StockRow; pwId: number } => x != null
         );
 
-      await runPool(tareas, DB_CONCURRENCY, async ({ row, pwId }) => {
+      await runPool(tareas, getDbWriteConcurrency(), async ({ row, pwId }) => {
         const stock = Number(row.stock ?? 0);
         const saleRaw = row.sale_price != null ? Number(row.sale_price) : null;
         const saleOk =

@@ -1,6 +1,27 @@
 import prisma from '../../lib/prisma';
+import { tryGetEmpresaIdFromEnv } from '../../lib/checkout-empresa';
 import { normalizeSFactoryErrorMessage } from '../../lib/sfactory-error-message';
 import { encryptToken, decryptToken } from '../../lib/token-encryption';
+
+const EMPRESA_ID_CACHE_TTL_MS = 5 * 60 * 1000;
+let cachedEmpresaId: { key: string; id: number; expiresAt: number } | null = null;
+
+function getCachedEmpresaId(key: string): number | null {
+  if (!cachedEmpresaId || cachedEmpresaId.key !== key) return null;
+  if (Date.now() >= cachedEmpresaId.expiresAt) {
+    cachedEmpresaId = null;
+    return null;
+  }
+  return cachedEmpresaId.id;
+}
+
+function setCachedEmpresaId(key: string, id: number): void {
+  cachedEmpresaId = { key, id, expiresAt: Date.now() + EMPRESA_ID_CACHE_TTL_MS };
+}
+
+export function invalidateEmpresaIdCache(): void {
+  cachedEmpresaId = null;
+}
 
 interface SFactoryAuthResponse {
   result: {
@@ -149,6 +170,8 @@ export class SFactoryAuthService {
         }
       }
 
+      setCachedEmpresaId(companyKey, empresa.id);
+
       return {
         empresaId: empresa.id,
         token,
@@ -258,16 +281,22 @@ export class SFactoryAuthService {
   }
 
   /**
-   * Obtener empresaId desde la BD basado en companyKey
-   * Si no hay token válido, intenta autenticar
+   * Obtener empresaId (env → cache → una query a BD).
+   * La renovación de token SFactory queda en getToken(), no aquí.
    */
   async getEmpresaId(companyKey?: string): Promise<number | null> {
     try {
-      // Si no se proporciona companyKey, usar el de .env
       const key = companyKey || process.env.SFACTORY_COMPANY_KEY || '';
 
-      // Primero obtener solo el ID de la empresa (esto siempre funciona)
-      const empresaBasic = await prisma.empresa.findFirst({
+      if (!companyKey) {
+        const fromEnv = tryGetEmpresaIdFromEnv();
+        if (fromEnv != null) return fromEnv;
+      }
+
+      const cached = getCachedEmpresaId(key);
+      if (cached != null) return cached;
+
+      const empresa = await prisma.empresa.findFirst({
         where: {
           sfactoryCompanyKey: key,
           activa: true,
@@ -277,48 +306,12 @@ export class SFactoryAuthService {
         },
       });
 
-      if (!empresaBasic) {
+      if (!empresa) {
         return null;
       }
 
-      // Intentar verificar si hay token guardado (solo si las columnas existen)
-      try {
-        const empresaConToken = await prisma.empresa.findFirst({
-          where: {
-            sfactoryCompanyKey: key,
-            activa: true,
-          },
-          select: {
-            id: true,
-            sfactoryToken: true,
-            sfactoryTokenExpiry: true,
-          },
-        });
-
-        // Si las columnas existen y hay token válido (y descifrable), retornar el ID
-        if (
-          empresaConToken?.sfactoryToken &&
-          empresaConToken?.sfactoryTokenExpiry &&
-          new Date() < empresaConToken.sfactoryTokenExpiry &&
-          decryptToken(empresaConToken.sfactoryToken)
-        ) {
-          return empresaConToken.id;
-        }
-
-        // Si hay token pero está expirado, o no hay token, autenticar
-        if (empresaConToken) {
-          await this.authenticateAndSave(key);
-          return empresaBasic.id;
-        }
-      } catch (error: any) {
-        // Si las columnas no existen (error P2022), simplemente retornar el ID
-        if (error.code === 'P2022') {
-          return empresaBasic.id;
-        }
-        throw error;
-      }
-
-      return empresaBasic.id;
+      setCachedEmpresaId(key, empresa.id);
+      return empresa.id;
     } catch (error: any) {
       return null;
     }

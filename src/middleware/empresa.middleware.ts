@@ -1,12 +1,12 @@
 // src/middleware/empresa.middleware.ts
 import { Request, Response, NextFunction } from 'express';
+import { tryGetEmpresaIdFromEnv } from '../lib/checkout-empresa';
 import { sfactoryAuthService } from '../services/sfactory/sfactory-auth.service';
 import { isDbConnectionError, DB_UNAVAILABLE_MESSAGE } from '../lib/db-error-utils';
 
 /**
- * Middleware para inyectar empresaId automáticamente en las requests
- * Obtiene el empresaId de la BD basado en el companyKey de SFactory
- * Falla si no se puede obtener el empresaId (no usa valores por defecto)
+ * Middleware para inyectar empresaId automáticamente en las requests.
+ * Usa EMPRESA_ID del entorno (sin query a BD). Fallback: BD con cache en getEmpresaId().
  */
 export async function empresaMiddleware(
   req: Request,
@@ -14,8 +14,8 @@ export async function empresaMiddleware(
   next: NextFunction
 ) {
   try {
-    // Obtener empresaId desde la BD basado en SFACTORY_COMPANY_KEY
-    const empresaId = await sfactoryAuthService.getEmpresaId();
+    const fromEnv = tryGetEmpresaIdFromEnv();
+    const empresaId = fromEnv ?? (await sfactoryAuthService.getEmpresaId());
 
     if (!empresaId) {
       return res.status(400).json({

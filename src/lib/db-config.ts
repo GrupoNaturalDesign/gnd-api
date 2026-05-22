@@ -76,10 +76,25 @@ function getConnectionParams(): Pick<
  * Defaults pensados para hosting compartido (límite max_connections_per_hour):
  * poco paralelismo, reutilizar conexiones (idleTimeout), fallar antes si el servidor corta.
  */
+export function getDbPoolLimit(): number {
+  const n = parseInt(process.env.DB_POOL_LIMIT ?? '5', 10);
+  return Number.isFinite(n) && n >= 1 ? n : 5;
+}
+
+/** Concurrencia máxima de escrituras paralelas a BD (dejar 1 conexión libre para HTTP). */
+export function getDbWriteConcurrency(): number {
+  const override = process.env.DB_WRITE_CONCURRENCY;
+  if (override) {
+    const n = parseInt(override, 10);
+    if (Number.isFinite(n) && n >= 1) return n;
+  }
+  return Math.max(1, getDbPoolLimit() - 1);
+}
+
 export function getMariaPoolConfig(): PoolConfig {
   const base = getConnectionParams();
 
-  const connectionLimit = parseInt(process.env.DB_POOL_LIMIT ?? '5', 10);
+  const connectionLimit = getDbPoolLimit();
   const acquireTimeout = parseInt(process.env.DB_ACQUIRE_TIMEOUT ?? '30000', 10);
   const connectTimeout = parseInt(process.env.DB_CONNECT_TIMEOUT ?? '15000', 10);
   /** Segundos; el driver mariadb usa segundos para idle del pool (default 1800). */

@@ -1,9 +1,15 @@
-/** `EMPRESA_ID` del entorno — tienda monomarca en checkout público. */
-export function getCheckoutEmpresaIdFromEnv(): number {
+/** `EMPRESA_ID` del entorno — tienda monomarca (checkout, middleware, jobs). */
+export function tryGetEmpresaIdFromEnv(): number | null {
   const raw = process.env.EMPRESA_ID;
-  const n = raw != null && raw !== '' ? parseInt(raw, 10) : NaN;
-  if (!Number.isFinite(n) || n < 1) {
+  if (raw == null || raw === '') return null;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 1 ? n : null;
+}
+
+export function getCheckoutEmpresaIdFromEnv(): number {
+  const id = tryGetEmpresaIdFromEnv();
+  if (id == null) {
     throw new Error('EMPRESA_ID debe ser un entero positivo en el entorno');
   }
-  return n;
+  return id;
 }
