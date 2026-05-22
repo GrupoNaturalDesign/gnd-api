@@ -35,6 +35,7 @@ import {
   mapCreateOrderToMicorreoImport,
   mapRatesResponse,
 } from './correo.mapper';
+import type { FetchFn, FetchRequestInit, FetchResponse } from '../../../types/fetch.types';
 
 function parseJsonUnknown(text: string): unknown {
   try {
@@ -86,7 +87,7 @@ export class CorreoProvider implements ShippingProvider {
   constructor(
     private readonly correoSenderData: Prisma.JsonValue | null,
     private readonly correoEnv: CorreoEnv,
-    private readonly fetchImpl: typeof fetch
+    private readonly fetchImpl: FetchFn
   ) {
     this.auth = new CorreoAuth(correoEnv, fetchImpl);
   }
@@ -253,13 +254,13 @@ export class CorreoProvider implements ShippingProvider {
       ? pathWithQuery
       : `${baseUrl}${pathWithQuery.startsWith('/') ? '' : '/'}${pathWithQuery}`;
 
-    const doFetch = async (): Promise<Response> => {
+    const doFetch = async (): Promise<FetchResponse> => {
       const token = await this.auth.getValidToken();
       const headers: Record<string, string> = {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       };
-      const init: RequestInit = {
+      const init: FetchRequestInit = {
         method,
         headers,
         signal: this.timeoutSignal(),

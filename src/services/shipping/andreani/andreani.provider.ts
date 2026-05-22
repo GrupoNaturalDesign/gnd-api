@@ -30,6 +30,7 @@ import {
   mapPedidoToAndreaniOrdenEnvio,
 } from './andreani.mapper';
 import type { AndreaniCotizacionInput, AndreaniCotizacionResultado } from './andreani.types';
+import type { FetchFn } from '../../../types/fetch.types';
 
 function bufferToBase64(buffer: ArrayBuffer): string {
   return Buffer.from(buffer).toString('base64');
@@ -46,7 +47,7 @@ export class AndreaniProvider implements ShippingProvider {
 
   constructor(
     andreaniEnvFromDb: string,
-    private readonly fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis)
+    private readonly fetchImpl: FetchFn = globalThis.fetch.bind(globalThis) as FetchFn
   ) {
     const env = mapEmpresaEnvioToAndreaniEnv(andreaniEnvFromDb);
     const baseUrl = getAndreaniBaseUrl(env);

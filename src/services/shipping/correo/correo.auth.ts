@@ -1,4 +1,5 @@
 import { shippingLogger } from '../../../lib/shipping-logger';
+import type { FetchFn } from '../../../types/fetch.types';
 import {
   CORREO_PATHS,
   getCorreoBaseUrlForEnv,
@@ -44,7 +45,7 @@ export class CorreoAuth {
 
   constructor(
     private readonly env: CorreoEnv,
-    private readonly fetchImpl: typeof fetch
+    private readonly fetchImpl: FetchFn
   ) {}
 
   private get baseUrl(): string {

@@ -2,6 +2,7 @@ import { ShippingHttpError, ShippingValidationError } from '../shipping.errors';
 import type { AndreaniCredentials } from './andreani.config';
 import { getAndreaniRequestTimeoutMs, getAndreaniTokenHeaderName, isAndreaniMock } from './andreani.config';
 import type { AndreaniLoginResponse } from './andreani.types';
+import type { FetchFn } from '../../../types/fetch.types';
 
 /**
  * Token en memoria por instancia (proceso). Para multi-empresa con credenciales distintas, usar una instancia por empresa.
@@ -13,7 +14,7 @@ export class AndreaniAuthService {
     private readonly baseUrl: string,
     private readonly loginPath: string,
     private readonly credentials: AndreaniCredentials,
-    private readonly fetchImpl: typeof fetch
+    private readonly fetchImpl: FetchFn
   ) {}
 
   invalidate(): void {

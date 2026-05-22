@@ -1,6 +1,7 @@
 import { ShippingHttpError } from '../shipping.errors';
 import { AndreaniAuthService } from './andreani.auth.service';
 import { getAndreaniRequestTimeoutMs } from './andreani.config';
+import type { FetchFn } from '../../../types/fetch.types';
 
 function parseJsonSafe(text: string): unknown {
   try {
@@ -39,7 +40,7 @@ export class AndreaniHttp {
   constructor(
     private readonly baseUrl: string,
     private readonly auth: AndreaniAuthService,
-    private readonly fetchImpl: typeof fetch
+    private readonly fetchImpl: FetchFn
   ) {}
 
   async requestJson(

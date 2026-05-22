@@ -7,6 +7,7 @@ import type {
   MercadoPagoPaymentSearchResponse,
   MercadoPagoPreferenceResponse,
 } from './mercadopago.types';
+import type { FetchFn, FetchRequestInit } from '../../types/fetch.types';
 
 type ConfigLike = {
   baseUrl: string;
@@ -27,7 +28,7 @@ function parseErrorMessage(body: unknown): string {
 }
 
 export interface MercadoPagoClientDeps {
-  fetchImpl?: typeof fetch;
+  fetchImpl?: FetchFn;
   config?: ConfigLike;
 }
 
@@ -42,8 +43,8 @@ export class MercadoPagoClient {
     return this.deps.config ?? mercadoPagoConfig;
   }
 
-  private get fetchFn(): typeof fetch {
-    return this.deps.fetchImpl ?? globalThis.fetch.bind(globalThis);
+  private get fetchFn(): FetchFn {
+    return (this.deps.fetchImpl ?? globalThis.fetch.bind(globalThis)) as FetchFn;
   }
 
   private async request<T>(
@@ -69,7 +70,7 @@ export class MercadoPagoClient {
       headers['X-Idempotency-Key'] = options.idempotencyKey ?? randomUUID();
     }
 
-    const init: RequestInit = {
+    const init: FetchRequestInit = {
       method,
       headers,
     };
