@@ -34,6 +34,7 @@ export async function postNewsletterSend(req: Request, res: Response): Promise<v
     message: 'Newsletter enviado',
     messageId: result.messageId,
     recipients: recipientList.length,
+    ...(result.error ? { warning: result.error } : {}),
   });
 }
 

@@ -477,8 +477,7 @@ export const emailService = {
 
     if (filtered.length === 0) {
       return {
-        success: true,
-        messageId: undefined,
+        success: false,
         error: `Todos los ${payload.recipientList.length} destinatarios están desuscriptos.`,
       };
     }

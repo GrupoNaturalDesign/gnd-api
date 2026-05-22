@@ -16,15 +16,19 @@ const mockPrisma = {
   emailLog: {
     create: mock.fn(async () => ({})),
   },
+  newsletterSubscriber: {
+    findMany: mock.fn(async () => []),
+  },
   unsubscribeToken: {
     findMany: mock.fn(async () => []),
+    findFirst: mock.fn(async () => null),
     findUnique: mock.fn(async () => null),
     create: mock.fn(async () => ({ token: 'test-token-32chars1111111111111111111111' })),
   },
 };
 
 mock.module('resend', () => ({ Resend: function () { return mockResend; } }), { virtual: true });
-mock.module('../prisma', () => ({ prisma: mockPrisma }), { virtual: true });
+mock.module('../prisma', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });
 
 describe('emailService.sendNewsletter — batch', () => {
   beforeEach(() => {
@@ -143,7 +147,7 @@ describe('emailService.sendNewsletter — batch', () => {
     process.env.RESEND_API_KEY = 're_test';
     process.env.RESEND_FROM_MARKETING = 'GND <novedades@test.com>';
 
-    mockPrisma.unsubscribeToken.findMany.mock.mockImplementationOnce(async () => [
+    mockPrisma.newsletterSubscriber.findMany.mock.mockImplementationOnce(async () => [
       { email: 'unsubscribed@test.com' },
     ]);
 
@@ -161,11 +165,11 @@ describe('emailService.sendNewsletter — batch', () => {
     assert.strictEqual(batchEmails[0].to[0], 'active@test.com');
   });
 
-  test('retorna success si todos los destinatarios están desuscriptos', async () => {
+  test('retorna error si todos los destinatarios están desuscriptos', async () => {
     process.env.RESEND_API_KEY = 're_test';
     process.env.RESEND_FROM_MARKETING = 'GND <novedades@test.com>';
 
-    mockPrisma.unsubscribeToken.findMany.mock.mockImplementationOnce(async () => [
+    mockPrisma.newsletterSubscriber.findMany.mock.mockImplementationOnce(async () => [
       { email: 'user1@test.com' },
       { email: 'user2@test.com' },
     ]);
@@ -178,7 +182,7 @@ describe('emailService.sendNewsletter — batch', () => {
       recipientList: ['user1@test.com', 'user2@test.com'],
     });
 
-    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.success, false);
     assert.ok(result.error?.includes('desuscriptos'));
     assert.strictEqual(mockResend.batch.send.mock.callCount(), 0);
   });

@@ -5,6 +5,7 @@ export interface SubscribeResult {
   success: boolean;
   message: string;
   email?: string;
+  alreadySubscribed?: boolean;
 }
 
 export interface SubscribersResult {
@@ -40,7 +41,12 @@ export const newsletterService = {
 
     if (existing) {
       if (existing.active) {
-        return { success: true, message: 'Ya estás suscripto a nuestro newsletter.', email: normalized };
+        return {
+          success: false,
+          alreadySubscribed: true,
+          message: 'Ya estás suscripto a nuestro newsletter.',
+          email: normalized,
+        };
       }
       await prisma.newsletterSubscriber.update({
         where: { id: existing.id },

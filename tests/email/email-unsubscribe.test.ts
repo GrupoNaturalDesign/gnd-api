@@ -3,11 +3,39 @@ import assert from 'node:assert';
 
 let mockToken: { id: string; email: string; token: string } | null = null;
 let deleteCalled = false;
+let deactivateCalled = false;
 
 const mockPrisma = {
   emailLog: { create: mock.fn(async () => ({})) },
+  newsletterSubscriber: {
+    findUnique: mock.fn(async ({ where }: { where: { email: string } }) => {
+      if (where.email === 'inactive@test.com') {
+        return { email: where.email, active: false };
+      }
+      if (where.email === 'active@test.com') {
+        return { email: where.email, active: true };
+      }
+      return null;
+    }),
+    findMany: mock.fn(async ({ where }: { where: { email?: { in: string[] }; active?: boolean } }) => {
+      if (where.active === false && where.email?.in) {
+        return where.email.in
+          .filter((e) => e === 'unsubscribed@test.com' || e === 'another@test.com' || e === 'inactive@test.com')
+          .map((email) => ({ email }));
+      }
+      return [];
+    }),
+    updateMany: mock.fn(async () => {
+      deactivateCalled = true;
+      return { count: 1 };
+    }),
+  },
   unsubscribeToken: {
     findMany: mock.fn(async () => []),
+    findFirst: mock.fn(async ({ where }: { where: { email: string } }) => {
+      if (where.email === mockToken?.email) return mockToken;
+      return null;
+    }),
     findUnique: mock.fn(async ({ where }: { where: { token: string } }) => {
       if (where?.token === mockToken?.token) return mockToken;
       return null;
@@ -23,76 +51,72 @@ const mockPrisma = {
   },
 };
 
-mock.module('../../../lib/prisma', () => ({ prisma: mockPrisma }), { virtual: true });
+mock.module('../prisma', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });
 
 function resetAll(): void {
   mockToken = null;
   deleteCalled = false;
+  deactivateCalled = false;
   mockPrisma.unsubscribeToken.findUnique.mock.resetCalls();
+  mockPrisma.unsubscribeToken.findFirst.mock.resetCalls();
   mockPrisma.unsubscribeToken.create.mock.resetCalls();
   mockPrisma.unsubscribeToken.delete.mock.resetCalls();
+  mockPrisma.newsletterSubscriber.updateMany.mock.resetCalls();
 }
 
 describe('unsubscribeService', () => {
   beforeEach(resetAll);
 
-  test('unsubscribe con token válido elimina el registro y retorna success', async () => {
+  test('unsubscribe con token válido desactiva suscriptor, elimina token y retorna success', async () => {
     mockToken = { id: 'tok-id-1', email: 'user@test.com', token: 'valid-token-123' };
 
-    const { unsubscribeService } = await import('../../../lib/email/unsubscribe.service');
+    const { unsubscribeService } = await import('../../src/lib/email/unsubscribe.service');
 
     const result = await unsubscribeService.unsubscribe('valid-token-123');
 
     assert.strictEqual(result.success, true);
     assert.ok(result.message.includes('user@test.com'));
+    assert.strictEqual(deactivateCalled, true);
     assert.strictEqual(deleteCalled, true);
   });
 
   test('unsubscribe con token inválido retorna error sin eliminar nada', async () => {
-    const { unsubscribeService } = await import('../../../lib/email/unsubscribe.service');
+    const { unsubscribeService } = await import('../../src/lib/email/unsubscribe.service');
 
     const result = await unsubscribeService.unsubscribe('invalid-token');
 
     assert.strictEqual(result.success, false);
     assert.ok(result.message.includes('inválido'));
     assert.strictEqual(deleteCalled, false);
+    assert.strictEqual(deactivateCalled, false);
   });
 
-  test('isUnsubscribed retorna false si no existe el registro', async () => {
-    const { unsubscribeService } = await import('../../../lib/email/unsubscribe.service');
+  test('isUnsubscribed retorna false si no existe el suscriptor', async () => {
+    const { unsubscribeService } = await import('../../src/lib/email/unsubscribe.service');
 
     const result = await unsubscribeService.isUnsubscribed('noexiste@test.com');
 
     assert.strictEqual(result, false);
   });
 
-  test('isUnsubscribed retorna true si existe el registro', async () => {
-    mockToken = { id: 'tok-id', email: 'test@test.com', token: 'abc' };
+  test('isUnsubscribed retorna false si el suscriptor está activo', async () => {
+    const { unsubscribeService } = await import('../../src/lib/email/unsubscribe.service');
 
-    const { unsubscribeService } = await import('../../../lib/email/unsubscribe.service');
+    const result = await unsubscribeService.isUnsubscribed('active@test.com');
 
-    const result = await unsubscribeService.isUnsubscribed('test@test.com');
+    assert.strictEqual(result, false);
+  });
+
+  test('isUnsubscribed retorna true si el suscriptor está inactivo', async () => {
+    const { unsubscribeService } = await import('../../src/lib/email/unsubscribe.service');
+
+    const result = await unsubscribeService.isUnsubscribed('inactive@test.com');
 
     assert.strictEqual(result, true);
   });
 
-  test('isUnsubscribed normaliza email a lowercase', async () => {
-    mockToken = { id: 'tok-id', email: 'User@Test.com', token: 'abc' };
-
-    const { unsubscribeService } = await import('../../../lib/email/unsubscribe.service');
-
-    const result = await unsubscribeService.isUnsubscribed('USER@TEST.COM');
-
-    assert.strictEqual(result, true);
-  });
-
-  test('filterUnsubscribed excluye emails desuscriptos', async () => {
-    mockPrisma.unsubscribeToken.findMany.mock.mockImplementationOnce(async () => [
-      { email: 'unsubscribed@test.com' },
-      { email: 'another@test.com' },
-    ]);
-
-    const { unsubscribeService } = await import('../../../lib/email/unsubscribe.service');
+  test('filterUnsubscribed excluye emails con suscripción inactiva', async () => {
+    const { unsubscribeService } = await import('../../src/lib/email/unsubscribe.service');
 
     const result = await unsubscribeService.filterUnsubscribed([
       'active1@test.com',
@@ -108,8 +132,18 @@ describe('unsubscribeService', () => {
     assert.ok(!result.includes('another@test.com'));
   });
 
+  test('filterUnsubscribed no excluye emails solo por tener token de desuscripción', async () => {
+    mockToken = { id: 'tok-id', email: 'with-token@test.com', token: 'abc' };
+
+    const { unsubscribeService } = await import('../../src/lib/email/unsubscribe.service');
+
+    const result = await unsubscribeService.filterUnsubscribed(['with-token@test.com']);
+
+    assert.deepStrictEqual(result, ['with-token@test.com']);
+  });
+
   test('filterUnsubscribed con lista vacía retorna vacío', async () => {
-    const { unsubscribeService } = await import('../../../lib/email/unsubscribe.service');
+    const { unsubscribeService } = await import('../../src/lib/email/unsubscribe.service');
 
     const result = await unsubscribeService.filterUnsubscribed([]);
 
@@ -118,11 +152,8 @@ describe('unsubscribeService', () => {
 
   test('createOrGetToken retorna token existente si ya existe', async () => {
     mockToken = { id: 'existing-id', email: 'existing@test.com', token: 'existing-token' };
-    mockPrisma.unsubscribeToken.findUnique.mock.mockImplementationOnce(
-      async () => mockToken
-    );
 
-    const { unsubscribeService } = await import('../../../lib/email/unsubscribe.service');
+    const { unsubscribeService } = await import('../../src/lib/email/unsubscribe.service');
 
     const token = await unsubscribeService.createOrGetToken('existing@test.com');
 
@@ -131,15 +162,7 @@ describe('unsubscribeService', () => {
   });
 
   test('createOrGetToken crea nuevo token si no existe', async () => {
-    mockPrisma.unsubscribeToken.findUnique.mock.mockImplementationOnce(async () => null);
-    mockPrisma.unsubscribeToken.create.mock.mockImplementationOnce(
-      async (data: { data: { email: string; token: string } }) => ({
-        id: 'new-id',
-        ...data.data,
-      })
-    );
-
-    const { unsubscribeService } = await import('../../../lib/email/unsubscribe.service');
+    const { unsubscribeService } = await import('../../src/lib/email/unsubscribe.service');
 
     const token = await unsubscribeService.createOrGetToken('new@test.com');
 
@@ -148,15 +171,7 @@ describe('unsubscribeService', () => {
   });
 
   test('createOrGetToken normaliza email a lowercase', async () => {
-    mockPrisma.unsubscribeToken.findUnique.mock.mockImplementationOnce(async () => null);
-    mockPrisma.unsubscribeToken.create.mock.mockImplementationOnce(
-      async (data: { data: { email: string; token: string } }) => ({
-        id: 'new-id',
-        ...data.data,
-      })
-    );
-
-    const { unsubscribeService } = await import('../../../lib/email/unsubscribe.service');
+    const { unsubscribeService } = await import('../../src/lib/email/unsubscribe.service');
 
     await unsubscribeService.createOrGetToken('Test@TEST.COM');
 
@@ -175,7 +190,7 @@ describe('GET /api/emails/unsubscribe/:token', () => {
   test('token válido → 200 success', async () => {
     mockToken = { id: 'tok-1', email: 'user@test.com', token: 'abc123valid' };
 
-    const { getUnsubscribe } = await import('../../../controllers/unsubscribe.controller');
+    const { getUnsubscribe } = await import('../../src/controllers/unsubscribe.controller');
     const mockReq = { params: { token: 'abc123valid' } } as any;
     let responseStatus = 0;
     let responseBody: any;
@@ -198,7 +213,7 @@ describe('GET /api/emails/unsubscribe/:token', () => {
   });
 
   test('token inválido → 404', async () => {
-    const { getUnsubscribe } = await import('../../../controllers/unsubscribe.controller');
+    const { getUnsubscribe } = await import('../../src/controllers/unsubscribe.controller');
     const mockReq = { params: { token: 'invalid-token' } } as any;
     let responseStatus = 0;
     let responseBody: any;
@@ -220,7 +235,7 @@ describe('GET /api/emails/unsubscribe/:token', () => {
   });
 
   test('token muy corto → 400', async () => {
-    const { getUnsubscribe } = await import('../../../controllers/unsubscribe.controller');
+    const { getUnsubscribe } = await import('../../src/controllers/unsubscribe.controller');
     const mockReq = { params: { token: 'abc' } } as any;
     let responseStatus = 0;
     let responseBody: any;
