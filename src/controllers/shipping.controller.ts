@@ -10,7 +10,9 @@ import {
   ShippingMethodNotSupportedError,
   ShippingValidationError,
 } from '../services/shipping/shipping.errors';
+import { shippingTrackingQuerySchema } from '../validation/shipping-tracking.validation';
 import { paramAsString } from '../utils/http-param.util';
+import { buildShippingTrackingUrl } from '../utils/shipping-tracking-url.util';
 
 const recipientSchema = z.object({
   name: z.string().min(1),
@@ -242,15 +244,54 @@ export class ShippingController {
         });
         return;
       }
-      const data = await shippingService.getTracking(
-        pedidoId,
-        list,
+      const data = await shippingService.trackShipment(
+        empresaId,
         provider,
-        empresaId
+        list,
+        pedidoId
       );
       const response: ApiResponse = {
         success: true,
         data,
+        message: 'Tracking',
+      };
+      res.json(response);
+    } catch (e: unknown) {
+      this.sendError(res, e);
+    }
+  }
+
+  async getTrackingQuery(req: FirebaseAuthRequest, res: Response): Promise<void> {
+    const empresaId = req.empresaId;
+    if (empresaId == null) {
+      res.status(403).json({ success: false, error: 'empresaId requerido.' });
+      return;
+    }
+    const parsed = shippingTrackingQuerySchema.safeParse({
+      provider: typeof req.query.provider === 'string' ? req.query.provider : '',
+      trackingNumber:
+        typeof req.query.trackingNumber === 'string' ? req.query.trackingNumber : '',
+    });
+    if (!parsed.success) {
+      res.status(400).json({
+        success: false,
+        error: 'Query inválido',
+        details: parsed.error.flatten(),
+      });
+      return;
+    }
+    const { provider, trackingNumber } = parsed.data;
+    try {
+      const results = await shippingService.trackShipment(
+        empresaId,
+        provider,
+        [trackingNumber.trim()],
+        null
+      );
+      const trackingUrl = buildShippingTrackingUrl(provider, trackingNumber) ?? undefined;
+      const response: ApiResponse = {
+        success: true,
+        data: { results, trackingUrl },
         message: 'Tracking',
       };
       res.json(response);

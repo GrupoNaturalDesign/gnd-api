@@ -175,12 +175,17 @@ export class SyncController {
         data.codigosOmitidos.length > 0
           ? ` · ${data.codigosOmitidos.length} código(s) omitido(s) (no existen en S-Factory)`
           : '';
+      const skipMsg =
+        data.variantesOmitidas > 0
+          ? ` · ${data.variantesOmitidas} sin cambios`
+          : '';
 
       const response: ApiResponse = {
         success: true,
         data,
         message:
           'Stock y precios actualizados desde S-Factory (depósito ecommerce)' +
+          skipMsg +
           omitMsg,
       };
       res.json(response);

@@ -55,7 +55,7 @@ describe('buildOrderEmailPayloadFromPedido', () => {
     );
   });
 
-  it('CONFIRMED envío domicilio incluye lead de despacho', () => {
+  it('CONFIRMED envío domicilio incluye instrucciones de despacho y costo envío en totales', () => {
     const payload = buildOrderEmailPayloadFromPedido(
       makePedido({
         costoEnvio: 1500,
@@ -72,7 +72,18 @@ describe('buildOrderEmailPayloadFromPedido', () => {
     assert.strictEqual(payload.status, OrderStatus.CONFIRMED);
     assert.ok(payload.shippingSummary?.includes('Andreani'));
     assert.ok(payload.deliveryInstructions?.includes('despachemos'));
-    assert.ok(payload.statusUiOverrides?.lead?.includes('cuando despachemos'));
+    assert.strictEqual(payload.statusUiOverrides, undefined);
+    assert.ok(payload.shippingCostFormatted?.includes('1.500'));
+  });
+
+  it('SHIPPED incluye tracking en payload', () => {
+    const payload = buildOrderEmailPayloadFromPedido(makePedido(), OrderStatus.SHIPPED, {
+      trackingNumber: '360000102000579',
+      trackingUrl: 'https://www.andreani.com/#!/informacionEnvio/360000102000579',
+    });
+
+    assert.strictEqual(payload.trackingNumber, '360000102000579');
+    assert.ok(payload.trackingUrl?.includes('360000102000579'));
   });
 
   it('CONFIRMED envío sucursal incluye lead de sucursal', () => {

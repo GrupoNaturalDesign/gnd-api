@@ -1,6 +1,12 @@
 import { Request, Response, NextFunction } from 'express';
 import { clientesService } from '../services/clientes.service';
 import { CacheService } from '../services/cache.service';
+import {
+  tryAcquireSyncClientesLock,
+  releaseSyncClientesLock,
+  setSyncClientesLastRun,
+  checkSyncClientesCooldown,
+} from '../services/sync/sync-clientes-guard.service';
 import type { ApiResponse } from '../types';
 import { ZodError } from 'zod';
 
@@ -210,15 +216,42 @@ export class ClientesController {
         });
       }
 
-      const resultado = await clientesService.sincronizar(empresaId);
+      const acquired = await tryAcquireSyncClientesLock(empresaId);
+      if (!acquired) {
+        return res.status(429).json({
+          success: false,
+          error: 'Sync en curso',
+          message: 'Ya hay una sincronización de clientes en curso. Espere a que finalice.',
+        });
+      }
 
-      const response: ApiResponse = {
-        success: true,
-        data: resultado,
-        message: `Sincronización completada: ${resultado.exitosos} exitosos, ${resultado.fallidos} fallidos`,
-      };
+      const cooldown = await checkSyncClientesCooldown(empresaId);
+      if (!cooldown.allowed) {
+        await releaseSyncClientesLock(empresaId);
+        const retryAfter = cooldown.retryAfterSeconds ?? 60;
+        res.setHeader('Retry-After', String(retryAfter));
+        return res.status(429).json({
+          success: false,
+          error: 'Cooldown',
+          message: cooldown.error,
+          retryAfterSeconds: retryAfter,
+        });
+      }
 
-      res.json(response);
+      try {
+        const resultado = await clientesService.sincronizar(empresaId);
+        await setSyncClientesLastRun(empresaId);
+
+        const response: ApiResponse = {
+          success: true,
+          data: resultado,
+          message: `Sincronización completada: ${resultado.exitosos} exitosos (${resultado.omitidos} omitidos sin cambios), ${resultado.fallidos} fallidos`,
+        };
+
+        res.json(response);
+      } finally {
+        await releaseSyncClientesLock(empresaId);
+      }
     } catch (error: any) {
       console.error('[ClientesController.sincronizar] Error:', error);
       return res.status(500).json({

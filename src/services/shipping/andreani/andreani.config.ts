@@ -1,12 +1,20 @@
 /**
  * Configuración Andreani: URLs, paths y credenciales desde env.
+ * Entorno efectivo: `INTEGRATIONS_ENV` (ver `api/docs/integrations-env.md`).
  * Paths por defecto: login `/login`, cotización GET `/v1/tarifas`, órdenes `/v2/ordenes-de-envio` (ajustar con ANDREANI_PATH_*).
  */
 
+import { getIntegrationsMode } from '../../../lib/integrations-mode';
+
 export type AndreaniEnv = 'test' | 'prod';
 
-export function mapEmpresaEnvioToAndreaniEnv(raw: string): AndreaniEnv {
-  return raw === 'prod' ? 'prod' : 'test';
+export function resolveAndreaniEnv(): AndreaniEnv {
+  return getIntegrationsMode();
+}
+
+/** Alias de `resolveAndreaniEnv` (legacy / observabilidad BD). */
+export function mapEmpresaEnvioToAndreaniEnv(_raw: string): AndreaniEnv {
+  return resolveAndreaniEnv();
 }
 
 export function getAndreaniBaseUrl(env: AndreaniEnv): string {
@@ -21,7 +29,7 @@ export interface AndreaniCredentials {
 }
 
 /**
- * Credenciales según `andreaniEnv` en BD (test → QA, prod → PROD).
+ * Credenciales según `INTEGRATIONS_ENV` (test → QA, production → PROD).
  * Prioridad: `ANDREANI_*_QA` / `ANDREANI_*_PROD`, luego `ANDREANI_USERNAME` / `ANDREANI_PASSWORD`.
  */
 export function loadAndreaniCredentials(env: AndreaniEnv): AndreaniCredentials {

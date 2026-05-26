@@ -7,6 +7,7 @@ import type {
   SFactoryClienteCreateResponse,
 } from '../types/sfactory.types';
 import type { Cliente } from '@prisma/client';
+import { hashClienteFields } from '../utils/sync-hash.utils';
 
 export class ClientesService {
   /**
@@ -189,17 +190,19 @@ export class ClientesService {
    */
   async sincronizar(empresaId: number): Promise<{
     exitosos: number;
+    actualizados: number;
+    insertados: number;
+    omitidos: number;
     fallidos: number;
     errores: string[];
   }> {
     try {
       console.log(`[ClientesService] Iniciando sincronización para empresaId: ${empresaId}`);
-      
+
       const response = await sfactoryService.listarClientes({});
 
       let clientes: SFactoryCliente[] = [];
 
-      // Manejar diferentes formatos de respuesta
       if (Array.isArray(response)) {
         clientes = response;
       } else if (response && typeof response === 'object' && 'data' in response) {
@@ -208,7 +211,6 @@ export class ClientesService {
           clientes = dataValue;
         }
       } else if (response && typeof response === 'object') {
-        // Si la respuesta es un objeto con una propiedad que es array
         const keys = Object.keys(response);
         for (const key of keys) {
           if (Array.isArray((response as any)[key])) {
@@ -220,44 +222,125 @@ export class ClientesService {
 
       console.log(`[ClientesService] Clientes obtenidos: ${clientes.length}`);
 
+      const existentes = await prisma.cliente.findMany({
+        where: { empresaId, sfactoryCodigo: { not: null } },
+        select: {
+          sfactoryCodigo: true,
+          sfactoryId: true,
+          razonSocial: true,
+          nombre: true,
+          cuit: true,
+          tipo: true,
+          activo: true,
+          email: true,
+          telefono: true,
+          movil: true,
+          domicilioFiscal: true,
+          localidadId: true,
+          provinciaId: true,
+          paisId: true,
+          cpFiscal: true,
+          categoriaFiscal: true,
+          codigoExterno: true,
+        },
+      });
+      const existentesMap = new Map(
+        existentes
+          .filter((c) => c.sfactoryCodigo)
+          .map((c) => [c.sfactoryCodigo as string, c])
+      );
+
       let exitosos = 0;
+      let insertados = 0;
+      let actualizados = 0;
+      let omitidos = 0;
       let fallidos = 0;
       const errores: string[] = [];
 
-      // Sincronizar cada cliente
-      for (const clienteSFactory of clientes) {
-        try {
-          const clienteData = this.mapSFactoryToCliente(clienteSFactory, empresaId);
+      const BATCH_SIZE = 50;
+      const TRANSACTION_TIMEOUT = 120000;
 
-          // Remover id y empresaId del update data ya que no se pueden actualizar
-          const { id, empresaId: _, ...updateData } = clienteData;
-          
-          await prisma.cliente.upsert({
-            where: {
-              unique_empresa_sfactory: {
-                empresaId,
-                sfactoryCodigo: clienteSFactory.code,
-              },
-            },
-            update: updateData as any,
-            create: clienteData as any,
-          });
+      for (let i = 0; i < clientes.length; i += BATCH_SIZE) {
+        const batch = clientes.slice(i, i + BATCH_SIZE);
 
-          exitosos++;
-        } catch (error: any) {
-          fallidos++;
-          errores.push(
-            `Cliente ${clienteSFactory.code}: ${error.message}`
-          );
-          console.error(
-            `[ClientesService.sincronizar] Error al sincronizar cliente ${clienteSFactory.code}:`,
-            error
-          );
-        }
+        await prisma.$transaction(
+          async (tx) => {
+            for (const clienteSFactory of batch) {
+              try {
+                if (!clienteSFactory.code) {
+                  fallidos++;
+                  errores.push('Cliente sin código en SFactory');
+                  continue;
+                }
+
+                const clienteData = this.mapSFactoryToCliente(clienteSFactory, empresaId);
+                const { id, empresaId: _, ...updateData } = clienteData;
+
+                const hashPayload = {
+                  sfactoryId: clienteData.sfactoryId ?? null,
+                  sfactoryCodigo: clienteData.sfactoryCodigo ?? null,
+                  razonSocial: clienteData.razonSocial ?? '',
+                  nombre: clienteData.nombre ?? null,
+                  cuit: clienteData.cuit ?? null,
+                  tipo: clienteData.tipo ?? null,
+                  activo: clienteData.activo ?? true,
+                  email: clienteData.email ?? null,
+                  telefono: clienteData.telefono ?? null,
+                  movil: clienteData.movil ?? null,
+                  domicilioFiscal: clienteData.domicilioFiscal ?? null,
+                  localidadId: clienteData.localidadId ?? null,
+                  provinciaId: clienteData.provinciaId ?? null,
+                  paisId: clienteData.paisId ?? null,
+                  cpFiscal: clienteData.cpFiscal ?? null,
+                  categoriaFiscal: clienteData.categoriaFiscal ?? null,
+                  codigoExterno: clienteData.codigoExterno ?? null,
+                };
+
+                const existente = existentesMap.get(clienteSFactory.code);
+                const nuevoHash = hashClienteFields(hashPayload);
+
+                if (existente && hashClienteFields(existente) === nuevoHash) {
+                  omitidos++;
+                  continue;
+                }
+
+                await tx.cliente.upsert({
+                  where: {
+                    unique_empresa_sfactory: {
+                      empresaId,
+                      sfactoryCodigo: clienteSFactory.code,
+                    },
+                  },
+                  update: updateData as any,
+                  create: clienteData as any,
+                });
+
+                if (existente) {
+                  actualizados++;
+                } else {
+                  insertados++;
+                }
+                exitosos++;
+                existentesMap.set(clienteSFactory.code, hashPayload);
+              } catch (error: any) {
+                fallidos++;
+                errores.push(`Cliente ${clienteSFactory.code}: ${error.message}`);
+                console.error(
+                  `[ClientesService.sincronizar] Error al sincronizar cliente ${clienteSFactory.code}:`,
+                  error
+                );
+              }
+            }
+          },
+          { timeout: TRANSACTION_TIMEOUT, maxWait: TRANSACTION_TIMEOUT }
+        );
       }
 
       return {
         exitosos,
+        actualizados,
+        insertados,
+        omitidos,
         fallidos,
         errores,
       };

@@ -1,6 +1,6 @@
 import { Heading, Section, Text } from '@react-email/components';
 import * as React from 'react';
-import { BRAND_COLORS } from '../lib/email-brand';
+import { BRAND_COLORS, BRAND_DISPLAY_NAME } from '../lib/email-brand';
 import type { ContactEmailPayload } from '../types/email.types';
 import { BaseLayout } from './BaseLayout';
 
@@ -15,7 +15,7 @@ export function ContactConfirmationEmail(props: ContactConfirmationEmailProps): 
   const isTeam = props.audience === 'team';
   const preview = isTeam
     ? `Nueva consulta de ${props.empresa}`
-    : 'Recibimos tu consulta — GND Natural Design';
+    : `Recibimos tu consulta — ${BRAND_DISPLAY_NAME}`;
   return (
     <BaseLayout previewText={preview}>
       <Section>

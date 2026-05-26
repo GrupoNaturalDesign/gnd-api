@@ -11,7 +11,13 @@ import {
   Text,
 } from '@react-email/components';
 import * as React from 'react';
-import { BRAND_COLORS, BRAND_FOOTER, getBrandLogoUrl, getWhatsAppHref } from '../lib/email-brand';
+import {
+  BRAND_COLORS,
+  BRAND_DISPLAY_NAME,
+  BRAND_FOOTER,
+  getBrandLogoUrl,
+  getWhatsAppHref,
+} from '../lib/email-brand';
 
 export interface BaseLayoutProps {
   previewText: string;
@@ -27,7 +33,7 @@ export function BaseLayout({ previewText, children }: BaseLayoutProps): React.Re
       <Body style={main}>
         <Container style={container}>
           <Section style={header}>
-            <Img src={logoUrl} width={160} height="auto" alt="GND Natural Design" style={logo} />
+            <Img src={logoUrl} width={160} height="auto" alt={BRAND_DISPLAY_NAME} style={logo} />
           </Section>
           {children}
           <Hr style={hr} />

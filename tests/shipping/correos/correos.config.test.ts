@@ -1,4 +1,4 @@
-import { describe, it, beforeEach, afterEach } from 'node:test';
+import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert';
 import {
   resolveCorreoEnv,
@@ -9,51 +9,38 @@ import {
 } from '../../../src/services/shipping/correo/correo.config';
 
 describe('SH-C-01 — resolveCorreoEnv', () => {
-  it('CORREO_ENV=prod → prod', () => {
-    process.env.CORREO_ENV = 'prod';
+  afterEach(() => {
+    delete process.env.INTEGRATIONS_ENV;
+  });
+
+  it('INTEGRATIONS_ENV=production → prod', () => {
+    process.env.INTEGRATIONS_ENV = 'production';
     assert.strictEqual(resolveCorreoEnv(), 'prod');
   });
-  it('CORREO_ENV=production → prod', () => {
-    process.env.CORREO_ENV = 'production';
-    assert.strictEqual(resolveCorreoEnv(), 'prod');
-  });
-  it('CORREO_ENV=test → test', () => {
-    process.env.CORREO_ENV = 'test';
+  it('INTEGRATIONS_ENV=test → test', () => {
+    process.env.INTEGRATIONS_ENV = 'test';
     assert.strictEqual(resolveCorreoEnv(), 'test');
   });
-  it('CORREO_ENV=sandbox → test', () => {
-    process.env.CORREO_ENV = 'sandbox';
+  it('INTEGRATIONS_ENV=qa → test', () => {
+    process.env.INTEGRATIONS_ENV = 'qa';
     assert.strictEqual(resolveCorreoEnv(), 'test');
   });
-  it('CORREO_ENV=qa → test', () => {
-    process.env.CORREO_ENV = 'qa';
-    assert.strictEqual(resolveCorreoEnv(), 'test');
-  });
-  it('CORREO_ENV=apitest → test', () => {
-    process.env.CORREO_ENV = 'apitest';
-    assert.strictEqual(resolveCorreoEnv(), 'test');
-  });
-  it('sin CORREO_ENV usa CORREO_DEFAULT_ENV=prod', () => {
-    delete process.env.CORREO_ENV;
-    process.env.CORREO_DEFAULT_ENV = 'prod';
-    assert.strictEqual(resolveCorreoEnv(), 'prod');
-  });
-  it('sin vars → default test', () => {
-    delete process.env.CORREO_ENV;
-    delete process.env.CORREO_DEFAULT_ENV;
+  it('sin INTEGRATIONS_ENV → default test', () => {
+    delete process.env.INTEGRATIONS_ENV;
     assert.strictEqual(resolveCorreoEnv(), 'test');
   });
 });
 
 describe('SH-C-01 — mapEmpresaCorreoEnv', () => {
-  it('prod → prod', () => {
-    assert.strictEqual(mapEmpresaCorreoEnv('prod'), 'prod');
+  afterEach(() => {
+    delete process.env.INTEGRATIONS_ENV;
   });
-  it('test → test', () => {
-    assert.strictEqual(mapEmpresaCorreoEnv('test'), 'test');
-  });
-  it('cualquier otro valor → test', () => {
-    assert.strictEqual(mapEmpresaCorreoEnv('xyz'), 'test');
+
+  it('sigue INTEGRATIONS_ENV ignorando raw BD', () => {
+    process.env.INTEGRATIONS_ENV = 'production';
+    assert.strictEqual(mapEmpresaCorreoEnv('test'), 'prod');
+    process.env.INTEGRATIONS_ENV = 'test';
+    assert.strictEqual(mapEmpresaCorreoEnv('prod'), 'test');
   });
 });
 

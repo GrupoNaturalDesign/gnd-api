@@ -17,6 +17,7 @@ import {
   sendPedidoStatusEmail,
   sendPedidoStatusEmailAsync,
 } from './pedido-email-notification.service';
+import { mercadoPagoConfig } from './mercadopago/mercadopago.config';
 import type {
   SFactoryCrearPedidoExternoParams,
   SFactoryPedidoExternoCliente,
@@ -29,6 +30,12 @@ import {
   sfactoryDescuentoPctFromCuponLine,
   sfactoryDescuentoPctGlobal,
 } from '../utils/cupon-sfactory-payload';
+import {
+  computeTotalACobrar,
+  parseSfactoryEstado,
+  parseSfactoryOrdenId,
+  parseSfactoryTotal,
+} from '../utils/sfactory-pedido-response.util';
 
 function envInt(name: string, fallback: number): number {
   const v = process.env[name];
@@ -58,36 +65,6 @@ export function getCheckoutManualExpiresDays(): number {
 /** Fecha límite de pago para pedidos manuales del ecommerce. */
 export function computeExpiresAtPedidoManual(fechaPedido: Date = new Date()): Date {
   return addDays(fechaPedido, getCheckoutManualExpiresDays());
-}
-
-function parseSfactoryOrdenId(response: unknown): number | null {
-  if (response == null) return null;
-  if (typeof response === 'object') {
-    const o = response as Record<string, unknown>;
-    const tryNum = (v: unknown) => {
-      if (typeof v === 'number' && Number.isFinite(v)) return v;
-      if (typeof v === 'string' && /^\d+$/.test(v)) return parseInt(v, 10);
-      return null;
-    };
-    const direct =
-      tryNum(o.id) ??
-      tryNum(o.orden_id) ??
-      tryNum(o.order_id);
-    if (direct != null) return direct;
-    const data = o.data;
-    if (data && typeof data === 'object') {
-      const d = data as Record<string, unknown>;
-      return tryNum(d.id) ?? tryNum(d.orden_id) ?? null;
-    }
-  }
-  return null;
-}
-
-function parseSfactoryEstado(response: unknown): string | null {
-  if (response == null || typeof response !== 'object') return null;
-  const o = response as Record<string, unknown>;
-  const s = o.estado ?? o.estadoInterno ?? o.Estado;
-  return typeof s === 'string' ? s : null;
 }
 
 function pedidoNotificationPayload(pedido: {
@@ -297,6 +274,175 @@ function buildPedidoExternoParams(pedido: {
   };
 }
 
+export interface RegistrarCotizacionSfactoryResult {
+  sfactoryOrdenId: number | null;
+  sfactoryEstado: string | null;
+  /** Total productos según `response.total` de ventas_crear_pedido_externo. */
+  sfactoryTotalProductos: number;
+  /** Productos ERP + envío postal (GND). */
+  totalACobrar: number;
+}
+
+/**
+ * Crea la cotización PE en S-Factory antes del cobro (checkout MP / manual web).
+ * Persiste `sfactoryOrdenId`, snapshot y totales: subtotal = ERP, total = ERP + envío.
+ */
+export async function registrarCotizacionSfactoryParaPedido(
+  pedidoId: number
+): Promise<RegistrarCotizacionSfactoryResult> {
+  const pedido = await prisma.pedido.findUnique({
+    where: { id: pedidoId },
+    include: { items: true, cliente: true, empresa: true },
+  });
+  if (!pedido) {
+    throw new Error(`Pedido ${pedidoId} no encontrado`);
+  }
+
+  const costoEnvio = Number(pedido.costoEnvio ?? 0);
+
+  if (pedido.sfactoryOrdenId != null) {
+    const subtotal = Number(pedido.subtotal);
+    return {
+      sfactoryOrdenId: pedido.sfactoryOrdenId,
+      sfactoryEstado: pedido.sfactoryEstado,
+      sfactoryTotalProductos: subtotal,
+      totalACobrar: computeTotalACobrar(subtotal, costoEnvio),
+    };
+  }
+
+  const params = buildPedidoExternoParams(pedido);
+  const companyKey = pedido.empresa.sfactoryCompanyKey;
+  const response = await sfactoryService.crearPedidoExterno(params, companyKey);
+  const ordenId = parseSfactoryOrdenId(response);
+  const est = parseSfactoryEstado(response);
+  const sfactoryTotal = parseSfactoryTotal(response);
+
+  if (sfactoryTotal == null) {
+    throw new Error(
+      'S-Factory no devolvió total parseable en ventas_crear_pedido_externo.'
+    );
+  }
+
+  const totalACobrar = computeTotalACobrar(sfactoryTotal, costoEnvio);
+
+  await crearLogSfactory(pedidoId, PedidoSfactoryAccion.crear, params, true, response, null);
+
+  await prisma.pedido.update({
+    where: { id: pedidoId },
+    data: {
+      sfactoryOrdenId: ordenId ?? undefined,
+      sfactoryEstado: est ?? undefined,
+      sfactoryExternalOrderId: params.ext_order_id,
+      sfactorySnapshot: response as unknown as Prisma.InputJsonValue,
+      subtotal: new Prisma.Decimal(sfactoryTotal),
+      total: new Prisma.Decimal(totalACobrar),
+      syncStatus: PedidoSyncStatus.pending,
+      sfactoryError: ordenId == null ? 'SFactory no devolvió un id de orden parseable.' : null,
+      fechaEnvioSfactory: new Date(),
+    },
+  });
+
+  return {
+    sfactoryOrdenId: ordenId,
+    sfactoryEstado: est,
+    sfactoryTotalProductos: sfactoryTotal,
+    totalACobrar,
+  };
+}
+
+async function finalizarPedidoConfirmadoEnSfactory(input: {
+  pedidoId: number;
+  pedidoAfter: {
+    id: number;
+    empresaId: number;
+    estadoInterno: EstadoPedido;
+    cuponId: number | null;
+    usuarioId: number | null;
+    clienteId: number | null;
+    cuponDescuentoTotal: Prisma.Decimal | null;
+  };
+  pedidoBaseEstado: EstadoPedido;
+  sfactoryOrdenId: number | null;
+  sfactoryEstado: string | null;
+  sfactoryExternalOrderId: string;
+  sfactorySnapshot: Prisma.InputJsonValue;
+  notifyTitle: string;
+  notifyMessage: string;
+}): Promise<ProcesarPedidoResult> {
+  const {
+    pedidoId,
+    pedidoAfter,
+    pedidoBaseEstado,
+    sfactoryOrdenId,
+    sfactoryEstado,
+    sfactoryExternalOrderId,
+    sfactorySnapshot,
+    notifyTitle,
+    notifyMessage,
+  } = input;
+
+  const updated = await prisma.pedido.update({
+    where: { id: pedidoId },
+    data: {
+      estadoInterno: EstadoPedido.confirmado,
+      sfactoryOrdenId: sfactoryOrdenId ?? undefined,
+      sfactoryEstado: sfactoryEstado ?? undefined,
+      sfactoryExternalOrderId,
+      syncStatus: sfactoryOrdenId == null ? PedidoSyncStatus.error : PedidoSyncStatus.synced,
+      syncError: sfactoryOrdenId == null ? 'SFactory no devolvió un id de orden parseable.' : null,
+      sfactorySyncedAt: sfactoryOrdenId == null ? undefined : new Date(),
+      sfactorySnapshot,
+      fechaConfirmacion: new Date(),
+      fechaEnvioSfactory: new Date(),
+      sfactoryError: null,
+    },
+  });
+
+  if (sfactoryOrdenId == null) {
+    await notifyPedidoCheckout({
+      empresaId: pedidoAfter.empresaId,
+      type: 'pedido.sync_failed',
+      pedidoId,
+      severity: AdminNotificationSeverity.error,
+      title: `Pedido #${pedidoId} confirmado sin ID SFactory`,
+      message: 'SFactory respondió, pero no devolvió un id de orden parseable.',
+      payload: pedidoNotificationPayload(updated, {
+        estadoAnterior: pedidoBaseEstado,
+        estadoNuevo: updated.estadoInterno,
+      }),
+    });
+  } else {
+    await notifyPedidoCheckout({
+      empresaId: pedidoAfter.empresaId,
+      type: 'pedido.status_changed',
+      pedidoId,
+      severity: AdminNotificationSeverity.success,
+      title: notifyTitle,
+      message: notifyMessage,
+      payload: pedidoNotificationPayload(updated, {
+        estadoAnterior: pedidoBaseEstado,
+        estadoNuevo: updated.estadoInterno,
+      }),
+      dedupe: false,
+    });
+  }
+
+  if (pedidoAfter.cuponId) {
+    await cuponEngine.registrarUso({
+      cuponId: pedidoAfter.cuponId,
+      pedidoId,
+      usuarioId: pedidoAfter.usuarioId ?? undefined,
+      clienteId: pedidoAfter.clienteId ?? undefined,
+      descuento: Number(pedidoAfter.cuponDescuentoTotal ?? 0),
+    });
+    console.log(`[cupon] Uso registrado para cupón ${pedidoAfter.cuponId}, pedido ${pedidoId}`);
+  }
+
+  await sendPedidoStatusEmail(pedidoId, OrderStatus.CONFIRMED);
+
+  return { ok: true, pedidoId, message: 'Pedido confirmado en SFactory' };
+}
+
 export interface ProcesarPedidoResult {
   ok: boolean;
   alreadyProcessed?: boolean;
@@ -465,6 +611,74 @@ export async function procesarPedidoConfirmado(pedidoId: number): Promise<Proces
   });
   if (!pedidoAfter) throw new Error('Pedido no encontrado tras transacción');
 
+  const companyKey = pedidoAfter.empresa.sfactoryCompanyKey;
+
+  if (pedidoAfter.sfactoryOrdenId != null) {
+    const ordenId = pedidoAfter.sfactoryOrdenId;
+    try {
+      const response = await sfactoryService.aprobarOrdenPedido(ordenId, companyKey);
+      const est = parseSfactoryEstado(response) ?? pedidoAfter.sfactoryEstado;
+
+      await crearLogSfactory(
+        pedidoId,
+        PedidoSfactoryAccion.editar,
+        { order_id: ordenId, accion: 'aprobar' },
+        true,
+        response,
+        null
+      );
+
+      return finalizarPedidoConfirmadoEnSfactory({
+        pedidoId,
+        pedidoAfter,
+        pedidoBaseEstado: pedidoBase.estadoInterno,
+        sfactoryOrdenId: ordenId,
+        sfactoryEstado: est,
+        sfactoryExternalOrderId: pedidoAfter.sfactoryExternalOrderId ?? `WEB-${pedidoId}`,
+        sfactorySnapshot:
+          (response as Prisma.InputJsonValue) ??
+          (pedidoAfter.sfactorySnapshot as Prisma.InputJsonValue),
+        notifyTitle: `Pedido #${pedidoId} confirmado`,
+        notifyMessage: `Pedido confirmado; orden SFactory ${ordenId} aprobada.`,
+      });
+    } catch (e: unknown) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      await prisma.pedido.update({
+        where: { id: pedidoId },
+        data: {
+          estadoInterno: EstadoPedido.fallido,
+          sfactoryError: errMsg,
+          syncStatus: PedidoSyncStatus.error,
+          syncError: errMsg,
+          sfactoryIntentos: { increment: 1 },
+        },
+      });
+      await crearLogSfactory(
+        pedidoId,
+        PedidoSfactoryAccion.editar,
+        { order_id: ordenId, accion: 'aprobar' },
+        false,
+        undefined,
+        errMsg
+      );
+      await notifyPedidoCheckout({
+        empresaId: pedidoAfter.empresaId,
+        type: 'pedido.sync_failed',
+        pedidoId,
+        severity: AdminNotificationSeverity.error,
+        title: `Pedido #${pedidoId} falló al aprobar en SFactory`,
+        message: errMsg,
+        payload: pedidoNotificationPayload(pedidoAfter, {
+          estadoAnterior: pedidoBase.estadoInterno,
+          estadoNuevo: EstadoPedido.fallido,
+          syncStatus: PedidoSyncStatus.error,
+        }),
+      });
+      console.error(`[pedido-checkout] Error aprobar SFactory pedido ${pedidoId}:`, errMsg);
+      return { ok: false, pedidoId, message: errMsg };
+    }
+  }
+
   let params: SFactoryCrearPedidoExternoParams;
   try {
     params = buildPedidoExternoParams(pedidoAfter);
@@ -515,8 +729,6 @@ export async function procesarPedidoConfirmado(pedidoId: number): Promise<Proces
     throw e;
   }
 
-  const companyKey = pedidoAfter.empresa.sfactoryCompanyKey;
-
   try {
     const response = await sfactoryService.crearPedidoExterno(params, companyKey);
     const ordenId = parseSfactoryOrdenId(response);
@@ -531,67 +743,17 @@ export async function procesarPedidoConfirmado(pedidoId: number): Promise<Proces
       );
     }
 
-    const updated = await prisma.pedido.update({
-      where: { id: pedidoId },
-      data: {
-        estadoInterno: EstadoPedido.confirmado,
-        sfactoryOrdenId: ordenId ?? undefined,
-        sfactoryEstado: est ?? undefined,
-        sfactoryExternalOrderId: params.ext_order_id,
-        syncStatus: ordenId == null ? PedidoSyncStatus.error : PedidoSyncStatus.synced,
-        syncError: ordenId == null ? 'SFactory no devolvió un id de orden parseable.' : null,
-        sfactorySyncedAt: ordenId == null ? undefined : new Date(),
-        sfactorySnapshot: response as unknown as Prisma.InputJsonValue,
-        fechaConfirmacion: new Date(),
-        fechaEnvioSfactory: new Date(),
-        sfactoryError: null,
-      },
+    return finalizarPedidoConfirmadoEnSfactory({
+      pedidoId,
+      pedidoAfter,
+      pedidoBaseEstado: pedidoBase.estadoInterno,
+      sfactoryOrdenId: ordenId,
+      sfactoryEstado: est,
+      sfactoryExternalOrderId: params.ext_order_id,
+      sfactorySnapshot: response as unknown as Prisma.InputJsonValue,
+      notifyTitle: `Pedido #${pedidoId} confirmado`,
+      notifyMessage: `Pedido confirmado y sincronizado con SFactory (orden ${ordenId ?? '—'}).`,
     });
-
-    if (ordenId == null) {
-      await notifyPedidoCheckout({
-        empresaId: pedidoAfter.empresaId,
-        type: 'pedido.sync_failed',
-        pedidoId,
-        severity: AdminNotificationSeverity.error,
-        title: `Pedido #${pedidoId} confirmado sin ID SFactory`,
-        message: 'SFactory respondió la creación, pero no devolvió un id de orden parseable.',
-        payload: pedidoNotificationPayload(updated, {
-          estadoAnterior: pedidoBase.estadoInterno,
-          estadoNuevo: updated.estadoInterno,
-        }),
-      });
-    } else {
-      await notifyPedidoCheckout({
-        empresaId: pedidoAfter.empresaId,
-        type: 'pedido.status_changed',
-        pedidoId,
-        severity: AdminNotificationSeverity.success,
-        title: `Pedido #${pedidoId} confirmado`,
-        message: `Pedido confirmado y sincronizado con SFactory (orden ${ordenId}).`,
-        payload: pedidoNotificationPayload(updated, {
-          estadoAnterior: pedidoBase.estadoInterno,
-          estadoNuevo: updated.estadoInterno,
-        }),
-        dedupe: false,
-      });
-    }
-
-    // Registrar uso del cupón si el pedido tenía uno aplicado
-    if (pedidoAfter.cuponId) {
-      await cuponEngine.registrarUso({
-        cuponId: pedidoAfter.cuponId,
-        pedidoId,
-        usuarioId: pedidoAfter.usuarioId ?? undefined,
-        clienteId: pedidoAfter.clienteId ?? undefined,
-        descuento: Number(pedidoAfter.cuponDescuentoTotal ?? 0),
-      });
-      console.log(`[cupon] Uso registrado para cupón ${pedidoAfter.cuponId}, pedido ${pedidoId}`);
-    }
-
-    await sendPedidoStatusEmail(pedidoId, OrderStatus.CONFIRMED);
-
-    return { ok: true, pedidoId, message: 'Pedido confirmado en SFactory' };
   } catch (e: unknown) {
     const errMsg = e instanceof Error ? e.message : String(e);
     await prisma.pedido.update({
@@ -851,14 +1013,32 @@ export async function reintentarFallidosSfactory(): Promise<void> {
 export async function procesarPedidosVencidos(): Promise<void> {
   const now = new Date();
   const manualDays = getCheckoutManualExpiresDays();
+  const mpTimeoutMs = mercadoPagoConfig.getCheckoutMpPendingTimeoutMinutes() * 60 * 1000;
+  const mpFallbackCutoff = new Date(now.getTime() - mpTimeoutMs);
+
   const candidatos = await prisma.pedido.findMany({
     where: {
-      expiresAt: { lt: now },
       OR: [
-        { estadoInterno: EstadoPedido.pendiente_confirmacion },
+        {
+          expiresAt: { lt: now },
+          OR: [
+            { estadoInterno: EstadoPedido.pendiente_confirmacion },
+            {
+              estadoInterno: EstadoPedido.pendiente_pago,
+              formaPago: FormaPago.mercado_pago,
+              NOT: {
+                mercadoPagoStatus: 'approved',
+                mercadoPagoPaymentId: { not: null },
+              },
+            },
+          ],
+        },
         {
           estadoInterno: EstadoPedido.pendiente_pago,
           formaPago: FormaPago.mercado_pago,
+          sfactoryOrdenId: null,
+          mercadoPagoPaymentId: null,
+          fechaPedido: { lt: mpFallbackCutoff },
         },
       ],
     },

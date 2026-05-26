@@ -51,7 +51,13 @@ export function InternalOrderNotification(props: InternalOrderNotificationProps)
         <Text style={text}>
           <strong>Total ítems:</strong> {props.itemCount}
           <br />
-          <strong>Subtotal:</strong> {props.subtotalFormatted} · <strong>IVA:</strong> {props.ivaFormatted}{' '}
+          <strong>Subtotal:</strong> {props.subtotalFormatted}
+          {props.shippingCostFormatted ? (
+            <>
+              {' '}
+              · <strong>Envío:</strong> {props.shippingCostFormatted}
+            </>
+          ) : null}{' '}
           · <strong>Total:</strong> {props.totalFormatted}
         </Text>
       </Section>

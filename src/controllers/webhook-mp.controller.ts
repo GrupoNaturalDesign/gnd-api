@@ -4,9 +4,8 @@ import { mercadoPagoConfig } from '../services/mercadopago/mercadopago.config';
 import {
   buildWebhookDedupeKey,
   extractMercadoPagoPaymentId,
-  procesarWebhookMercadoPago,
 } from '../services/mp-checkout.service';
-import { finishMpWebhookLog, tryBeginMpWebhook } from '../services/mp-webhook-log.service';
+import { handleMercadoPagoWebhookNotification } from '../services/mp-webhook-log.service';
 import {
   extractMercadoPagoWebhookDataId,
   verifyMercadoPagoWebhookSignature,
@@ -52,8 +51,8 @@ function extractMercadoPagoWebhookTopic(
 }
 
 export class WebhookMpController {
-  /** POST /api/webhooks/mercadopago — sin auth; valida firma en live; 200 idempotente. */
-  recibirWebhook(req: Request, res: Response): void {
+  /** POST /api/webhooks/mercadopago — sin auth; valida firma en live; procesa antes del 200. */
+  async recibirWebhook(req: Request, res: Response): Promise<void> {
     const query = normalizeQuery(req.query);
     const headers = normalizeHeaders(req);
     const paymentId = extractMercadoPagoPaymentId(req.body, query);
@@ -91,55 +90,21 @@ export class WebhookMpController {
       return;
     }
 
-    void (async () => {
-      try {
-        const begin = await tryBeginMpWebhook(dedupeKey, paymentId, null);
-        if (begin === 'duplicate') {
-          res.status(200).json({ success: true, message: 'duplicate' });
-          return;
-        }
-
-        res.status(200).json({ success: true, message: 'ok' });
-
-        setImmediate(() => {
-          void (async () => {
-            try {
-              const result = await procesarWebhookMercadoPago(req.body, query);
-              await finishMpWebhookLog(dedupeKey, {
-                outcome: result.procesado
-                  ? 'processed'
-                  : result.pedidoId != null
-                    ? 'skipped'
-                    : 'skipped',
-                mpStatus: result.paymentStatus,
-                pedidoId: result.pedidoId,
-                paymentId,
-                detail: result.alreadyProcessed ? 'already_processed' : undefined,
-              });
-            } catch (err: unknown) {
-              const msg = err instanceof Error ? err.message : String(err);
-              console.error('[WebhookMP] Error procesando:', msg);
-              try {
-                await finishMpWebhookLog(dedupeKey, {
-                  outcome: 'error',
-                  paymentId,
-                  detail: msg,
-                });
-              } catch (e2) {
-                console.error('[WebhookMP] Error actualizando log:', e2);
-              }
-            }
-          })();
-        });
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        if (!res.headersSent) {
-          res.status(500).json({ success: false, error: msg });
-        } else {
-          console.error('[WebhookMP] Error tras responder:', msg);
-        }
+    try {
+      const handled = await handleMercadoPagoWebhookNotification({
+        dedupeKey,
+        body: req.body,
+        query,
+        paymentId,
+      });
+      res.status(handled.httpStatus).json(handled.body);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('[WebhookMP] Error inesperado:', msg);
+      if (!res.headersSent) {
+        res.status(500).json({ success: false, error: msg });
       }
-    })();
+    }
   }
 }
 

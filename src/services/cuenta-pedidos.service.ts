@@ -6,6 +6,7 @@ import {
   type CustomerOrderStatus,
 } from '../utils/pedido-customer-status.util';
 import type { CuentaPedidosListQuery } from '../validation/cuenta-pedidos.validation';
+import { abandonarCheckoutMp } from './mp-checkout.service';
 
 export interface CuentaPedidoListItem {
   id: number;
@@ -180,6 +181,11 @@ export class CuentaPedidosService {
     });
     if (!pedido) return null;
     return mapPedidoDetail(pedido);
+  }
+
+  async abandonarCheckout(usuarioId: number, pedidoId: number): Promise<CuentaPedidoDetail | null> {
+    await abandonarCheckoutMp(usuarioId, pedidoId);
+    return this.detalle(usuarioId, pedidoId);
   }
 }
 

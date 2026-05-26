@@ -1,7 +1,9 @@
 import type { EmpresaEnvioConfig } from '@prisma/client';
-import { FormaEnvio, Prisma } from '@prisma/client';
+import { FormaEnvio, OrderStatus, Prisma } from '@prisma/client';
 import prisma from '../../lib/prisma';
 import { shippingLogger } from '../../lib/shipping-logger';
+import { sendPedidoStatusEmailAsync } from '../pedido-email-notification.service';
+import { buildShippingTrackingUrl } from '../../utils/shipping-tracking-url.util';
 import { CorreoProvider } from './correo/correo.provider';
 import { AndreaniProvider } from './andreani/andreani.provider';
 import type { ShippingProvider } from './shipping.provider';
@@ -24,6 +26,7 @@ import {
   getAndreaniContratoSucursal,
   getAndreaniSucursalOrigen,
 } from './andreani/andreani.config';
+import { getIntegrationsMode } from '../../lib/integrations-mode';
 import { mapEmpresaCorreoEnv } from './correo/correo.config';
 import {
   ShippingConfigError,
@@ -60,13 +63,18 @@ export class ShippingService {
   private readonly andreaniProviders = new Map<string, AndreaniProvider>();
   private readonly correoProviders = new Map<string, CorreoProvider>();
 
+  private resolveShippingEnvFromIntegrations(): 'test' | 'prod' {
+    return getIntegrationsMode();
+  }
+
   private getCorreoProvider(config: EmpresaEnvioConfig): CorreoProvider {
-    const key = `${config.empresaId}::${config.correoEnv}`;
+    const env = this.resolveShippingEnvFromIntegrations();
+    const key = `${config.empresaId}::${env}`;
     let p = this.correoProviders.get(key);
     if (!p) {
       p = new CorreoProvider(
         config.correoSenderData,
-        mapEmpresaCorreoEnv(config.correoEnv),
+        mapEmpresaCorreoEnv(env),
         globalThis.fetch.bind(globalThis)
       );
       this.correoProviders.set(key, p);
@@ -75,10 +83,11 @@ export class ShippingService {
   }
 
   private getAndreaniProvider(config: EmpresaEnvioConfig): AndreaniProvider {
-    const key = `${config.empresaId}::${config.andreaniEnv}`;
+    const env = this.resolveShippingEnvFromIntegrations();
+    const key = `${config.empresaId}::${env}`;
     let p = this.andreaniProviders.get(key);
     if (!p) {
-      p = new AndreaniProvider(config.andreaniEnv);
+      p = new AndreaniProvider(env);
       this.andreaniProviders.set(key, p);
     }
     return p;
@@ -105,10 +114,9 @@ export class ShippingService {
     const defProvider = parseProviderDefault(
       process.env.SHIPPING_DEFAULT_PROVIDER ?? 'correo'
     );
-    const correoEnv =
-      process.env.CORREO_DEFAULT_ENV === 'prod' ? 'prod' : 'test';
-    const andreaniEnv =
-      process.env.ANDREANI_DEFAULT_ENV === 'prod' ? 'prod' : 'test';
+    const integrationsEnv = getIntegrationsMode();
+    const correoEnv = integrationsEnv;
+    const andreaniEnv = integrationsEnv;
     return prisma.empresaEnvioConfig.create({
       data: {
         empresaId,
@@ -177,6 +185,7 @@ export class ShippingService {
     try {
       const provider = this.buildProvider(providerName, config);
       const result = await provider.createOrder(input);
+      const trackingUrl = buildShippingTrackingUrl(providerName, result.trackingNumber);
 
       await prisma.pedido.update({
         where: { id: input.pedidoId },
@@ -189,8 +198,14 @@ export class ShippingService {
                 ? { andreaniAgrupadorBultos: result.andreaniAgrupadorBultos }
                 : {}),
             }),
+          ...(trackingUrl ? { trackingUrl } : {}),
           formaEnvio: mapFormaEnvio(providerName, input.deliveryType),
         },
+      });
+
+      sendPedidoStatusEmailAsync(input.pedidoId, OrderStatus.SHIPPED, {
+        trackingNumber: result.trackingNumber,
+        trackingUrl,
       });
 
       await this.logAfter(
@@ -292,27 +307,29 @@ export class ShippingService {
     }
   }
 
-  async getTracking(
-    pedidoId: number,
-    trackingNumbers: string[],
+  async trackShipment(
+    empresaId: number,
     provider: ShippingProviderName,
-    empresaId: number
+    trackingNumbers: string[],
+    pedidoId?: number | null
   ): Promise<ShippingTrackingResult[]> {
-    const pedido = await prisma.pedido.findFirst({
-      where: { id: pedidoId, empresaId },
-    });
-    if (!pedido) {
-      throw new ShippingValidationError(
-        'Pedido no encontrado o no pertenece a la empresa'
-      );
+    if (pedidoId != null) {
+      const pedido = await prisma.pedido.findFirst({
+        where: { id: pedidoId, empresaId },
+      });
+      if (!pedido) {
+        throw new ShippingValidationError(
+          'Pedido no encontrado o no pertenece a la empresa'
+        );
+      }
     }
     const config = await this.getOrCreateEnvioConfig(empresaId);
-    await this.logBefore(pedidoId, 'get_tracking', provider, { trackingNumbers });
+    await this.logBefore(pedidoId ?? null, 'get_tracking', provider, { trackingNumbers });
     try {
       const p = this.buildProvider(provider, config);
       const results = await p.getTracking(trackingNumbers);
       await this.logAfter(
-        pedidoId,
+        pedidoId ?? null,
         'get_tracking',
         provider,
         { count: results.length },
@@ -324,9 +341,18 @@ export class ShippingService {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       const status = e instanceof ShippingHttpError ? e.status : null;
-      await this.logAfter(pedidoId, 'get_tracking', provider, null, false, msg, status);
+      await this.logAfter(pedidoId ?? null, 'get_tracking', provider, null, false, msg, status);
       throw e;
     }
+  }
+
+  async getTracking(
+    pedidoId: number,
+    trackingNumbers: string[],
+    provider: ShippingProviderName,
+    empresaId: number
+  ): Promise<ShippingTrackingResult[]> {
+    return this.trackShipment(empresaId, provider, trackingNumbers, pedidoId);
   }
 
   async getAgencies(

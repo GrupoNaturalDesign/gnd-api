@@ -1,3 +1,6 @@
+/** Nombre público de marca (emails, SEO). NTDS es la sigla; no combinar ambos. */
+export const BRAND_DISPLAY_NAME = 'Natural Design';
+
 /** Colores de marca (emails). */
 export const BRAND_COLORS = {
   black: '#000000',

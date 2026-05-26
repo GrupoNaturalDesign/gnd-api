@@ -3,6 +3,7 @@ import {
   reintentarFallidosSfactory,
   procesarPedidosVencidos,
 } from '../services/pedido-checkout.service';
+import { reconciliarPedidosMpAtascados } from '../services/mp-checkout.service';
 import { sfactoryAuthService } from '../services/sfactory/sfactory-auth.service';
 import { pedidoSyncService } from '../services/pedido-sync.service';
 
@@ -53,6 +54,14 @@ export function startPedidoCheckoutJobs(): void {
       console.error('[pedido-checkout-jobs] procesarPedidosVencidos:', e)
     );
   };
+  const runMpReconcile = () => {
+    reconciliarPedidosMpAtascados().catch((e) =>
+      console.error('[pedido-checkout-jobs] reconciliarPedidosMpAtascados:', e)
+    );
+    procesarPedidosVencidos().catch((e) =>
+      console.error('[pedido-checkout-jobs] procesarPedidosVencidos (mp job):', e)
+    );
+  };
   const runPedidoSync = async () => {
     const empresaId = await getEmpresaIdForJobs();
     if (!empresaId) return;
@@ -77,16 +86,18 @@ export function startPedidoCheckoutJobs(): void {
   };
 
   setInterval(runRetry, FIFTEEN_MIN);
-  setInterval(runExpire, ONE_HOUR);
+  setInterval(runExpire, FIFTEEN_MIN);
+  setInterval(runMpReconcile, envInt('MP_RECONCILE_INTERVAL_MS', FIVE_MIN));
   setInterval(runPedidoSync, envInt('PEDIDO_SFACTORY_SYNC_INTERVAL_MS', FIVE_MIN));
   setInterval(runStockSync, envInt('PEDIDO_STOCK_SYNC_INTERVAL_MS', ONE_HOUR));
 
   setTimeout(runRetry, 30_000);
   setTimeout(runExpire, 60_000);
+  setTimeout(runMpReconcile, 75_000);
   setTimeout(runPedidoSync, 90_000);
   setTimeout(runStockSync, 120_000);
 
   console.log(
-    '[pedido-checkout-jobs] Programados: reintentos SFactory cada 15 min, vencimiento cada 1 h, sync pedidos y stock SFactory'
+    '[pedido-checkout-jobs] Programados: reintentos SFactory cada 15 min, vencimiento MP cada 15 min, reconcile MP cada 5 min, sync pedidos y stock SFactory'
   );
 }

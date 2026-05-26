@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import prisma from '../lib/prisma';
 import type { ApiResponse } from '../types';
 import { paramAsString } from '../utils/http-param.util';
+import { parseDateOnlyUtc } from '../utils/date-only.util';
 
 function toOptionalDecimal(value: unknown): number | null | undefined {
   if (value === undefined) return undefined;
@@ -146,8 +147,8 @@ export class CuponAdminController {
           montoMaximoDescuento: toOptionalDecimal(body.montoMaximoDescuento) ?? null,
           usoMaximo: toOptionalInt(body.usoMaximo) ?? null,
           usoMaximoUsuario: toOptionalInt(body.usoMaximoUsuario) ?? null,
-          fechaInicio: new Date(fechaInicio),
-          fechaFin: body.fechaFin ? new Date(body.fechaFin) : null,
+          fechaInicio: parseDateOnlyUtc(String(fechaInicio)),
+          fechaFin: body.fechaFin ? parseDateOnlyUtc(String(body.fechaFin)) : null,
           esExclusivoWeb: body.esExclusivoWeb ?? false,
           aplicaIVA: body.aplicaIVA ?? true,
           requiereCodigo: body.requiereCodigo ?? true,
@@ -236,9 +237,9 @@ export class CuponAdminController {
           ...(montoMaximoDescuento !== undefined && { montoMaximoDescuento }),
           ...(usoMaximo !== undefined && { usoMaximo }),
           ...(usoMaximoUsuario !== undefined && { usoMaximoUsuario }),
-          ...(body.fechaInicio && { fechaInicio: new Date(body.fechaInicio) }),
+          ...(body.fechaInicio && { fechaInicio: parseDateOnlyUtc(String(body.fechaInicio)) }),
           ...(body.fechaFin !== undefined && {
-            fechaFin: body.fechaFin ? new Date(body.fechaFin) : null,
+            fechaFin: body.fechaFin ? parseDateOnlyUtc(String(body.fechaFin)) : null,
           }),
           ...(body.esExclusivoWeb !== undefined && { esExclusivoWeb: body.esExclusivoWeb }),
           ...(body.aplicaIVA !== undefined && { aplicaIVA: body.aplicaIVA }),

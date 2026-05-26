@@ -9,9 +9,22 @@ import {
   getMaintenanceModeLabel,
   MaintenanceMode,
 } from './lib/maintenance-mode';
+import {
+  assertIntegrationsConfigAtStartup,
+  formatIntegrationsStartupLog,
+  getIntegrationsMode,
+} from './lib/integrations-mode';
 
 // Load environment variables
 dotenv.config();
+
+try {
+  assertIntegrationsConfigAtStartup();
+  console.log(formatIntegrationsStartupLog());
+} catch (err) {
+  console.error('[integrations] Configuración inválida:', err instanceof Error ? err.message : err);
+  process.exit(1);
+}
 
 const maintenanceMode = parseMaintenanceMode(process.env.MAINTENANCE_MODE);
 if (maintenanceMode !== MaintenanceMode.Off) {
@@ -37,9 +50,9 @@ process.on('uncaughtException', (err) => {
 app.get('/health', async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
-    res.json({ ok: true, db: 'connected' });
+    res.json({ ok: true, db: 'connected', integrationsMode: getIntegrationsMode() });
   } catch {
-    res.status(503).json({ ok: false, db: 'disconnected' });
+    res.status(503).json({ ok: false, db: 'disconnected', integrationsMode: getIntegrationsMode() });
   }
 });
 

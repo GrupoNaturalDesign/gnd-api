@@ -54,8 +54,15 @@ export interface OrderEmailPayload {
   items: OrderLineEmailItem[];
   itemCount: number;
   subtotalFormatted: string;
+  /** Legacy / interno; no se muestra en el mail al cliente. */
   ivaFormatted: string;
   totalFormatted: string;
+  /** Costo de envío cuando aplica (checkout postal). */
+  shippingCostFormatted?: string;
+  /** Número de seguimiento del carrier (post `createOrder`). */
+  trackingNumber?: string;
+  /** Link público para consultar el envío. */
+  trackingUrl?: string;
   status: OrderStatus;
   /** Notas u observaciones de pago/envío (una línea o varias). */
   notes?: string;

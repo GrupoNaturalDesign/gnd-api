@@ -1,6 +1,6 @@
 import { Heading, Link, Section } from '@react-email/components';
 import * as React from 'react';
-import { BRAND_COLORS } from '../lib/email-brand';
+import { BRAND_COLORS, BRAND_DISPLAY_NAME } from '../lib/email-brand';
 import { BaseLayout } from './BaseLayout';
 
 export interface NewsletterEmailProps {
@@ -31,7 +31,7 @@ export function NewsletterEmail({
         />
         <Section style={{ marginTop: '24px' }}>
           <span style={finePrint}>
-            Recibís este mensaje por estar en nuestra lista de contacto. GND Natural Design · Córdoba,
+            Recibís este mensaje por estar en nuestra lista de contacto. {BRAND_DISPLAY_NAME} · Córdoba,
             Argentina.{' '}
             <Link href={unsubscribeUrl} style={unsubscribeLink}>
               Desuscribirse

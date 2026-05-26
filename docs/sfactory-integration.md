@@ -36,3 +36,7 @@ No usar `ventas_crear_orden_pedido` para el flujo web actual: el checkout usa **
 ## Inventario / stock remoto
 
 Limitaciones del método `inventory_stock_items_by_warehouse_v2`: ver [sfactory-inventory-stock.md](./sfactory-inventory-stock.md).
+
+## Sync optimizado (hash / diff)
+
+Las sincronizaciones evitan writes innecesarios comparando hashes en memoria. Stats, env vars y checklist QA: [sync-optimization.md](./sync-optimization.md).

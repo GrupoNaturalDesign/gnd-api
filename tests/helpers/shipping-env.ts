@@ -44,16 +44,16 @@ export function withEnv(overrides: EnvOverride): void {
 }
 
 export const TEST_SHIPPING_ENV = {
+  INTEGRATIONS_ENV: 'test',
   CORREO_MOCK: 'true',
   ANDREANI_MOCK: 'true',
-  CORREO_DEFAULT_ENV: 'test',
-  ANDREANI_DEFAULT_ENV: 'test',
   CORREO_ORIGIN_CP: '5000',
   CORREO_ORIGIN_PROVINCE_CODE: 'X',
   ANDREANI_CLIENTE: 'TEST',
   ANDREANI_CONTRATO_DOM: '1',
   ANDREANI_CONTRATO_SUC: '2',
   ANDREANI_SUCURSAL_ORIGEN: 'TEST',
+  MERCADOPAGO_ACCESS_TOKEN_TEST: 'TEST-mock-token',
 };
 
 export function applyTestShippingEnv(): void {
@@ -64,10 +64,10 @@ export function applyTestShippingEnv(): void {
 
 export function clearShippingEnv(): void {
   const keys = [
+    'INTEGRATIONS_ENV',
     'CORREO_MOCK',
     'ANDREANI_MOCK',
-    'CORREO_DEFAULT_ENV',
-    'ANDREANI_DEFAULT_ENV',
+    'MERCADOPAGO_ACCESS_TOKEN_TEST',
     'CORREO_USERNAME_QA',
     'CORREO_PASSWORD_QA',
     'CORREO_EMAIL_QA',

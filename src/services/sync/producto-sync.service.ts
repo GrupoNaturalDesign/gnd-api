@@ -10,6 +10,12 @@ import {
 } from '../producto-agrupacion.service';
 import { calcularTodosLosPrecios, CUOTAS_FINANCIADO_DEFAULT } from '../../config/precios.config';
 import { ECOMMERCE_RUBROS_SFACTORY_IDS } from '../../config/ecommerce.config';
+import {
+  hashProductoPadreFields,
+  hashProductoSfactoryFields,
+  hashProductoWebFields,
+  resolveGruposAfectados,
+} from '../../utils/sync-hash.utils';
 
 // Type helper for Prisma transaction
 type PrismaTransaction = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
@@ -72,6 +78,35 @@ export class ProductoSyncService {
       });
       productos = productosFiltrados;
 
+      const rubrosEcommerce = await prisma.rubro.findMany({
+        where: { empresaId, sfactoryId: { in: ECOMMERCE_RUBROS_SFACTORY_IDS } },
+        select: { id: true },
+      });
+      const rubroIdsEcommerce = rubrosEcommerce.map((r) => r.id);
+
+      const existentes = await prisma.productoSfactory.findMany({
+        where: {
+          empresaId,
+          ...(rubroIdsEcommerce.length > 0 && { rubro_id: { in: rubroIdsEcommerce } }),
+        },
+        select: {
+          codigo: true,
+          barcode: true,
+          descrip_corta: true,
+          descripcion: true,
+          precio_venta: true,
+          activo: true,
+          rubro_id: true,
+          subrubro_id: true,
+          linea: true,
+          material: true,
+          sfactory_id: true,
+        },
+      });
+      const existentesMap = new Map(existentes.map((p) => [p.codigo, p]));
+      const codigosRemotos = new Set<string>();
+      const codigosAfectados = new Set<string>();
+
       // Pre-cargar rubros y subrubros para resolver IDs locales
       const rubros = await prisma.rubro.findMany({
         where: { empresaId },
@@ -89,6 +124,7 @@ export class ProductoSyncService {
 
       let insertados = 0;
       let actualizados = 0;
+      let omitidos = 0;
       const errores: Array<{ codigo: string; error: string }> = [];
 
       // Procesar en lotes para mejor performance
@@ -103,6 +139,8 @@ export class ProductoSyncService {
             try {
               const codigo = String((producto as any).Codigo || (producto as any).codigo || '');
               if (!codigo) continue;
+
+              codigosRemotos.add(codigo);
 
               // Resolver rubro_id y subrubro_id locales desde los IDs de SFactory (Number() por si la API devuelve string)
               const sfactoryRubroId = (producto as any).rubro_id ?? (producto as any).RubroId ?? null;
@@ -133,14 +171,11 @@ export class ProductoSyncService {
                 stock_maximo: toDecimal((producto as any).StockMax || (producto as any).stockMax),
                 precio_costo: toDecimal((producto as any).PrecioCosto || (producto as any).precioCosto),
                 precio_venta: toDecimal((producto as any).PrecioVenta || (producto as any).precioVenta),
-                // Stock: se guarda en productos_sfactory si viene de SFactory
-                // Nota: Stock puede venir como campo directo o necesitar obtenerse de otra fuente
                 iva: toDecimal((producto as any).Iva || (producto as any).iva),
                 utilidad_planificada: toDecimal((producto as any).UtilidadP || (producto as any).utilidadP),
                 utilidad_real: toDecimal((producto as any).UtilidadR || (producto as any).utilidadR),
                 rubro: toStringOrNull((producto as any).Rubro || (producto as any).rubro),
                 subrubro: toStringOrNull((producto as any).Subrubro || (producto as any).subrubro),
-                // Guardar IDs locales resueltos (pueden ser null si no se encuentran)
                 rubro_id: rubroIdLocal,
                 subrubro_id: subrubroIdLocal,
                 item_venta: toStringOrNull((producto as any).ItemDeVenta ? 'S' : (producto as any).itemVenta),
@@ -174,7 +209,16 @@ export class ProductoSyncService {
                 ultima_sync: new Date(),
               };
 
-              // Upsert en productos_sfactory (NO se muta después)
+              const existente = existentesMap.get(codigo);
+              const nuevoHash = hashProductoSfactoryFields(datosProductoSfactory);
+
+              if (existente && hashProductoSfactoryFields(existente) === nuevoHash) {
+                omitidos++;
+                continue;
+              }
+
+              codigosAfectados.add(codigo);
+
               await tx.productoSfactory.upsert({
                 where: {
                   unique_empresa_codigo: {
@@ -189,7 +233,24 @@ export class ProductoSyncService {
                 create: datosProductoSfactory,
               });
 
-              insertados++;
+              if (existente) {
+                actualizados++;
+              } else {
+                insertados++;
+              }
+              existentesMap.set(codigo, {
+                codigo,
+                barcode: datosProductoSfactory.barcode,
+                descrip_corta: datosProductoSfactory.descrip_corta,
+                descripcion: datosProductoSfactory.descripcion,
+                precio_venta: datosProductoSfactory.precio_venta,
+                activo: datosProductoSfactory.activo,
+                rubro_id: datosProductoSfactory.rubro_id,
+                subrubro_id: datosProductoSfactory.subrubro_id,
+                linea: datosProductoSfactory.linea,
+                material: datosProductoSfactory.material,
+                sfactory_id: datosProductoSfactory.sfactory_id,
+              });
             } catch (error: any) {
               errores.push({
                 codigo: String((producto as any).Codigo || 'desconocido'),
@@ -203,10 +264,25 @@ export class ProductoSyncService {
         });
       }
 
+      // Bajas: códigos locales ecommerce que ya no vienen de S-Factory
+      for (const [codigoLocal, row] of existentesMap) {
+        if (codigosRemotos.has(codigoLocal)) continue;
+        if (row.activo === 'N') continue;
+
+        await prisma.productoSfactory.update({
+          where: { unique_empresa_codigo: { empresaId, codigo: codigoLocal } },
+          data: { activo: 'N', ultima_sync: new Date(), updatedAt: new Date() },
+        });
+        codigosAfectados.add(codigoLocal);
+        actualizados++;
+      }
+
       return {
         procesados: productos.length,
         insertados,
         actualizados,
+        omitidos,
+        codigosAfectados,
         errores: errores.length,
         detallesErrores: errores,
       };
@@ -220,16 +296,33 @@ export class ProductoSyncService {
    * Lee de productos_sfactory y crea/actualiza productos_padre y productos_web
    * SIN MUTAR productos_sfactory
    */
-  async procesarProductosDesdeSfactory(empresaId: number = 1) {
+  async procesarProductosDesdeSfactory(
+    empresaId: number = 1,
+    options?: { codigosAfectados?: Set<string> }
+  ) {
     try {
-      // Rubros ecommerce: solo procesar productos de estos rubros
+      const codigosAfectados = options?.codigosAfectados;
+      if (codigosAfectados && codigosAfectados.size === 0) {
+        return {
+          procesados: 0,
+          exitosos: 0,
+          fallidos: 0,
+          sinCodigo: 0,
+          gruposCreados: 0,
+          gruposProcesados: 0,
+          gruposOmitidos: 0,
+          productosPadreCreados: 0,
+          productosWebCreados: 0,
+          productosWebOmitidos: 0,
+        };
+      }
+
       const rubrosEcommerce = await prisma.rubro.findMany({
         where: { empresaId, sfactoryId: { in: ECOMMERCE_RUBROS_SFACTORY_IDS } },
         select: { id: true },
       });
       const rubroIdsEcommerce = rubrosEcommerce.map((r) => r.id);
 
-      // Leer productos de productos_sfactory (solo rubros ecommerce si hay alguno)
       const productosSfactory = await prisma.productoSfactory.findMany({
         where: {
           empresaId,
@@ -238,23 +331,52 @@ export class ProductoSyncService {
         orderBy: { codigo: 'asc' },
       });
 
-      // MEJORA: Pre-cargar rubros y subrubros ANTES de las transacciones
-      // CAMBIO: Indexar por sfactoryId en lugar de por nombre para búsqueda más precisa
       const rubros = await prisma.rubro.findMany({
         where: { empresaId },
         select: { id: true, sfactoryId: true, nombre: true },
       });
-      const rubrosMap = new Map<number, number>(); // Map<sfactoryId, localId>
-      rubros.forEach((r: { id: number; sfactoryId: number; nombre: string }): void => { rubrosMap.set(r.sfactoryId, r.id); });
+      const rubrosMap = new Map<number, number>();
+      const rubrosPorNombre = new Map<string, number>();
+      rubros.forEach((r) => {
+        rubrosMap.set(r.sfactoryId, r.id);
+        rubrosPorNombre.set(r.nombre, r.id);
+      });
 
       const subrubros = await prisma.subrubro.findMany({
         where: { empresaId },
         select: { id: true, sfactoryId: true, rubroId: true, nombre: true },
       });
-      const subrubrosMap = new Map<number, number>(); // Map<sfactoryId, localId>
-      subrubros.forEach((s: { id: number; sfactoryId: number; rubroId: number | null; nombre: string }): void => { subrubrosMap.set(s.sfactoryId, s.id); });
+      const subrubrosMap = new Map<number, number>();
+      const subrubrosPorRubroNombre = new Map<string, number>();
+      subrubros.forEach((s) => {
+        subrubrosMap.set(s.sfactoryId, s.id);
+        if (s.rubroId != null) {
+          subrubrosPorRubroNombre.set(`${s.rubroId}:${s.nombre}`, s.id);
+        }
+      });
 
-      // Convertir a formato SFactoryProduct para usar las funciones existentes
+      const productosSfactoryMap = new Map<string, (typeof productosSfactory)[0]>();
+      productosSfactory.forEach((p) => {
+        productosSfactoryMap.set(p.codigo, p);
+      });
+
+      let codigoAgrupacionByCodigo = new Map<string, string>();
+      if (codigosAfectados && codigosAfectados.size > 0) {
+        const webs = await prisma.productoWeb.findMany({
+          where: {
+            empresaId,
+            sfactoryCodigo: { in: [...codigosAfectados] },
+          },
+          select: {
+            sfactoryCodigo: true,
+            productoPadre: { select: { codigoAgrupacion: true } },
+          },
+        });
+        codigoAgrupacionByCodigo = new Map(
+          webs.map((w) => [w.sfactoryCodigo, w.productoPadre.codigoAgrupacion])
+        );
+      }
+
       const productos: SFactoryProduct[] = productosSfactory.map((p: any): SFactoryProduct => {
         const activo = p.activo || 'S';
         return {
@@ -266,38 +388,114 @@ export class ProductoSyncService {
           Material: p.material || null,
           UM: p.um || null,
           PrecioVenta: p.precio_venta ? Number(p.precio_venta) : null,
-          Stock: null, // Se actualizará desde otra fuente si es necesario
+          Stock: null,
           Barcode: p.barcode || null,
           Activo: activo === 'S',
           id: p.sfactory_id || undefined,
-          Color: null, // Se parseará del nombre
-          Talle: null, // Se parseará del nombre
+          Color: null,
+          Talle: null,
         } as SFactoryProduct;
       });
 
-      // Agrupar productos por código base
       const grupos = agruparProductosPorCodigoBase(productos);
+
+      let gruposArray = Array.from(grupos.entries());
+      let gruposProcesados = gruposArray.length;
+      let gruposOmitidos = 0;
+
+      if (codigosAfectados && codigosAfectados.size > 0) {
+        const gruposAfectados = resolveGruposAfectados(
+          codigosAfectados,
+          productosSfactoryMap,
+          codigoAgrupacionByCodigo
+        );
+        gruposArray = gruposArray.filter(([codigoAgrupacion]) =>
+          gruposAfectados.has(codigoAgrupacion)
+        );
+        gruposProcesados = gruposArray.length;
+        gruposOmitidos = grupos.size - gruposProcesados;
+      }
+
+      if (gruposArray.length === 0) {
+        return {
+          procesados: productosSfactory.length,
+          exitosos: 0,
+          fallidos: 0,
+          sinCodigo: 0,
+          gruposCreados: grupos.size,
+          gruposProcesados: 0,
+          gruposOmitidos: grupos.size,
+          productosPadreCreados: 0,
+          productosWebCreados: 0,
+          productosWebOmitidos: 0,
+        };
+      }
+
+      const padresExistentes = await prisma.productoPadre.findMany({
+        where: {
+          empresaId,
+          codigoAgrupacion: { in: gruposArray.map(([c]) => c) },
+        },
+        select: {
+          id: true,
+          codigoAgrupacion: true,
+          nombre: true,
+          descripcion: true,
+          rubroId: true,
+          subrubroId: true,
+          linea: true,
+          material: true,
+          um: true,
+          coloresDisponibles: true,
+          tallesDisponibles: true,
+          genero: true,
+        },
+      });
+      const padreByAgrupacion = new Map(padresExistentes.map((p) => [p.codigoAgrupacion, p]));
+
+      const websExistentes = await prisma.productoWeb.findMany({
+        where: { empresaId },
+        select: {
+          id: true,
+          sfactoryCodigo: true,
+          productoPadreId: true,
+          sfactoryId: true,
+          sfactoryBarcode: true,
+          nombre: true,
+          sexo: true,
+          talle: true,
+          color: true,
+          precioCache: true,
+          stockCache: true,
+          activoSfactory: true,
+        },
+      });
+      const webByCodigo = new Map(websExistentes.map((w) => [w.sfactoryCodigo, w]));
+
+      const preciosExistentes = await prisma.productoPrecio.findMany({
+        where: {
+          tipoCliente: 'minorista',
+          productoWebId: { in: websExistentes.map((w) => w.id) },
+        },
+        select: { productoWebId: true, precioLista: true },
+      });
+      const precioListaByWebId = new Map(
+        preciosExistentes.map((p) => [p.productoWebId, Number(p.precioLista)])
+      );
 
       let exitosos = 0;
       let fallidos = 0;
       let sinCodigo = 0;
       let productosPadreCreados = 0;
       let productosWebCreados = 0;
+      let productosWebOmitidos = 0;
 
-      // OPTIMIZACIÓN: Crear Map indexado por código ANTES del loop para búsquedas O(1)
-      const productosSfactoryMap = new Map<string, typeof productosSfactory[0]>();
-      productosSfactory.forEach((p: any): void => {
-        productosSfactoryMap.set(p.codigo, p);
-      });
+      const BATCH_SIZE = 15;
+      const TRANSACTION_TIMEOUT = 120000;
 
-      // Aumentar batch size para mejor performance
-      const BATCH_SIZE = 15; // Por transacción; timeout 2 min evita P2028
-      const TRANSACTION_TIMEOUT = 120000; // 2 minutos
-      const gruposArray = Array.from(grupos.entries());
-      
       for (let i = 0; i < gruposArray.length; i += BATCH_SIZE) {
         const batch = gruposArray.slice(i, i + BATCH_SIZE);
-        
+
         await prisma.$transaction(async (tx: PrismaTransaction): Promise<void> => {
           for (const [codigoAgrupacion, grupo] of batch) {
             try {
@@ -305,213 +503,243 @@ export class ProductoSyncService {
                 continue;
               }
 
-              // Obtener el primer producto para datos generales
               const primerProducto = grupo.productos[0]?.producto;
               if (!primerProducto) {
                 continue;
               }
 
-              // OPTIMIZACIÓN: Usar Map para búsqueda O(1) en lugar de .find() O(n)
               const codigoPrimerProducto = String((primerProducto as any).Codigo || '');
               const productoSfactory = productosSfactoryMap.get(codigoPrimerProducto);
 
-              // Usar el nombre base del grupo (sin color, talle ni sexo)
               const nombre = grupo.nombreBase || codigoAgrupacion;
-              
-              // Descripción vacía en ProductoPadre (solo nombre base)
               const descripcionPadre = '';
-
-              // Normalizar sexo antes de guardar
               const sexoNormalizado = normalizarSexo(grupo.sexo);
 
-              // MEJORA: Usar los IDs ya resueltos en productos_sfactory
               let rubroId = productoSfactory?.rubro_id || null;
               let subrubroId = productoSfactory?.subrubro_id || null;
-              
-              // Si no se encontraron por ID de SFactory, intentar por nombre como fallback
+
               if (!rubroId) {
-                const rubroNombre = normalizarRubro(productoSfactory?.rubro || (primerProducto as any).Rubro);
+                const rubroNombre = normalizarRubro(
+                  productoSfactory?.rubro || (primerProducto as any).Rubro
+                );
                 if (rubroNombre) {
-                  const rubroPorNombre = await tx.rubro.findFirst({
-                    where: {
-                      empresaId,
-                      nombre: { 
-                        equals: rubroNombre,
-                      },
-                    },
-                  });
-                  rubroId = rubroPorNombre?.id || null;
+                  rubroId = rubrosPorNombre.get(rubroNombre) ?? null;
                 }
               }
-              
+
               if (!subrubroId && rubroId) {
-                const subrubroNombre = normalizarRubro(productoSfactory?.subrubro || (primerProducto as any).Subrubro);
+                const subrubroNombre = normalizarRubro(
+                  productoSfactory?.subrubro || (primerProducto as any).Subrubro
+                );
                 if (subrubroNombre) {
-                  const subrubroPorNombre = await tx.subrubro.findFirst({
-                    where: {
-                      empresaId,
-                      rubroId,
-                      nombre: { 
-                        equals: subrubroNombre,
-                      },
-                    },
-                  });
-                  subrubroId = subrubroPorNombre?.id || null;
+                  subrubroId = subrubrosPorRubroNombre.get(`${rubroId}:${subrubroNombre}`) ?? null;
                 }
               }
 
-              // Crear o actualizar producto padre (agrupado)
-              const productoPadre = await tx.productoPadre.upsert({
-                where: {
-                  unique_empresa_agrupacion: {
-                    empresaId: empresaId,
-                    codigoAgrupacion: codigoAgrupacion,
+              const padrePayload = {
+                nombre,
+                descripcion: descripcionPadre,
+                rubroId,
+                subrubroId,
+                linea: productoSfactory?.linea || (primerProducto as any).Linea || null,
+                material: productoSfactory?.material || (primerProducto as any).Material || null,
+                um: productoSfactory?.um || (primerProducto as any).UM || null,
+                coloresDisponibles: grupo.colores.length > 0 ? (grupo.colores as any) : null,
+                tallesDisponibles: grupo.talles.length > 0 ? (grupo.talles as any) : null,
+                genero: sexoNormalizado,
+              };
+
+              const padreExistente = padreByAgrupacion.get(codigoAgrupacion);
+              const padreHash = hashProductoPadreFields(padrePayload);
+              const padreSinCambios =
+                padreExistente != null &&
+                hashProductoPadreFields({
+                  nombre: padreExistente.nombre,
+                  descripcion: padreExistente.descripcion,
+                  rubroId: padreExistente.rubroId,
+                  subrubroId: padreExistente.subrubroId,
+                  linea: padreExistente.linea,
+                  material: padreExistente.material,
+                  um: padreExistente.um,
+                  coloresDisponibles: padreExistente.coloresDisponibles,
+                  tallesDisponibles: padreExistente.tallesDisponibles,
+                  genero: padreExistente.genero,
+                }) === padreHash;
+
+              let productoPadre = padreExistente;
+              if (!padreSinCambios) {
+                productoPadre = await tx.productoPadre.upsert({
+                  where: {
+                    unique_empresa_agrupacion: {
+                      empresaId,
+                      codigoAgrupacion,
+                    },
                   },
-                },
-                update: {
-                  nombre: nombre,
-                  descripcion: descripcionPadre,
-                  rubroId: rubroId,
-                  subrubroId: subrubroId,
-                  linea: productoSfactory?.linea || (primerProducto as any).Linea || null,
-                  material: productoSfactory?.material || (primerProducto as any).Material || null,
-                  um: productoSfactory?.um || (primerProducto as any).UM || null,
-                  coloresDisponibles: grupo.colores.length > 0 ? (grupo.colores as any) : null,
-                  tallesDisponibles: grupo.talles.length > 0 ? (grupo.talles as any) : null,
-                  genero: sexoNormalizado,
-                },
-                create: {
-                  empresaId: empresaId,
-                  codigoAgrupacion: codigoAgrupacion,
-                  nombre: nombre,
-                  descripcion: descripcionPadre,
-                  rubroId: rubroId,
-                  subrubroId: subrubroId,
-                  linea: productoSfactory?.linea || (primerProducto as any).Linea || null,
-                  material: productoSfactory?.material || (primerProducto as any).Material || null,
-                  um: productoSfactory?.um || (primerProducto as any).UM || null,
-                  slug: generarSlug(nombre, codigoAgrupacion),
-                  coloresDisponibles: grupo.colores.length > 0 ? (grupo.colores as any) : null,
-                  tallesDisponibles: grupo.talles.length > 0 ? (grupo.talles as any) : null,
-                  genero: sexoNormalizado,
-                },
-              });
+                  update: padrePayload,
+                  create: {
+                    empresaId,
+                    codigoAgrupacion,
+                    ...padrePayload,
+                    slug: generarSlug(nombre, codigoAgrupacion),
+                  },
+                });
+                productosPadreCreados++;
+                padreByAgrupacion.set(codigoAgrupacion, productoPadre);
+              }
 
-              productosPadreCreados++;
+              if (!productoPadre) {
+                continue;
+              }
 
-              // Crear o actualizar cada variante (ProductoWeb)
               for (const item of grupo.productos) {
                 try {
                   const producto = item.producto;
-                  const codigoStr = String((producto as any).Codigo || (producto as any).codigo || '');
-                  
+                  const codigoStr = String(
+                    (producto as any).Codigo || (producto as any).codigo || ''
+                  );
+
                   if (!codigoStr) {
                     sinCodigo++;
                     continue;
                   }
 
-                  // OPTIMIZACIÓN: Usar Map para búsqueda O(1) en lugar de .find() O(n)
                   const productoSfactoryItem = productosSfactoryMap.get(codigoStr);
 
-                  // Usar color del parseo o de campos directos
                   let color = item.color;
                   if (!color && productoSfactoryItem) {
-                    // Intentar parsear del nombre si no hay color
                     const parseado = parsearNombreProducto(
-                      productoSfactoryItem.descripcion || productoSfactoryItem.descrip_corta || codigoStr,
+                      productoSfactoryItem.descripcion ||
+                        productoSfactoryItem.descrip_corta ||
+                        codigoStr,
                       codigoStr
                     );
                     color = parseado.color;
                   }
-                  
+
                   const talle = item.talle;
-
-                  // Nombre de la variante: solo el nombre base
                   const nombreVariante = nombre;
-                  
-                  // Descripción vacía en ProductoWeb
-                  const descripcionCompleta = '';
+                  const sfactoryId =
+                    productoSfactoryItem?.sfactory_id ||
+                    (producto as any).id ||
+                    (producto as any).Id ||
+                    0;
 
-                  // Obtener ID de sFactory
-                  const sfactoryId = productoSfactoryItem?.sfactory_id || (producto as any).id || (producto as any).Id || 0;
-
-                  // Datos comunes para update y create
                   const datosProductoWeb = {
                     productoPadreId: productoPadre.id,
-                    sfactoryId: sfactoryId,
-                    sfactoryBarcode: productoSfactoryItem?.barcode || (producto as any).Barcode || null,
+                    sfactoryId,
+                    sfactoryBarcode:
+                      productoSfactoryItem?.barcode || (producto as any).Barcode || null,
                     nombre: nombreVariante,
-                    descripcionCompleta: descripcionCompleta,
+                    descripcionCompleta: '',
                     sexo: sexoNormalizado,
-                    talle: talle,
-                    color: color,
-                    precioCache: productoSfactoryItem?.precio_venta ? Number(productoSfactoryItem.precio_venta) : null,
-                    stockCache: (producto as any).Stock !== null && (producto as any).Stock !== undefined 
-                      ? Number((producto as any).Stock) 
-                      : 0,
+                    talle,
+                    color,
+                    precioCache: productoSfactoryItem?.precio_venta
+                      ? Number(productoSfactoryItem.precio_venta)
+                      : null,
+                    stockCache:
+                      (producto as any).Stock !== null && (producto as any).Stock !== undefined
+                        ? Number((producto as any).Stock)
+                        : 0,
                     ultimaSyncSfactory: productoSfactoryItem?.ultima_sync || new Date(),
-                    activoSfactory: productoSfactoryItem?.activo === 'S' || (producto as any).Activo !== false,
+                    activoSfactory: (productoSfactoryItem?.activo ?? 'S') === 'S',
                   };
 
-                  // Upsert en productos_web
-                  const productoWeb = await tx.productoWeb.upsert({
-                    where: {
-                      unique_empresa_sfactory: {
-                        empresaId: empresaId,
-                        sfactoryCodigo: codigoStr,
-                      },
-                    },
-                    update: {
-                      ...datosProductoWeb,
-                      productoPadreId: productoPadre.id, // Asegurar que esté vinculado al padre correcto
-                    },
-                    create: {
-                      empresaId: empresaId,
-                      sfactoryCodigo: codigoStr,
-                      ...datosProductoWeb,
-                    },
-                  });
+                  const webExistente = webByCodigo.get(codigoStr);
+                  const webHash = hashProductoWebFields(datosProductoWeb);
+                  const webSinCambios =
+                    webExistente != null &&
+                    hashProductoWebFields({
+                      productoPadreId: webExistente.productoPadreId,
+                      sfactoryId: webExistente.sfactoryId,
+                      sfactoryBarcode: webExistente.sfactoryBarcode,
+                      nombre: webExistente.nombre,
+                      sexo: webExistente.sexo,
+                      talle: webExistente.talle,
+                      color: webExistente.color,
+                      precioCache: webExistente.precioCache
+                        ? Number(webExistente.precioCache)
+                        : null,
+                      stockCache: webExistente.stockCache
+                        ? Number(webExistente.stockCache)
+                        : null,
+                      activoSfactory: webExistente.activoSfactory,
+                    }) === webHash;
 
-                  // Si hay precio_venta, crear/actualizar ProductoPrecio automáticamente dentro de la transacción
-                  if (datosProductoWeb.precioCache && datosProductoWeb.precioCache > 0) {
-                    try {
-                      const precioLista = Number(datosProductoWeb.precioCache);
-                      const preciosDerivados = calcularTodosLosPrecios(precioLista, CUOTAS_FINANCIADO_DEFAULT);
-                      
-                      // Crear precio para minorista (precio lista) dentro de la transacción
-                      await tx.productoPrecio.upsert({
-                        where: {
-                          unique_producto_tipo: {
+                  let productoWeb = webExistente;
+                  if (!webSinCambios) {
+                    productoWeb = await tx.productoWeb.upsert({
+                      where: {
+                        unique_empresa_sfactory: {
+                          empresaId,
+                          sfactoryCodigo: codigoStr,
+                        },
+                      },
+                      update: {
+                        ...datosProductoWeb,
+                        productoPadreId: productoPadre.id,
+                      },
+                      create: {
+                        empresaId,
+                        sfactoryCodigo: codigoStr,
+                        ...datosProductoWeb,
+                      },
+                    });
+                    productosWebCreados++;
+                    webByCodigo.set(codigoStr, productoWeb);
+                  } else {
+                    productosWebOmitidos++;
+                  }
+
+                  if (
+                    datosProductoWeb.precioCache &&
+                    datosProductoWeb.precioCache > 0 &&
+                    productoWeb
+                  ) {
+                    const precioLista = Number(datosProductoWeb.precioCache);
+                    const precioActual = precioListaByWebId.get(productoWeb.id);
+                    if (precioActual !== precioLista) {
+                      try {
+                        const preciosDerivados = calcularTodosLosPrecios(
+                          precioLista,
+                          CUOTAS_FINANCIADO_DEFAULT
+                        );
+                        await tx.productoPrecio.upsert({
+                          where: {
+                            unique_producto_tipo: {
+                              productoWebId: productoWeb.id,
+                              tipoCliente: 'minorista',
+                            },
+                          },
+                          create: {
                             productoWebId: productoWeb.id,
                             tipoCliente: 'minorista',
+                            precioLista,
+                            precio: precioLista,
+                            precioTransfer: preciosDerivados.precioTransfer,
+                            precioFinanciado: preciosDerivados.precioFinanciado,
+                            cuotasFinanciado: CUOTAS_FINANCIADO_DEFAULT,
+                            precioSinImp: preciosDerivados.precioSinImp,
                           },
-                        },
-                        create: {
-                          productoWebId: productoWeb.id,
-                          tipoCliente: 'minorista',
-                          precioLista,
-                          precio: precioLista,
-                          precioTransfer: preciosDerivados.precioTransfer,
-                          precioFinanciado: preciosDerivados.precioFinanciado,
-                          cuotasFinanciado: CUOTAS_FINANCIADO_DEFAULT,
-                          precioSinImp: preciosDerivados.precioSinImp,
-                        },
-                        update: {
-                          precioLista,
-                          precio: precioLista,
-                          precioTransfer: preciosDerivados.precioTransfer,
-                          precioFinanciado: preciosDerivados.precioFinanciado,
-                          cuotasFinanciado: CUOTAS_FINANCIADO_DEFAULT,
-                          precioSinImp: preciosDerivados.precioSinImp,
-                        },
-                      });
-                    } catch (error: any) {
-                      // Log error pero no fallar la sincronización
-                      console.warn(`[procesarProductosDesdeSfactory] Error creando ProductoPrecio para ${codigoStr}:`, error.message);
+                          update: {
+                            precioLista,
+                            precio: precioLista,
+                            precioTransfer: preciosDerivados.precioTransfer,
+                            precioFinanciado: preciosDerivados.precioFinanciado,
+                            cuotasFinanciado: CUOTAS_FINANCIADO_DEFAULT,
+                            precioSinImp: preciosDerivados.precioSinImp,
+                          },
+                        });
+                        precioListaByWebId.set(productoWeb.id, precioLista);
+                      } catch (error: any) {
+                        console.warn(
+                          `[procesarProductosDesdeSfactory] Error creando ProductoPrecio para ${codigoStr}:`,
+                          error.message
+                        );
+                      }
                     }
                   }
 
-                  productosWebCreados++;
                   exitosos++;
                 } catch (error: any) {
                   const codigoError = String((item.producto as any).Codigo || 'desconocido');
@@ -536,8 +764,11 @@ export class ProductoSyncService {
         fallidos,
         sinCodigo,
         gruposCreados: grupos.size,
+        gruposProcesados,
+        gruposOmitidos,
         productosPadreCreados,
         productosWebCreados,
+        productosWebOmitidos,
       };
     } catch (error: any) {
       throw error;
@@ -1010,31 +1241,37 @@ export class ProductoSyncService {
    * Método principal que ejecuta ambos pasos
    */
   async syncProductos(empresaId: number = 1) {
-    // PASO 1: Sincronizar a productos_sfactory (fuente de verdad)
     const syncSfactory = await this.syncProductosSfactory(empresaId);
-    
-    // PASO 2: Procesar desde productos_sfactory
-    const procesamiento = await this.procesarProductosDesdeSfactory(empresaId);
-    
+
+    const procesamiento = await this.procesarProductosDesdeSfactory(empresaId, {
+      codigosAfectados: syncSfactory.codigosAfectados,
+    });
+
     const resultado = {
       syncSfactory,
       procesamiento,
       resumen: {
         productosSfactory: syncSfactory.procesados,
+        productosSfactoryOmitidos: syncSfactory.omitidos,
         productosPadre: procesamiento.productosPadreCreados,
         productosWeb: procesamiento.productosWebCreados,
+        productosWebOmitidos: procesamiento.productosWebOmitidos,
+        gruposProcesados: procesamiento.gruposProcesados,
+        gruposOmitidos: procesamiento.gruposOmitidos,
         exitosos: procesamiento.exitosos,
         fallidos: procesamiento.fallidos + syncSfactory.errores,
       },
     };
 
-    // Mostrar resumen por consola
     console.log('\n========================================');
     console.log('📦 RESUMEN DE SINCRONIZACIÓN DE PRODUCTOS');
     console.log('========================================\n');
     console.log('📥 PASO 1: Sincronización desde SFactory');
     console.log(`   • Productos procesados: ${syncSfactory.procesados}`);
-    console.log(`   • Productos insertados/actualizados: ${syncSfactory.insertados}`);
+    console.log(`   • Insertados: ${syncSfactory.insertados}`);
+    console.log(`   • Actualizados: ${syncSfactory.actualizados}`);
+    console.log(`   • Omitidos (sin cambios): ${syncSfactory.omitidos}`);
+    console.log(`   • Códigos afectados paso 2: ${syncSfactory.codigosAfectados.size}`);
     console.log(`   • Errores: ${syncSfactory.errores}`);
     if (syncSfactory.detallesErrores && syncSfactory.detallesErrores.length > 0) {
       console.log(`   • Primeros errores:`);
@@ -1046,21 +1283,26 @@ export class ProductoSyncService {
       }
     }
     console.log('\n🔄 PASO 2: Procesamiento y agrupación');
-    console.log(`   • Productos procesados: ${procesamiento.procesados}`);
-    console.log(`   • Grupos creados: ${procesamiento.gruposCreados}`);
-    console.log(`   • Productos padre creados: ${procesamiento.productosPadreCreados}`);
-    console.log(`   • Productos web (variantes) creados: ${procesamiento.productosWebCreados}`);
+    console.log(`   • Productos en espejo: ${procesamiento.procesados}`);
+    console.log(`   • Grupos totales catálogo: ${procesamiento.gruposCreados}`);
+    console.log(`   • Grupos procesados: ${procesamiento.gruposProcesados}`);
+    console.log(`   • Grupos omitidos: ${procesamiento.gruposOmitidos}`);
+    console.log(`   • Productos padre escritos: ${procesamiento.productosPadreCreados}`);
+    console.log(`   • Variantes escritas: ${procesamiento.productosWebCreados}`);
+    console.log(`   • Variantes omitidas: ${procesamiento.productosWebOmitidos}`);
     console.log(`   • Exitosos: ${procesamiento.exitosos}`);
     console.log(`   • Fallidos: ${procesamiento.fallidos}`);
     console.log(`   • Sin código: ${procesamiento.sinCodigo}`);
     console.log('\n📊 RESUMEN GENERAL');
     console.log(`   • Total productos SFactory: ${resultado.resumen.productosSfactory}`);
-    console.log(`   • Total productos padre: ${resultado.resumen.productosPadre}`);
-    console.log(`   • Total variantes (productos web): ${resultado.resumen.productosWeb}`);
+    console.log(`   • Total omitidos paso 1: ${resultado.resumen.productosSfactoryOmitidos}`);
+    console.log(`   • Total productos padre escritos: ${resultado.resumen.productosPadre}`);
+    console.log(`   • Total variantes escritas: ${resultado.resumen.productosWeb}`);
+    console.log(`   • Total variantes omitidas: ${resultado.resumen.productosWebOmitidos}`);
     console.log(`   • Total exitosos: ${resultado.resumen.exitosos}`);
     console.log(`   • Total fallidos: ${resultado.resumen.fallidos}`);
     console.log('========================================\n');
-    
+
     return resultado;
   }
 }

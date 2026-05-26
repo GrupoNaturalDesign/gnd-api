@@ -3,6 +3,7 @@ import { createElement } from 'react';
 import { Resend } from 'resend';
 import { render } from '@react-email/render';
 import { prisma } from '../prisma';
+import { BRAND_DISPLAY_NAME } from '../email-brand';
 import { ContactConfirmationEmail } from '../../emails/ContactConfirmationEmail';
 import { InternalOrderNotification } from '../../emails/InternalOrderNotification';
 import { NewsletterEmail } from '../../emails/NewsletterEmail';
@@ -156,7 +157,7 @@ export const emailService = {
       resend.emails.send({
         from,
         to: user.email,
-        subject: 'Bienvenido/a a GND Natural Design',
+        subject: `Bienvenido/a a ${BRAND_DISPLAY_NAME}`,
         html,
         text,
       }),
@@ -215,7 +216,7 @@ export const emailService = {
         resend.emails.send({
           from,
           to,
-          subject: '¡Gracias por suscribirte al newsletter de GND Natural Design!',
+          subject: `¡Gracias por suscribirte al newsletter de ${BRAND_DISPLAY_NAME}!`,
           html,
           text,
         }),

@@ -17,6 +17,7 @@ import type {
 import {
   computeExpiresAtPedidoManual,
   procesarPedidoConfirmado,
+  registrarCotizacionSfactoryParaPedido,
   type ProcesarPedidoResult,
 } from './pedido-checkout.service';
 import { adminNotificationService } from './admin-notification.service';
@@ -29,6 +30,56 @@ import { empresaConfigService } from './empresa-config.service';
 import { sendManualPaymentInstructionsEmailAsync } from './pedido-payment-instructions.service';
 
 const cuponEngine = new CuponEngineService();
+
+type CheckoutItemForCupon = {
+  productoWebId: number;
+  productoPadreId: number;
+  cantidad: number;
+  precioUnitario: number;
+};
+
+async function resolveCuponForPedidoCheckout(
+  empresaId: number,
+  usuarioId: number,
+  cuponCodigo: string | undefined,
+  items: CheckoutItemForCupon[]
+): Promise<{
+  cuponDetalle: import('./cupon-engine.service').CuponDetalle | null;
+  cuponDescuentoDecimal: Prisma.Decimal;
+}> {
+  if (!cuponCodigo?.trim()) {
+    return { cuponDetalle: null, cuponDescuentoDecimal: new Prisma.Decimal(0) };
+  }
+
+  const itemsParaValidar = items.map((it) => ({
+    productoId: it.productoWebId,
+    productoWebId: it.productoWebId,
+    productoPadreId: it.productoPadreId,
+    cantidad: it.cantidad,
+    precioUnitario: it.precioUnitario,
+  }));
+  const subtotalCalc = itemsParaValidar.reduce(
+    (sum, i) => sum + i.precioUnitario * i.cantidad,
+    0
+  );
+
+  const result = await cuponEngine.validarCupon({
+    empresaId,
+    codigo: cuponCodigo.trim(),
+    usuarioId,
+    items: itemsParaValidar,
+    subtotal: subtotalCalc,
+  });
+
+  if (!result.valido || !result.detalle) {
+    throw new Error(result.error ?? 'El cupón no es válido para este pedido');
+  }
+
+  return {
+    cuponDetalle: result.detalle,
+    cuponDescuentoDecimal: new Prisma.Decimal(result.detalle.descuentoTotal),
+  };
+}
 
 function pedidoNotificationPayload(pedido: {
   id: number;
@@ -79,8 +130,13 @@ function sleep(ms: number): Promise<void> {
 function expectedMercadoPagoTransactionAmount(pedido: {
   total: Prisma.Decimal | string | number;
   descuento: Prisma.Decimal | string | number;
+  sfactoryOrdenId?: number | null;
 }): number {
   const t = new Prisma.Decimal(pedido.total);
+  // Con PE pre-cotizado, el total ya incluye productos ERP (+ envío) y cupón vía S-Factory.
+  if (pedido.sfactoryOrdenId != null) {
+    return Number(t.toFixed(2));
+  }
   const d = new Prisma.Decimal(pedido.descuento);
   return Number(t.sub(d).toFixed(2));
 }
@@ -151,6 +207,10 @@ export interface CrearPedidoMpResult {
   pedidoId: number;
   preferenceId: string;
   checkoutUrl: string;
+  /** Total productos según S-Factory (`response.total`). */
+  subtotalProductos?: number;
+  costoEnvio?: number;
+  totalCobro?: number;
 }
 
 export interface CrearPedidoManualInput {
@@ -175,6 +235,9 @@ export interface CrearPedidoManualResult {
   externalOrderId: string;
   formaPago: 'efectivo' | 'transferencia';
   redirectPath: string;
+  subtotalProductos?: number;
+  costoEnvio?: number;
+  totalCobro?: number;
 }
 
 export interface ProcesarWebhookMpResult {
@@ -209,36 +272,13 @@ export async function crearPedidoMp(
     throw new Error('El pedido debe incluir al menos un ítem');
   }
 
-  // --- Cupón: validar y calcular descuento (auditoría) ---
-  let cuponDetalle: import('./cupon-engine.service').CuponDetalle | null = null;
-  let cuponDescuentoDecimal = new Prisma.Decimal(0);
-
-  if (input.cuponCodigo) {
-    const itemsParaValidar = input.items.map((it) => ({
-      productoId: it.productoWebId,
-      productoWebId: it.productoWebId,
-      productoPadreId: it.productoPadreId,
-      cantidad: it.cantidad,
-      precioUnitario: it.precioUnitario,
-    }));
-    const subtotalCalc = itemsParaValidar.reduce(
-      (sum, i) => sum + i.precioUnitario * i.cantidad,
-      0
-    );
-
-    const result = await cuponEngine.validarCupon({
-      empresaId: input.empresaId,
-      codigo: input.cuponCodigo,
-      usuarioId,
-      items: itemsParaValidar,
-      subtotal: subtotalCalc,
-    });
-
-    if (result.valido && result.detalle) {
-      cuponDetalle = result.detalle;
-      cuponDescuentoDecimal = new Prisma.Decimal(result.detalle.descuentoTotal);
-    }
-  }
+  const { cuponDetalle, cuponDescuentoDecimal } = await resolveCuponForPedidoCheckout(
+    input.empresaId,
+    usuarioId,
+    input.cuponCodigo,
+    input.items
+  );
+  const descuento = cuponDescuentoDecimal;
 
   let subtotalPedido = new Prisma.Decimal(0);
   const lineas: Array<{
@@ -257,7 +297,6 @@ export async function crearPedidoMp(
   }
 
   const iva = new Prisma.Decimal(0);
-  const descuento = cuponDescuentoDecimal;
 
   let costoEnvio = new Prisma.Decimal(0);
   let formaEnvio: FormaEnvio | null = null;
@@ -352,6 +391,27 @@ export async function crearPedidoMp(
     },
   });
 
+  let cotizacion: Awaited<ReturnType<typeof registrarCotizacionSfactoryParaPedido>>;
+  try {
+    cotizacion = await registrarCotizacionSfactoryParaPedido(pedido.id);
+  } catch (e: unknown) {
+    const errMsg = e instanceof Error ? e.message : String(e);
+    await prisma.pedido.update({
+      where: { id: pedido.id },
+      data: {
+        estadoInterno: EstadoPedido.fallido,
+        sfactoryError: errMsg,
+        syncStatus: PedidoSyncStatus.error,
+        syncError: errMsg,
+      },
+    });
+    throw new Error(`No se pudo cotizar el pedido en S-Factory: ${errMsg}`);
+  }
+
+  const sfactoryTotalProductos = cotizacion.sfactoryTotalProductos;
+  const totalCobro = cotizacion.totalACobrar;
+  const envioNum = Number(costoEnvio.toString());
+
   const notificationUrl = mercadoPagoConfig.resolveNotificationUrl();
 
   const checkoutPublic = trimBaseUrl(process.env.CHECKOUT_PUBLIC_URL ?? '');
@@ -371,32 +431,22 @@ export async function crearPedidoMp(
 
   const { name, surname } = splitNombreApellido(input.clienteNombre);
 
-  const preferenceItems: MercadoPagoCreatePreferenceBody['items'] = input.items.map((it) => ({
-    id: String(it.productoWebId),
-    title: it.nombre.length > 256 ? it.nombre.slice(0, 256) : it.nombre,
-    quantity: Math.max(1, Math.floor(it.cantidad)),
-    unit_price: Number(it.precioUnitario),
-    currency_id: 'ARS',
-  }));
+  const preferenceItems: MercadoPagoCreatePreferenceBody['items'] = [
+    {
+      id: 'productos-sfactory',
+      title: 'Productos GND',
+      quantity: 1,
+      unit_price: sfactoryTotalProductos,
+      currency_id: 'ARS',
+    },
+  ];
 
-  const envioNum = Number(costoEnvio.toString());
   if (envioNum > 0) {
     preferenceItems.push({
       id: 'envio-checkout',
       title: 'Envío',
       quantity: 1,
       unit_price: envioNum,
-      currency_id: 'ARS',
-    });
-  }
-
-  // Si hay cupón, agregar línea de descuento en la preference
-  if (cuponDetalle && Number(cuponDetalle.descuentoTotal) > 0) {
-    preferenceItems.push({
-      id: 'descuento-cupon',
-      title: `Descuento: ${cuponDetalle.codigo}`,
-      quantity: 1,
-      unit_price: -Number(cuponDetalle.descuentoTotal),
       currency_id: 'ARS',
     });
   }
@@ -431,7 +481,9 @@ export async function crearPedidoMp(
   logMpCheckout('mp_preference_created', {
     preferenceId: preference.id,
     pedidoId: pedido.id,
-    montoPedido: Number(total),
+    montoPedido: totalCobro,
+    subtotalSfactory: sfactoryTotalProductos,
+    costoEnvio: envioNum,
     descuento: Number(descuento),
     modo,
     items: input.items.length,
@@ -455,7 +507,8 @@ export async function crearPedidoMp(
       estadoAnterior: null,
       estadoNuevo: EstadoPedido.pendiente_pago,
       preferenceId: preference.id,
-      total: String(total),
+      total: String(totalCobro),
+      subtotalSfactory: sfactoryTotalProductos,
     }),
     dedupe: false,
   });
@@ -467,6 +520,9 @@ export async function crearPedidoMp(
     pedidoId: pedido.id,
     preferenceId: preference.id,
     checkoutUrl,
+    subtotalProductos: sfactoryTotalProductos,
+    costoEnvio: envioNum,
+    totalCobro,
   };
 }
 
@@ -728,6 +784,202 @@ export async function procesarWebhookMercadoPago(
   };
 }
 
+export interface ReconciliarPedidosMpResult {
+  cohortA: number;
+  cohortB: number;
+  confirmados: number;
+  errores: number;
+  detalles: Array<{ pedidoId: number; ok: boolean; message?: string }>;
+}
+
+/**
+ * Recupera pedidos MP pagados que quedaron en pendiente_pago (webhook incompleto u omitido).
+ * Cohorte A: pago approved ya persistido. Cohorte B: busca pagos approved por external_reference.
+ */
+export async function reconciliarPedidosMpAtascados(options?: {
+  limit?: number;
+}): Promise<ReconciliarPedidosMpResult> {
+  const limit = Math.max(1, Math.min(options?.limit ?? 20, 100));
+  const now = new Date();
+  const since = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+
+  const cohortAPedidos = await prisma.pedido.findMany({
+    where: {
+      estadoInterno: EstadoPedido.pendiente_pago,
+      formaPago: FormaPago.mercado_pago,
+      mercadoPagoStatus: 'approved',
+      mercadoPagoPaymentId: { not: null },
+    },
+    take: limit,
+    orderBy: { fechaPedido: 'asc' },
+    select: { id: true },
+  });
+
+  const cohortBPedidos = await prisma.pedido.findMany({
+    where: {
+      estadoInterno: EstadoPedido.pendiente_pago,
+      formaPago: FormaPago.mercado_pago,
+      mercadoPagoPaymentId: null,
+      mpPreferenceId: { not: null },
+      expiresAt: { gt: now },
+      fechaPedido: { gte: since },
+    },
+    take: limit,
+    orderBy: { fechaPedido: 'asc' },
+    select: { id: true },
+  });
+
+  let confirmados = 0;
+  let errores = 0;
+  const detalles: ReconciliarPedidosMpResult['detalles'] = [];
+
+  for (const p of cohortAPedidos) {
+    try {
+      const r = await procesarPedidoConfirmado(p.id);
+      if (r.ok) confirmados += 1;
+      else errores += 1;
+      detalles.push({ pedidoId: p.id, ok: r.ok, message: r.message });
+    } catch (e: unknown) {
+      errores += 1;
+      const msg = e instanceof Error ? e.message : String(e);
+      detalles.push({ pedidoId: p.id, ok: false, message: msg });
+    }
+  }
+
+  for (const p of cohortBPedidos) {
+    try {
+      const externalRef = `pedido_${p.id}`;
+      const payments = await mercadoPagoClient.searchPaymentsByExternalReference(externalRef);
+      const approved = payments.find(
+        (pay) => pay.status === 'approved' && pay.id != null && String(pay.id).length > 0
+      );
+      if (!approved?.id) continue;
+
+      const result = await procesarWebhookMercadoPago(
+        {
+          type: 'payment',
+          action: 'reconcile',
+          data: { id: String(approved.id) },
+        },
+        {}
+      );
+      if (result.procesado) {
+        confirmados += 1;
+        detalles.push({ pedidoId: p.id, ok: true, message: result.paymentStatus });
+      } else if (result.pedidoId != null) {
+        errores += 1;
+        detalles.push({
+          pedidoId: p.id,
+          ok: false,
+          message: `payment_${result.paymentStatus}`,
+        });
+      }
+    } catch (e: unknown) {
+      errores += 1;
+      const msg = e instanceof Error ? e.message : String(e);
+      detalles.push({ pedidoId: p.id, ok: false, message: msg });
+    }
+  }
+
+  logMpCheckout('mp_reconcile_run', {
+    cohortA: cohortAPedidos.length,
+    cohortB: cohortBPedidos.length,
+    confirmados,
+    errores,
+  });
+
+  return {
+    cohortA: cohortAPedidos.length,
+    cohortB: cohortBPedidos.length,
+    confirmados,
+    errores,
+    detalles,
+  };
+}
+
+function mpPagoYaAcreditado(pedido: {
+  mercadoPagoPaymentId: string | null;
+  mercadoPagoStatus: string | null;
+}): boolean {
+  return (
+    pedido.mercadoPagoPaymentId != null &&
+    pedido.mercadoPagoPaymentId.length > 0 &&
+    pedido.mercadoPagoStatus === 'approved'
+  );
+}
+
+/**
+ * Cancela un checkout MP abandonado (sin pago acreditado). Idempotente si ya está cancelado.
+ */
+export async function abandonarCheckoutMp(
+  usuarioId: number,
+  pedidoId: number
+): Promise<{ pedidoId: number; estadoInterno: EstadoPedido; alreadyCancelled?: boolean }> {
+  const pedido = await prisma.pedido.findFirst({
+    where: { id: pedidoId, usuarioId },
+  });
+  if (!pedido) {
+    throw new Error('Pedido no encontrado');
+  }
+
+  if (pedido.estadoInterno === EstadoPedido.cancelado) {
+    return { pedidoId, estadoInterno: pedido.estadoInterno, alreadyCancelled: true };
+  }
+
+  if (pedido.estadoInterno !== EstadoPedido.pendiente_pago) {
+    throw new Error(
+      `Solo se puede abandonar un checkout en pendiente de pago (estado actual: ${pedido.estadoInterno}).`
+    );
+  }
+
+  if (pedido.formaPago !== FormaPago.mercado_pago) {
+    throw new Error('Solo aplica a pedidos con Mercado Pago.');
+  }
+
+  if (pedido.sfactoryOrdenId != null) {
+    throw new Error('El pedido ya tiene una orden en S-Factory y no puede abandonarse desde el checkout.');
+  }
+
+  if (mpPagoYaAcreditado(pedido)) {
+    throw new Error(
+      'El pago ya fue acreditado en Mercado Pago. El pedido se confirmará automáticamente en breve.'
+    );
+  }
+
+  const nota = '[Checkout abandonado] El cliente salió de Mercado Pago sin completar el pago.';
+
+  await prisma.$transaction(async (tx) => {
+    const fresh = await tx.pedido.findUnique({ where: { id: pedidoId } });
+    if (!fresh || fresh.estadoInterno === EstadoPedido.cancelado) return;
+
+    if (fresh.stockReservadoWeb) {
+      const items = await tx.pedidoItem.findMany({ where: { pedidoId } });
+      for (const line of items) {
+        if (line.productoWebId == null) continue;
+        await tx.productoWeb.update({
+          where: { id: line.productoWebId },
+          data: { stockCache: { increment: line.cantidad } },
+        });
+      }
+    }
+
+    await tx.pedido.update({
+      where: { id: pedidoId },
+      data: {
+        estadoInterno: EstadoPedido.cancelado,
+        syncStatus: PedidoSyncStatus.synced,
+        syncError: null,
+        stockReservadoWeb: false,
+        observaciones: `${fresh.observaciones ?? ''}\n${nota}`.trim(),
+      },
+    });
+  });
+
+  logMpCheckout('mp_checkout_abandoned', { pedidoId, usuarioId });
+
+  return { pedidoId, estadoInterno: EstadoPedido.cancelado };
+}
+
 export interface CheckoutMpPaymentStatusDto {
   pedidoId: number;
   estadoInterno: EstadoPedido;
@@ -821,36 +1073,13 @@ export async function crearPedidoManual(
     throw new Error('El pedido debe incluir al menos un ítem');
   }
 
-  // --- Cupón: validar y calcular descuento ---
-  let cuponDetalle: import('./cupon-engine.service').CuponDetalle | null = null;
-  let cuponDescuentoDecimal = new Prisma.Decimal(0);
-
-  if (input.cuponCodigo) {
-    const itemsParaValidar = input.items.map((it) => ({
-      productoId: it.productoWebId,
-      productoWebId: it.productoWebId,
-      productoPadreId: it.productoPadreId,
-      cantidad: it.cantidad,
-      precioUnitario: it.precioUnitario,
-    }));
-    const subtotalCalc = itemsParaValidar.reduce(
-      (sum, i) => sum + i.precioUnitario * i.cantidad,
-      0
-    );
-
-    const result = await cuponEngine.validarCupon({
-      empresaId: input.empresaId,
-      codigo: input.cuponCodigo,
-      usuarioId,
-      items: itemsParaValidar,
-      subtotal: subtotalCalc,
-    });
-
-    if (result.valido && result.detalle) {
-      cuponDetalle = result.detalle;
-      cuponDescuentoDecimal = new Prisma.Decimal(result.detalle.descuentoTotal);
-    }
-  }
+  const { cuponDetalle, cuponDescuentoDecimal } = await resolveCuponForPedidoCheckout(
+    input.empresaId,
+    usuarioId,
+    input.cuponCodigo,
+    input.items
+  );
+  const descuento = cuponDescuentoDecimal;
 
   let subtotalPedido = new Prisma.Decimal(0);
   const lineas: Array<{
@@ -869,23 +1098,43 @@ export async function crearPedidoManual(
   }
 
   const iva = new Prisma.Decimal(0);
-  const descuento = cuponDescuentoDecimal;
 
   let costoEnvio = new Prisma.Decimal(0);
   let formaEnvio: FormaEnvio | null = null;
   let checkoutEnvioSnapshot: Prisma.InputJsonValue | undefined;
+  let entregaCp: string | null = null;
+  let andreaniSucursalId: string | null = null;
+  let andreaniSucursalDescripcion: string | null = null;
+  let clienteDireccionPersist = input.clienteDireccion?.trim() || null;
 
   if (input.checkoutEnvio) {
     const v = await validateCheckoutEnvioForMp(input.empresaId, input.checkoutEnvio);
     costoEnvio = v.costoEnvio;
     formaEnvio = v.formaEnvio;
     checkoutEnvioSnapshot = v.snapshot;
+    entregaCp = input.checkoutEnvio.cpDestino.trim();
+    if (input.checkoutEnvio.deliveryType === 'agency') {
+      andreaniSucursalId = input.checkoutEnvio.agencyId?.trim() || null;
+      andreaniSucursalDescripcion = input.checkoutEnvio.agencyLabel?.trim() || null;
+    }
+    const addr = input.checkoutEnvio.address;
+    if (addr) {
+      const parts = [
+        addr.streetName,
+        addr.streetNumber,
+        addr.floor,
+        addr.department,
+        addr.city,
+        addr.state,
+        addr.zipCode,
+      ].filter((x) => x != null && String(x).trim() !== '');
+      clienteDireccionPersist = parts.join(', ');
+    }
   }
 
   const total = subtotalPedido.add(costoEnvio);
   const formaPagoValue = input.formaPago === 'efectivo' ? FormaPago.efectivo : FormaPago.transferencia;
 
-  // Armar datos de cupón
   const cuponIdForPedido = cuponDetalle?.cuponId ?? null;
   const cuponCodigoSnapshot = cuponDetalle?.codigo ?? null;
   const cuponDescuentoTotalVal = cuponDetalle ? Number(cuponDetalle.descuentoTotal) : null;
@@ -941,6 +1190,23 @@ export async function crearPedidoManual(
     },
   });
 
+  let cotizacion: Awaited<ReturnType<typeof registrarCotizacionSfactoryParaPedido>>;
+  try {
+    cotizacion = await registrarCotizacionSfactoryParaPedido(pedido.id);
+  } catch (e: unknown) {
+    const errMsg = e instanceof Error ? e.message : String(e);
+    await prisma.pedido.update({
+      where: { id: pedido.id },
+      data: {
+        estadoInterno: EstadoPedido.fallido,
+        sfactoryError: errMsg,
+        syncStatus: PedidoSyncStatus.error,
+        syncError: errMsg,
+      },
+    });
+    throw new Error(`No se pudo cotizar el pedido en S-Factory: ${errMsg}`);
+  }
+
   await adminNotificationService.notifyPedido({
     empresaId: input.empresaId,
     type: 'pedido.confirmation_required',
@@ -963,5 +1229,8 @@ export async function crearPedidoManual(
     externalOrderId: `WEB-${pedido.id}`,
     formaPago: input.formaPago,
     redirectPath: `/checkout/instrucciones-pago?pedidoId=${pedido.id}`,
+    subtotalProductos: cotizacion.sfactoryTotalProductos,
+    costoEnvio: Number(costoEnvio.toString()),
+    totalCobro: cotizacion.totalACobrar,
   };
 }

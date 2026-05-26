@@ -1,4 +1,3 @@
-import crypto from 'crypto';
 import {
   EstadoPedido,
   FormaPago,
@@ -19,6 +18,7 @@ import {
   reintentarFallidosSfactory,
 } from './pedido-checkout.service';
 import { sendPedidoStatusEmailAsync } from './pedido-email-notification.service';
+import { stableHash } from '../utils/sync-hash.utils';
 
 const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional();
 const SFACTORY_ESTADO_CANCELADO = process.env.SFACTORY_ORDEN_ESTADO_CANCELADO ?? '4';
@@ -81,8 +81,8 @@ function asJson(value: unknown): Prisma.InputJsonValue {
   return value as Prisma.InputJsonValue;
 }
 
-function stableHash(value: unknown): string {
-  return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+function stableHashPedidoPayload(value: unknown): string {
+  return stableHash(value);
 }
 
 function parseRemoteId(response: unknown): number | null {
@@ -604,8 +604,16 @@ export class PedidoSyncService {
       const remoteId = parseRemoteId(response) ?? pedido.sfactoryOrdenId;
       const remoteEstado = parseRemoteEstado(response);
       const estadoErp = mapRemoteOrderStatus(remoteEstado);
-      const hash = stableHash(response);
+      const hash = stableHashPedidoPayload(response);
       const now = new Date();
+
+      if (pedido.sfactoryLastPayloadHash === hash) {
+        await prisma.pedido.update({
+          where: { id: pedidoId },
+          data: { sfactoryLastReadAt: now },
+        });
+        return this.detalle(empresaId, pedidoId);
+      }
 
       await crearLogSfactory(
         pedidoId,
@@ -707,11 +715,27 @@ export class PedidoSyncService {
     });
 
     let sincronizados = 0;
+    let omitidos = 0;
     const errores: Array<{ pedidoId: number; error: string }> = [];
     for (const pedido of pedidos) {
       try {
+        const before = await prisma.pedido.findFirst({
+          where: { id: pedido.id },
+          select: { sfactoryLastPayloadHash: true, sfactoryLastReadAt: true },
+        });
         await this.syncDesdeSfactory(empresaId, pedido.id);
-        sincronizados++;
+        const after = await prisma.pedido.findFirst({
+          where: { id: pedido.id },
+          select: { sfactoryLastPayloadHash: true, sfactoryLastReadAt: true },
+        });
+        if (
+          before?.sfactoryLastPayloadHash === after?.sfactoryLastPayloadHash &&
+          before?.sfactoryLastReadAt !== after?.sfactoryLastReadAt
+        ) {
+          omitidos++;
+        } else {
+          sincronizados++;
+        }
       } catch (e: unknown) {
         errores.push({
           pedidoId: pedido.id,
@@ -719,7 +743,7 @@ export class PedidoSyncService {
         });
       }
     }
-    return { consultados: pedidos.length, sincronizados, errores };
+    return { consultados: pedidos.length, sincronizados, omitidos, errores };
   }
 
   async syncStockDesdeSfactory(empresaId: number, warehouseId?: number) {

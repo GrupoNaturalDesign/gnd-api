@@ -1,6 +1,6 @@
 import { Heading, Section, Text } from '@react-email/components';
 import * as React from 'react';
-import { BRAND_COLORS } from '../lib/email-brand';
+import { BRAND_COLORS, BRAND_DISPLAY_NAME } from '../lib/email-brand';
 import { BaseLayout } from './BaseLayout';
 
 export interface WelcomeEmailProps {
@@ -9,12 +9,12 @@ export interface WelcomeEmailProps {
 
 export function WelcomeEmail({ name }: WelcomeEmailProps): React.ReactElement {
   return (
-    <BaseLayout previewText={`Hola ${name}, bienvenido/a a GND Natural Design`}>
+    <BaseLayout previewText={`Hola ${name}, bienvenido/a a ${BRAND_DISPLAY_NAME}`}>
       <Section>
         <Heading style={h1}>¡Bienvenido/a!</Heading>
         <Text style={text}>Hola {name},</Text>
         <Text style={text}>
-          Gracias por completar tu registro en GND Natural Design. Ya podés explorar el catálogo y
+          Gracias por completar tu registro en {BRAND_DISPLAY_NAME}. Ya podés explorar el catálogo y
           realizar tus pedidos.
         </Text>
         <Text style={text}>Si necesitás ayuda, respondé a este correo o escribinos por WhatsApp.</Text>

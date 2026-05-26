@@ -1,4 +1,4 @@
-import { Heading, Section, Text } from '@react-email/components';
+import { Heading, Link, Section, Text } from '@react-email/components';
 import * as React from 'react';
 import { BRAND_COLORS } from '../lib/email-brand';
 import type { OrderEmailPayload } from '../types/email.types';
@@ -61,6 +61,19 @@ export function OrderStatusEmail(props: OrderStatusEmailProps): React.ReactEleme
             <Text style={value}>{props.paymentSummary}</Text>
           </>
         ) : null}
+        {props.trackingNumber ? (
+          <>
+            <Text style={label}>Seguimiento</Text>
+            <Text style={value}>Número: {props.trackingNumber}</Text>
+            {props.trackingUrl ? (
+              <Text style={value}>
+                <Link href={props.trackingUrl} style={trackLink}>
+                  Consultar estado del envío
+                </Link>
+              </Text>
+            ) : null}
+          </>
+        ) : null}
         {props.notes ? (
           <>
             <Text style={label}>Notas</Text>
@@ -88,7 +101,9 @@ export function OrderStatusEmail(props: OrderStatusEmailProps): React.ReactEleme
         <Text style={label}>Totales</Text>
         <Text style={value}>Ítems: {props.itemCount}</Text>
         <Text style={value}>Subtotal: {props.subtotalFormatted}</Text>
-        <Text style={value}>IVA: {props.ivaFormatted}</Text>
+        {props.shippingCostFormatted ? (
+          <Text style={value}>Envío: {props.shippingCostFormatted}</Text>
+        ) : null}
         <Text style={total}>Total: {props.totalFormatted}</Text>
       </Section>
     </BaseLayout>
@@ -129,4 +144,9 @@ const total: React.CSSProperties = {
   fontSize: '16px',
   fontWeight: 700,
   margin: '8px 0 0',
+};
+
+const trackLink: React.CSSProperties = {
+  color: BRAND_COLORS.red,
+  textDecoration: 'underline',
 };

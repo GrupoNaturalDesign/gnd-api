@@ -10,6 +10,9 @@ router.use(firebaseAuthMiddleware);
 // router.use(requireAdmin);
 router.use(shippingEmpresaMiddleware);
 
+router.get('/tracking', (req, res) => {
+  void shippingController.getTrackingQuery(req, res);
+});
 router.post('/quote', (req, res) => {
   void shippingController.quote(req, res);
 });

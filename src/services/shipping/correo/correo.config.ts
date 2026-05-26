@@ -2,6 +2,8 @@
  * MiCorreo API — URLs y constantes (única fuente de base URL por entorno).
  */
 
+import { getIntegrationsMode } from '../../../lib/integrations-mode';
+
 export type CorreoEnv = 'test' | 'prod';
 
 const MICORREO_BASE: Record<CorreoEnv, string> = {
@@ -18,24 +20,14 @@ export const CORREO_PATHS = {
   agencies: '/agencies',
 } as const;
 
-/** Entorno global (rutas de prueba, herramientas). Si `CORREO_ENV` no está, usa `CORREO_DEFAULT_ENV`. */
+/** Entorno MiCorreo según `INTEGRATIONS_ENV` (no BD). */
 export function resolveCorreoEnv(): CorreoEnv {
-  const explicit = process.env.CORREO_ENV?.trim().toLowerCase();
-  if (explicit === 'prod' || explicit === 'production') return 'prod';
-  if (
-    explicit === 'test' ||
-    explicit === 'sandbox' ||
-    explicit === 'qa' ||
-    explicit === 'apitest'
-  ) {
-    return 'test';
-  }
-  return process.env.CORREO_DEFAULT_ENV === 'prod' ? 'prod' : 'test';
+  return getIntegrationsMode();
 }
 
-/** Desde `EmpresaEnvioConfig.correoEnv`. */
-export function mapEmpresaCorreoEnv(raw: string): CorreoEnv {
-  return raw === 'prod' ? 'prod' : 'test';
+/** Alias de `resolveCorreoEnv` (legacy / observabilidad BD). */
+export function mapEmpresaCorreoEnv(_raw: string): CorreoEnv {
+  return resolveCorreoEnv();
 }
 
 export function getCorreoBaseUrlForEnv(env: CorreoEnv): string {

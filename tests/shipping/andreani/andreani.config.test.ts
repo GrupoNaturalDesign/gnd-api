@@ -93,13 +93,14 @@ describe('SH-A-01 — getAndreaniContratoSucursal', () => {
 });
 
 describe('SH-A-01 — mapEmpresaEnvioToAndreaniEnv', () => {
-  it('prod → prod', () => {
-    assert.strictEqual(mapEmpresaEnvioToAndreaniEnv('prod'), 'prod');
+  afterEach(() => {
+    delete process.env.INTEGRATIONS_ENV;
   });
-  it('test → test', () => {
-    assert.strictEqual(mapEmpresaEnvioToAndreaniEnv('test'), 'test');
-  });
-  it('cualquier otro valor → test', () => {
-    assert.strictEqual(mapEmpresaEnvioToAndreaniEnv('xyz'), 'test');
+
+  it('sigue INTEGRATIONS_ENV ignorando raw BD', () => {
+    process.env.INTEGRATIONS_ENV = 'production';
+    assert.strictEqual(mapEmpresaEnvioToAndreaniEnv('test'), 'prod');
+    process.env.INTEGRATIONS_ENV = 'test';
+    assert.strictEqual(mapEmpresaEnvioToAndreaniEnv('prod'), 'test');
   });
 });

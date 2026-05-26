@@ -8,6 +8,7 @@ import { sfactoryService } from '../sfactory/sfactory.service';
 import { ECOMMERCE_RUBROS_SFACTORY_IDS } from '../../config/ecommerce.config';
 import { calcularTodosLosPrecios, CUOTAS_FINANCIADO_DEFAULT } from '../../config/precios.config';
 import { getDbWriteConcurrency } from '../../lib/db-config';
+import { shouldUpdateStockPrecio } from '../../utils/sync-hash.utils';
 
 /** Códigos por request a S-Factory (evitar payloads enormes). */
 const BATCH_CODES = 80;
@@ -22,6 +23,10 @@ export interface StockPreciosSyncResult {
   warehouseId: number;
   codigosConsultados: number;
   variantesActualizadas: number;
+  /** Variantes sin cambios respecto a cache local (no se escribió en BD). */
+  variantesOmitidas: number;
+  /** Upserts de precio minorista por cambio de sale_price. */
+  preciosActualizados: number;
   /** Lotes lógicos (trozos de hasta BATCH_CODES códigos). */
   lotes: number;
   /** Total de llamadas HTTP a inventory_stock_items_by_warehouse_v2 (incluye reintentos por código omitido). */
@@ -129,13 +134,15 @@ export class StockPreciosSyncService {
         activoSfactory: true,
         productoPadre: { rubroId: { in: rubroIds } },
       },
-      select: { id: true, sfactoryCodigo: true },
+      select: { id: true, sfactoryCodigo: true, stockCache: true, precioCache: true },
     });
 
     const codigos = variantes.map((v) => v.sfactoryCodigo).filter(Boolean);
-    const idByCodigo = new Map(variantes.map((v) => [v.sfactoryCodigo, v.id]));
+    const varianteByCodigo = new Map(variantes.map((v) => [v.sfactoryCodigo, v]));
 
     let variantesActualizadas = 0;
+    let variantesOmitidas = 0;
+    let preciosActualizados = 0;
     let lotes = 0;
     let llamadasApi = 0;
     const codigosOmitidos: string[] = [];
@@ -153,15 +160,15 @@ export class StockPreciosSyncService {
 
       const tareas = rows
         .map((row) => {
-          const pwId = idByCodigo.get(row.item_code);
-          if (pwId == null) return null;
-          return { row, pwId };
+          const variante = varianteByCodigo.get(row.item_code);
+          if (variante == null) return null;
+          return { row, variante };
         })
         .filter(
-          (x): x is { row: StockRow; pwId: number } => x != null
+          (x): x is { row: StockRow; variante: (typeof variantes)[number] } => x != null
         );
 
-      await runPool(tareas, getDbWriteConcurrency(), async ({ row, pwId }) => {
+      await runPool(tareas, getDbWriteConcurrency(), async ({ row, variante }) => {
         const stock = Number(row.stock ?? 0);
         const saleRaw = row.sale_price != null ? Number(row.sale_price) : null;
         const saleOk =
@@ -169,18 +176,31 @@ export class StockPreciosSyncService {
             ? saleRaw
             : null;
 
+        const decision = shouldUpdateStockPrecio(
+          { stockCache: variante.stockCache, precioCache: variante.precioCache },
+          { stock, saleOk }
+        );
+        if (decision.skip) {
+          variantesOmitidas++;
+          return;
+        }
+
+        const updateData: Prisma.ProductoWebUpdateInput = {
+          ultimaSyncSfactory: new Date(),
+        };
+        if (decision.updateStock) {
+          updateData.stockCache = new Prisma.Decimal(stock);
+        }
+        if (decision.updatePrecio && saleOk != null) {
+          updateData.precioCache = new Prisma.Decimal(saleOk);
+        }
+
         await prisma.productoWeb.update({
-          where: { id: pwId },
-          data: {
-            stockCache: new Prisma.Decimal(stock),
-            ultimaSyncSfactory: new Date(),
-            ...(saleOk != null
-              ? { precioCache: new Prisma.Decimal(saleOk) }
-              : {}),
-          },
+          where: { id: variante.id },
+          data: updateData,
         });
 
-        if (saleOk != null) {
+        if (decision.updatePrecio && saleOk != null) {
           const preciosDerivados = calcularTodosLosPrecios(
             saleOk,
             CUOTAS_FINANCIADO_DEFAULT
@@ -188,12 +208,12 @@ export class StockPreciosSyncService {
           await prisma.productoPrecio.upsert({
             where: {
               unique_producto_tipo: {
-                productoWebId: pwId,
+                productoWebId: variante.id,
                 tipoCliente: 'minorista',
               },
             },
             create: {
-              productoWebId: pwId,
+              productoWebId: variante.id,
               tipoCliente: 'minorista',
               precioLista: new Prisma.Decimal(saleOk),
               precio: new Prisma.Decimal(saleOk),
@@ -215,10 +235,11 @@ export class StockPreciosSyncService {
               precioSinImp: new Prisma.Decimal(preciosDerivados.precioSinImp),
             },
           });
+          preciosActualizados++;
         }
-      });
 
-      variantesActualizadas += tareas.length;
+        variantesActualizadas++;
+      });
     }
 
     if (variantesActualizadas === 0 && codigos.length > 0) {
@@ -248,6 +269,8 @@ export class StockPreciosSyncService {
       warehouseId: wid,
       codigosConsultados: codigos.length,
       variantesActualizadas,
+      variantesOmitidas,
+      preciosActualizados,
       lotes,
       llamadasApi,
       codigosOmitidos,

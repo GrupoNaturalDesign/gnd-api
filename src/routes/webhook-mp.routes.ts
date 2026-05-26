@@ -13,7 +13,7 @@ const mpWebhookLimiter = rateLimit({
 });
 
 router.post('/', mpWebhookLimiter, (req, res) => {
-  webhookMpController.recibirWebhook(req, res);
+  void webhookMpController.recibirWebhook(req, res);
 });
 
 export default router;

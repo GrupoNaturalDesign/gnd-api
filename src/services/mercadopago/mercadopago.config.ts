@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import { isIntegrationsLive } from '../../lib/integrations-mode';
 import { MercadoPagoConfigError } from './mercadopago.errors';
 
 dotenv.config();
@@ -8,21 +9,20 @@ export type MercadoPagoMode = 'sandbox' | 'production';
 /**
  * Credenciales y modo (sandbox vs producción).
  *
- * Variables:
- * - Producción: NODE_ENV=production y MERCADOPAGO_ENV=production →
- *   `MERCADOPAGO_ACCESS_TOKEN_PROD` o `MERCADOPAGO_ACCESS_TOKEN`
+ * Modo live: `INTEGRATIONS_ENV=production` (ver `api/docs/integrations-env.md`).
+ * - Producción: `MERCADOPAGO_ACCESS_TOKEN_PROD` o `MERCADOPAGO_ACCESS_TOKEN`
  * - Sandbox / QA: `MERCADOPAGO_ACCESS_TOKEN_TEST`, `MERCADOPAGO_ACCESS_TOKEN_QA` o `MERCADOPAGO_ACCESS_TOKEN`
  *
  * Webhook:
  * - `MP_WEBHOOK_URL`: URL completa del endpoint (ej. `https://dominio.com/api/webhooks/mercadopago`).
- *   En live (`MERCADOPAGO_ENV=production` + `NODE_ENV=production`) debe ser HTTPS.
+ *   En live (`INTEGRATIONS_ENV=production`) debe ser HTTPS.
  * - Si no está definida, en desarrollo se usa `NGROK_URL` + `/api/webhooks/mercadopago`.
  * - Firma: `MERCADOPAGO_WEBHOOK_SECRET` (secreto de la app en el panel MP). En live se exige si
  *   `MP_WEBHOOK_SIGNATURE_REQUIRED=true` (default recomendado en producción).
  * - `MERCADOPAGO_COLLECTOR_ID`: id numérico del cobrador en live (validación opcional pero recomendada).
  */
 function isLiveMode(): boolean {
-  return process.env.NODE_ENV === 'production' && process.env.MERCADOPAGO_ENV === 'production';
+  return isIntegrationsLive();
 }
 
 function trimBaseUrl(url: string): string {
@@ -127,7 +127,7 @@ export const mercadoPagoConfig = {
   assertWebhookUrlAllowed(url: string): void {
     if (!/^https:\/\//i.test(url) && isLiveMode()) {
       throw new MercadoPagoConfigError(
-        'MP_WEBHOOK_URL debe usar HTTPS en producción live (MERCADOPAGO_ENV=production).'
+        'MP_WEBHOOK_URL debe usar HTTPS en producción live (INTEGRATIONS_ENV=production).'
       );
     }
   },
@@ -137,6 +137,6 @@ export const mercadoPagoConfig = {
     const raw = process.env.CHECKOUT_MP_EXPIRES_MINUTES?.trim();
     const n = raw ? Number(raw) : NaN;
     if (Number.isFinite(n) && n >= 5 && n <= 7 * 24 * 60) return Math.floor(n);
-    return 120;
+    return 30;
   },
 };

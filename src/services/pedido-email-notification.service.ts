@@ -26,7 +26,7 @@ function confirmLeadForEntrega(tipo: ReturnType<typeof resolvePedidoEntregaFromP
     case 'retiro_tienda':
       return 'Recibimos tu pedido y lo estamos preparando. Te avisaremos por email cuando esté listo para retirar.';
     case 'envio_domicilio':
-      return 'Tu pedido fue confirmado. Te avisaremos por email cuando despachemos.';
+      return '';
     case 'envio_sucursal':
       return 'Tu pedido fue confirmado. Te avisaremos por email cuando el paquete esté en la sucursal indicada.';
     default:
@@ -37,11 +37,18 @@ function confirmLeadForEntrega(tipo: ReturnType<typeof resolvePedidoEntregaFromP
 export function buildOrderEmailPayloadFromPedido(
   pedido: PedidoConItems,
   status: OrderStatus,
-  options?: { notes?: string; statusUiOverrides?: OrderStatusUiOverrides; deliveryInstructions?: string }
+  options?: {
+    notes?: string;
+    statusUiOverrides?: OrderStatusUiOverrides;
+    deliveryInstructions?: string;
+    trackingNumber?: string;
+    trackingUrl?: string;
+  }
 ): OrderEmailPayload {
   const itemUnits = pedido.items.reduce((acc, it) => acc + Number(it.cantidad), 0);
   const descuento = Number(pedido.descuento);
   const totalNeto = Number(pedido.total) - descuento;
+  const costoEnvio = Number(pedido.costoEnvio ?? 0);
   const entrega = resolvePedidoEntregaFromPedido(pedido);
 
   let statusUiOverrides = options?.statusUiOverrides;
@@ -71,10 +78,13 @@ export function buildOrderEmailPayloadFromPedido(
     itemCount: pedido.cantidadPrendas ?? Math.round(itemUnits),
     subtotalFormatted: formatArs(Number(pedido.subtotal)),
     ivaFormatted: formatArs(Number(pedido.iva)),
+    ...(costoEnvio > 0 ? { shippingCostFormatted: formatArs(costoEnvio) } : {}),
     totalFormatted: formatArs(totalNeto >= 0 ? totalNeto : Number(pedido.total)),
     status,
     notes: options?.notes ?? pedido.observaciones ?? undefined,
     statusUiOverrides,
+    ...(options?.trackingNumber ? { trackingNumber: options.trackingNumber } : {}),
+    ...(options?.trackingUrl ? { trackingUrl: options.trackingUrl } : {}),
   };
 }
 
@@ -95,6 +105,8 @@ export async function sendPedidoStatusEmail(
     sendInternal?: boolean;
     statusUiOverrides?: OrderStatusUiOverrides;
     deliveryInstructions?: string;
+    trackingNumber?: string;
+    trackingUrl?: string;
   }
 ): Promise<void> {
   const pedido = await prisma.pedido.findUnique({
@@ -129,6 +141,8 @@ export function sendPedidoStatusEmailAsync(
     sendInternal?: boolean;
     statusUiOverrides?: OrderStatusUiOverrides;
     deliveryInstructions?: string;
+    trackingNumber?: string;
+    trackingUrl?: string;
   }
 ): void {
   void sendPedidoStatusEmail(pedidoId, status, options);

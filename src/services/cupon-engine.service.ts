@@ -1,4 +1,5 @@
 import prisma from '../lib/prisma';
+import { dateOnlyFromStoredDate, todayDateOnlyAR } from '../utils/date-only.util';
 
 export interface CarritoItem {
   productoId: number;
@@ -66,12 +67,16 @@ export class CuponEngineService {
       return { valido: false, error: 'Cupón no encontrado o inactivo' };
     }
 
-    const ahora = new Date();
-    if (ahora < cupon.fechaInicio) {
+    const hoy = todayDateOnlyAR();
+    const inicio = dateOnlyFromStoredDate(cupon.fechaInicio);
+    if (hoy < inicio) {
       return { valido: false, error: 'El cupón aún no está vigente' };
     }
-    if (cupon.fechaFin && ahora > cupon.fechaFin) {
-      return { valido: false, error: 'El cupón ha expirado' };
+    if (cupon.fechaFin) {
+      const fin = dateOnlyFromStoredDate(cupon.fechaFin);
+      if (hoy > fin) {
+        return { valido: false, error: 'El cupón ha expirado' };
+      }
     }
 
     if (cupon.montoMinimo && subtotal < Number(cupon.montoMinimo)) {
