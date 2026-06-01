@@ -1,6 +1,7 @@
 import prisma from '../lib/prisma';
 import type { AdminSearchResult } from '../types/admin-search.types';
 import { buildAdminListHref } from '../utils/admin-search-href';
+import { buildProductoPadreTextSearchFilter } from '../utils/producto-padre-search.util';
 import { pedidoSyncService } from './pedido-sync.service';
 import { clientesService } from './clientes.service';
 import { usuarioAdminService } from './usuario-admin.service';
@@ -30,11 +31,7 @@ export class AdminSearchService {
     const rows = await prisma.productoPadre.findMany({
       where: {
         empresaId,
-        OR: [
-          { nombre: { contains: q } },
-          { descripcion: { contains: q } },
-          { codigoAgrupacion: { contains: q } },
-        ],
+        ...(await buildProductoPadreTextSearchFilter(q, { empresaId })),
       },
       select: { id: true, nombre: true, codigoAgrupacion: true, publicado: true },
       take,

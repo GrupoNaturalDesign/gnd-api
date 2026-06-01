@@ -19,8 +19,10 @@ import {
   mergeSFactoryProductWithItemData,
 } from '../utils/sfactory-product-from-item-data';
 import { extraerCodigoAgrupacion } from './producto-agrupacion.service';
+import { generoFiltroAValorBd } from '../constants/variantes-filtros';
 import { ECOMMERCE_RUBROS_SFACTORY_IDS, isRubroPermitidoEcommerce } from '../config/ecommerce.config';
 import { calcularTodosLosPrecios, CUOTAS_FINANCIADO_DEFAULT } from '../config/precios.config';
+import { buildProductoPadreTextSearchFilter } from '../utils/producto-padre-search.util';
 
 export class ProductoService {
   /**
@@ -41,6 +43,12 @@ export class ProductoService {
     // Ecommerce: solo productos de rubros permitidos cuando hay empresaId
     const rubroIdsEcommerce =
       params.empresaId !== undefined ? await this.getRubroIdsEcommerce(params.empresaId) : [];
+
+    const searchFilter = params.search
+      ? await buildProductoPadreTextSearchFilter(params.search, {
+          empresaId: params.empresaId,
+        })
+      : null;
 
     const where: Prisma.ProductoPadreWhereInput = {
       ...(params.empresaId !== undefined && {
@@ -66,28 +74,10 @@ export class ProductoService {
       ...(params.destacado !== undefined && {
         destacado: params.destacado,
       }),
-      ...((params.genero || params.sexo) && {
-        genero: (params.genero || params.sexo) as string,
+      ...(generoFiltroAValorBd(params.genero || params.sexo) && {
+        genero: generoFiltroAValorBd(params.genero || params.sexo)!,
       }),
-      ...(params.search && {
-        OR: [
-          {
-            nombre: {
-              contains: params.search,
-            },
-          },
-          {
-            descripcion: {
-              contains: params.search,
-            },
-          },
-          {
-            codigoAgrupacion: {
-              contains: params.search,
-            },
-          },
-        ],
-      }),
+      ...(searchFilter ?? {}),
     };
 
     const include: Prisma.ProductoPadreInclude = {
@@ -731,6 +721,13 @@ export class ProductoService {
           ? { in: rubroIdsEcommerce }
           : undefined;
 
+    const searchFilter = params.search
+      ? await buildProductoPadreTextSearchFilter(params.search, {
+          empresaId: params.empresaId,
+          includeDescripcionCorta: true,
+        })
+      : null;
+
     // Construir where clause - SOLO productos publicados y solo rubros ecommerce (si hay)
     const where: Prisma.ProductoPadreWhereInput = {
       empresaId: params.empresaId,
@@ -749,34 +746,10 @@ export class ProductoService {
       ...(params.subrubroId && {
         subrubroId: params.subrubroId,
       }),
-      ...((params.genero || params.sexo) && {
-        genero: (params.genero || params.sexo) as string,
+      ...(generoFiltroAValorBd(params.genero || params.sexo) && {
+        genero: generoFiltroAValorBd(params.genero || params.sexo)!,
       }),
-      // Búsqueda en nombre, descripción y código (case-insensitive en MySQL por collation)
-      ...(params.search && {
-        OR: [
-          {
-            nombre: {
-              contains: params.search,
-            },
-          },
-          {
-            descripcion: {
-              contains: params.search,
-            },
-          },
-          {
-            descripcionCorta: {
-              contains: params.search,
-            },
-          },
-          {
-            codigoAgrupacion: {
-              contains: params.search,
-            },
-          },
-        ],
-      }),
+      ...(searchFilter ?? {}),
     };
 
     // Ordenamiento
@@ -921,12 +894,16 @@ export class ProductoService {
           ? { in: rubroIdsEcommerce }
           : undefined;
 
-    // "TODOS" = no filtrar por genero/sexo (valor del front para "todos los géneros")
-    const generoOSexo = params.genero || params.sexo;
-    const filtrarPorGenero =
-      generoOSexo &&
-      String(generoOSexo).toUpperCase() !== 'TODOS' &&
-      String(generoOSexo).trim() !== '';
+    // "TODOS" = no filtrar; URL puede enviar dama/hombre/unisex → valor BD
+    const generoBd = generoFiltroAValorBd(params.genero || params.sexo);
+    const filtrarPorGenero = !!generoBd;
+
+    const searchFilter = params.search
+      ? await buildProductoPadreTextSearchFilter(params.search, {
+          empresaId: params.empresaId,
+          includeDescripcionCorta: true,
+        })
+      : null;
 
     // Construir where clause - SOLO productos publicados y solo rubros ecommerce (si hay)
     const where: Prisma.ProductoPadreWhereInput = {
@@ -942,7 +919,7 @@ export class ProductoService {
             stockCache: { gt: 0 },
           }),
           ...(filtrarPorGenero && {
-            sexo: (generoOSexo as string).trim(),
+            sexo: generoBd!,
           }),
           ...(params.color && {
             color: params.color,
@@ -960,17 +937,9 @@ export class ProductoService {
         subrubroId: params.subrubroId,
       }),
       ...(filtrarPorGenero && {
-        genero: (generoOSexo as string).trim(),
+        genero: generoBd!,
       }),
-      // Búsqueda
-      ...(params.search && {
-        OR: [
-          { nombre: { contains: params.search } },
-          { descripcion: { contains: params.search } },
-          { descripcionCorta: { contains: params.search } },
-          { codigoAgrupacion: { contains: params.search } },
-        ],
-      }),
+      ...(searchFilter ?? {}),
     };
 
     // Ordenamiento
@@ -1000,7 +969,7 @@ export class ProductoService {
       productosWeb: {
         where: {
           activoSfactory: true,
-          ...(filtrarPorGenero && { sexo: (generoOSexo as string).trim() }),
+          ...(filtrarPorGenero && { sexo: generoBd! }),
           ...(params.color && { color: params.color }),
           ...(params.talle && { talle: params.talle }),
           ...(params.tieneStock && { stockCache: { gt: 0 } }),

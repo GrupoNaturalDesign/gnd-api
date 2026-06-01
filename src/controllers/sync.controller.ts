@@ -106,7 +106,12 @@ export class SyncController {
     }
 
     try {
-      const resultado = await productoSyncService.syncProductos(empresaId);
+      const forceReprocess =
+        req.query.forceReprocess === 'true' ||
+        (req.body && typeof req.body === 'object' && (req.body as { forceReprocess?: boolean }).forceReprocess === true);
+      const resultado = await productoSyncService.syncProductos(empresaId, {
+        forceReprocess,
+      });
       await setSyncProductosLastRun(empresaId);
 
       let stockPrecios: Awaited<

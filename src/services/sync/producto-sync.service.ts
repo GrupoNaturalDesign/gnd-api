@@ -16,6 +16,15 @@ import {
   hashProductoWebFields,
   resolveGruposAfectados,
 } from '../../utils/sync-hash.utils';
+import {
+  codigoDesdeItemSfactory,
+  obtenerStockPorCodigos,
+  resolverGruposConStock,
+} from '../../utils/sfactory-stock-fetch.utils';
+import {
+  aliasCodigosAgrupacionPadre,
+  resolverColorVariante,
+} from '../../utils/sku-line-fusion.utils';
 
 // Type helper for Prisma transaction
 type PrismaTransaction = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
@@ -52,6 +61,84 @@ function toStringOrNull(value: any): string | null {
   return String(value);
 }
 
+type PadreSyncRow = {
+  id: number;
+  codigoAgrupacion: string;
+  nombre: string;
+  descripcion: string | null;
+  rubroId: number | null;
+  subrubroId: number | null;
+  linea: string | null;
+  material: string | null;
+  um: string | null;
+  coloresDisponibles: Prisma.JsonValue;
+  tallesDisponibles: Prisma.JsonValue;
+  genero: string | null;
+};
+
+function padresDesdeAliasCodigo(
+  codigoAgrupacion: string,
+  padreByAgrupacion: Map<string, PadreSyncRow>
+): PadreSyncRow[] {
+  const porId = new Map<number, PadreSyncRow>();
+  for (const alias of aliasCodigosAgrupacionPadre(codigoAgrupacion)) {
+    const padre = padreByAgrupacion.get(alias);
+    if (padre) porId.set(padre.id, padre);
+  }
+  return [...porId.values()];
+}
+
+async function consolidarPadresEnCanonico(
+  tx: PrismaTransaction,
+  empresaId: number,
+  codigoAgrupacion: string,
+  nombre: string,
+  candidatos: PadreSyncRow[],
+  padreByAgrupacion: Map<string, PadreSyncRow>
+): Promise<PadreSyncRow> {
+  const canonico = candidatos.reduce((a, b) => (a.id < b.id ? a : b));
+
+  for (const otro of candidatos) {
+    if (otro.id === canonico.id) continue;
+    await tx.productoWeb.updateMany({
+      where: { productoPadreId: otro.id, empresaId },
+      data: { productoPadreId: canonico.id },
+    });
+    await tx.productoPadre.delete({ where: { id: otro.id } });
+    padreByAgrupacion.delete(otro.codigoAgrupacion);
+  }
+
+  if (canonico.codigoAgrupacion !== codigoAgrupacion) {
+    const actualizado = await tx.productoPadre.update({
+      where: { id: canonico.id },
+      data: {
+        codigoAgrupacion,
+        slug: generarSlug(nombre, codigoAgrupacion),
+      },
+      select: {
+        id: true,
+        codigoAgrupacion: true,
+        nombre: true,
+        descripcion: true,
+        rubroId: true,
+        subrubroId: true,
+        linea: true,
+        material: true,
+        um: true,
+        coloresDisponibles: true,
+        tallesDisponibles: true,
+        genero: true,
+      },
+    });
+    padreByAgrupacion.delete(canonico.codigoAgrupacion);
+    padreByAgrupacion.set(codigoAgrupacion, actualizado);
+    return actualizado;
+  }
+
+  padreByAgrupacion.set(codigoAgrupacion, canonico);
+  return canonico;
+}
+
 export class ProductoSyncService {
   /**
    * PASO 1: Sincronizar productos desde SFactory a productos_sfactory (fuente de verdad)
@@ -77,6 +164,29 @@ export class ProductoSyncService {
         return rubroId != null && ECOMMERCE_RUBROS_SFACTORY_IDS.includes(Number(rubroId));
       });
       productos = productosFiltrados;
+
+      const gruposRemotos = agruparProductosPorCodigoBase(productos);
+      const codigosRemotosLista = [
+        ...new Set(
+          productos
+            .map((p) => codigoDesdeItemSfactory(p as { Codigo?: string; codigo?: string }))
+            .filter(Boolean)
+        ),
+      ];
+
+      let codigosPermitidos = new Set<string>(codigosRemotosLista);
+      let gruposSinStock = 0;
+      let gruposConStock = gruposRemotos.size;
+      let llamadasStockInventario = 0;
+
+      if (codigosRemotosLista.length > 0) {
+        const { stockPorCodigo, llamadasApi } = await obtenerStockPorCodigos(codigosRemotosLista);
+        llamadasStockInventario = llamadasApi;
+        const filtroGrupo = resolverGruposConStock(gruposRemotos, stockPorCodigo);
+        codigosPermitidos = filtroGrupo.codigosPermitidos;
+        gruposSinStock = filtroGrupo.gruposSinStock;
+        gruposConStock = filtroGrupo.clavesGrupoConStock.size;
+      }
 
       const rubrosEcommerce = await prisma.rubro.findMany({
         where: { empresaId, sfactoryId: { in: ECOMMERCE_RUBROS_SFACTORY_IDS } },
@@ -125,6 +235,7 @@ export class ProductoSyncService {
       let insertados = 0;
       let actualizados = 0;
       let omitidos = 0;
+      let omitidosSinStockGrupo = 0;
       const errores: Array<{ codigo: string; error: string }> = [];
 
       // Procesar en lotes para mejor performance
@@ -139,6 +250,11 @@ export class ProductoSyncService {
             try {
               const codigo = String((producto as any).Codigo || (producto as any).codigo || '');
               if (!codigo) continue;
+
+              if (!codigosPermitidos.has(codigo)) {
+                omitidosSinStockGrupo++;
+                continue;
+              }
 
               codigosRemotos.add(codigo);
 
@@ -282,6 +398,10 @@ export class ProductoSyncService {
         insertados,
         actualizados,
         omitidos,
+        omitidosSinStockGrupo,
+        gruposSinStock,
+        gruposConStock,
+        llamadasStockInventario,
         codigosAfectados,
         errores: errores.length,
         detallesErrores: errores,
@@ -298,10 +418,10 @@ export class ProductoSyncService {
    */
   async procesarProductosDesdeSfactory(
     empresaId: number = 1,
-    options?: { codigosAfectados?: Set<string> }
+    options?: { codigosAfectados?: Set<string>; forceReprocess?: boolean }
   ) {
     try {
-      const codigosAfectados = options?.codigosAfectados;
+      const codigosAfectados = options?.forceReprocess ? undefined : options?.codigosAfectados;
       if (codigosAfectados && codigosAfectados.size === 0) {
         return {
           procesados: 0,
@@ -326,6 +446,7 @@ export class ProductoSyncService {
       const productosSfactory = await prisma.productoSfactory.findMany({
         where: {
           empresaId,
+          activo: 'S',
           ...(rubroIdsEcommerce.length > 0 && { rubro_id: { in: rubroIdsEcommerce } }),
         },
         orderBy: { codigo: 'asc' },
@@ -402,6 +523,31 @@ export class ProductoSyncService {
       let gruposArray = Array.from(grupos.entries());
       let gruposProcesados = gruposArray.length;
       let gruposOmitidos = 0;
+      let gruposOmitidosSinStock = 0;
+
+      const codigosParaStock = productos
+        .map((p) => codigoDesdeItemSfactory(p as { Codigo?: string; codigo?: string }))
+        .filter(Boolean);
+      if (codigosParaStock.length > 0) {
+        const { stockPorCodigo } = await obtenerStockPorCodigos(codigosParaStock);
+        const { clavesGrupoConStock, gruposSinStock } = resolverGruposConStock(grupos, stockPorCodigo);
+        gruposOmitidosSinStock = gruposSinStock;
+        const antes = gruposArray.length;
+        gruposArray = gruposArray.filter(([clave]) => clavesGrupoConStock.has(clave));
+        gruposProcesados = gruposArray.length;
+        gruposOmitidos += antes - gruposProcesados;
+
+        const clavesSinStock = [...grupos.keys()].filter((k) => !clavesGrupoConStock.has(k));
+        if (clavesSinStock.length > 0) {
+          await prisma.productoWeb.updateMany({
+            where: {
+              empresaId,
+              productoPadre: { codigoAgrupacion: { in: clavesSinStock } },
+            },
+            data: { activoSfactory: false },
+          });
+        }
+      }
 
       if (codigosAfectados && codigosAfectados.size > 0) {
         const gruposAfectados = resolveGruposAfectados(
@@ -549,7 +695,33 @@ export class ProductoSyncService {
                 genero: sexoNormalizado,
               };
 
-              const padreExistente = padreByAgrupacion.get(codigoAgrupacion);
+              const padresAlias = padresDesdeAliasCodigo(codigoAgrupacion, padreByAgrupacion);
+              let padreExistente =
+                padreByAgrupacion.get(codigoAgrupacion) ?? padresAlias[0] ?? null;
+
+              if (padresAlias.length > 1) {
+                padreExistente = await consolidarPadresEnCanonico(
+                  tx,
+                  empresaId,
+                  codigoAgrupacion,
+                  nombre,
+                  padresAlias,
+                  padreByAgrupacion
+                );
+              } else if (
+                padreExistente &&
+                padreExistente.codigoAgrupacion !== codigoAgrupacion
+              ) {
+                padreExistente = await consolidarPadresEnCanonico(
+                  tx,
+                  empresaId,
+                  codigoAgrupacion,
+                  nombre,
+                  [padreExistente],
+                  padreByAgrupacion
+                );
+              }
+
               const padreHash = hashProductoPadreFields(padrePayload);
               const padreSinCambios =
                 padreExistente != null &&
@@ -605,18 +777,22 @@ export class ProductoSyncService {
 
                   const productoSfactoryItem = productosSfactoryMap.get(codigoStr);
 
-                  let color = item.color;
-                  if (!color && productoSfactoryItem) {
+                  let talle = item.talle;
+                  let color = resolverColorVariante(item.color, null, codigoStr);
+                  if (productoSfactoryItem) {
                     const parseado = parsearNombreProducto(
                       productoSfactoryItem.descripcion ||
                         productoSfactoryItem.descrip_corta ||
                         codigoStr,
                       codigoStr
                     );
-                    color = parseado.color;
+                    color = resolverColorVariante(
+                      parseado.color,
+                      item.color,
+                      codigoStr
+                    );
+                    if (!talle) talle = parseado.talle;
                   }
-
-                  const talle = item.talle;
                   const nombreVariante = nombre;
                   const sfactoryId =
                     productoSfactoryItem?.sfactory_id ||
@@ -766,6 +942,7 @@ export class ProductoSyncService {
         gruposCreados: grupos.size,
         gruposProcesados,
         gruposOmitidos,
+        gruposOmitidosSinStock,
         productosPadreCreados,
         productosWebCreados,
         productosWebOmitidos,
@@ -1143,16 +1320,17 @@ export class ProductoSyncService {
 
         if (!codigoStr) continue;
 
-        let color = item.color;
-        if (!color) {
-          const parseado = parsearNombreProducto(
-            productoSfactory.descripcion || productoSfactory.descrip_corta || codigoStr,
-            codigoStr
-          );
-          color = parseado.color;
-        }
-
-        const talle = item.talle;
+        let talle = item.talle;
+        const parseado = parsearNombreProducto(
+          productoSfactory.descripcion || productoSfactory.descrip_corta || codigoStr,
+          codigoStr
+        );
+        const color = resolverColorVariante(
+          parseado.color,
+          item.color,
+          codigoStr
+        );
+        if (!talle) talle = parseado.talle;
         const nombreVariante = nombre;
         const descripcionCompleta = '';
         const sfactoryId = productoSfactory.sfactory_id || (producto as any).id || (producto as any).Id || 0;
@@ -1240,11 +1418,12 @@ export class ProductoSyncService {
   /**
    * Método principal que ejecuta ambos pasos
    */
-  async syncProductos(empresaId: number = 1) {
+  async syncProductos(empresaId: number = 1, options?: { forceReprocess?: boolean }) {
     const syncSfactory = await this.syncProductosSfactory(empresaId);
 
     const procesamiento = await this.procesarProductosDesdeSfactory(empresaId, {
       codigosAfectados: syncSfactory.codigosAfectados,
+      forceReprocess: options?.forceReprocess,
     });
 
     const resultado = {
@@ -1271,6 +1450,10 @@ export class ProductoSyncService {
     console.log(`   • Insertados: ${syncSfactory.insertados}`);
     console.log(`   • Actualizados: ${syncSfactory.actualizados}`);
     console.log(`   • Omitidos (sin cambios): ${syncSfactory.omitidos}`);
+    console.log(`   • Omitidos (grupo sin stock en depósito): ${syncSfactory.omitidosSinStockGrupo ?? 0}`);
+    console.log(`   • Grupos con stock: ${syncSfactory.gruposConStock ?? 0}`);
+    console.log(`   • Grupos sin stock (omitidos): ${syncSfactory.gruposSinStock ?? 0}`);
+    console.log(`   • Consultas inventario (lotes): ${syncSfactory.llamadasStockInventario ?? 0}`);
     console.log(`   • Códigos afectados paso 2: ${syncSfactory.codigosAfectados.size}`);
     console.log(`   • Errores: ${syncSfactory.errores}`);
     if (syncSfactory.detallesErrores && syncSfactory.detallesErrores.length > 0) {
@@ -1287,6 +1470,7 @@ export class ProductoSyncService {
     console.log(`   • Grupos totales catálogo: ${procesamiento.gruposCreados}`);
     console.log(`   • Grupos procesados: ${procesamiento.gruposProcesados}`);
     console.log(`   • Grupos omitidos: ${procesamiento.gruposOmitidos}`);
+    console.log(`   • Grupos omitidos por sin stock: ${procesamiento.gruposOmitidosSinStock ?? 0}`);
     console.log(`   • Productos padre escritos: ${procesamiento.productosPadreCreados}`);
     console.log(`   • Variantes escritas: ${procesamiento.productosWebCreados}`);
     console.log(`   • Variantes omitidas: ${procesamiento.productosWebOmitidos}`);

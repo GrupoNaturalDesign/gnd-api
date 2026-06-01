@@ -35,6 +35,10 @@ router.post('/manual', firebaseAuthMiddleware, (req, res) => {
   void checkoutController.iniciarPagoManual(req, res);
 });
 
+router.get('/config-precios', (req, res) => {
+  void checkoutController.getPrecioConfigPublic(req, res);
+});
+
 router.get('/datos-bancarios', (req, res) => {
   void checkoutController.getDatosBancariosPublic(req, res);
 });

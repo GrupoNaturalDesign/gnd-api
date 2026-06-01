@@ -12,6 +12,7 @@ import {
   ShippingValidationError,
 } from '../services/shipping/shipping.errors';
 import { empresaDatosBancariosService } from '../services/empresa-datos-bancarios.service';
+import { empresaConfigService } from '../services/empresa-config.service';
 import { getInstruccionesPagoForPedido } from '../services/pedido-payment-instructions.service';
 
 function parseParcelForCheckout(raw: unknown): CheckoutEnvioClientPayload['parcel'] | null {
@@ -447,6 +448,29 @@ export class CheckoutController {
       res.status(500).json({
         success: false,
         error: 'Error al crear pedido',
+        message,
+      });
+    }
+  }
+
+  /** GET /api/checkout/config-precios — config de precios pública para la tienda. */
+  async getPrecioConfigPublic(_req: Request, res: Response): Promise<void> {
+    try {
+      const empresaId = getCheckoutEmpresaIdFromEnv();
+      const config = await empresaConfigService.getPrecioConfig(empresaId);
+      res.json({
+        success: true,
+        data: {
+          descuentoTransferencia: config.descuentoTransferencia,
+          iva: config.iva,
+          cuotasFinanciado: config.cuotasFinanciado,
+        },
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(500).json({
+        success: false,
+        error: 'Error al obtener configuración de precios',
         message,
       });
     }

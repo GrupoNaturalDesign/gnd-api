@@ -1,23 +1,17 @@
 import { Prisma } from '@prisma/client';
 import prisma from '../../lib/prisma';
-import {
-  extractMissingItemCodeFromError,
-  isSFactoryMissingItemError,
-} from '../../lib/sfactory-stock-errors';
-import { sfactoryService } from '../sfactory/sfactory.service';
 import { ECOMMERCE_RUBROS_SFACTORY_IDS } from '../../config/ecommerce.config';
 import { calcularTodosLosPrecios, CUOTAS_FINANCIADO_DEFAULT } from '../../config/precios.config';
 import { getDbWriteConcurrency } from '../../lib/db-config';
 import { shouldUpdateStockPrecio } from '../../utils/sync-hash.utils';
+import {
+  fetchStockRowsResilient,
+  getEcommerceWarehouseId,
+  STOCK_BATCH_CODES,
+  type StockRow,
+} from '../../utils/sfactory-stock-fetch.utils';
 
-/** Códigos por request a S-Factory (evitar payloads enormes). */
-const BATCH_CODES = 80;
-
-type StockRow = {
-  item_code: string;
-  stock?: number;
-  sale_price?: number;
-};
+const BATCH_CODES = STOCK_BATCH_CODES;
 
 export interface StockPreciosSyncResult {
   warehouseId: number;
@@ -46,57 +40,6 @@ async function runPool<T>(
   }
 }
 
-/**
- * Consulta stock para un lote de códigos. Si S-Factory rechaza por un código inexistente,
- * lo saca del lote y reintenta hasta agotar errores de ese tipo.
- */
-async function fetchStockRowsResilient(
-  warehouseId: number,
-  items: string[],
-  codigosOmitidos: string[]
-): Promise<{ rows: StockRow[]; apiCalls: number }> {
-  const working = [...new Set(items.filter(Boolean))];
-  const allRows: StockRow[] = [];
-  let apiCalls = 0;
-  const maxIterations = working.length + 20;
-
-  let current = working;
-
-  for (let iter = 0; iter < maxIterations; iter++) {
-    if (current.length === 0) {
-      return { rows: allRows, apiCalls };
-    }
-
-    try {
-      apiCalls++;
-      const res = await sfactoryService.stockItemsByWarehouseV2({
-        warehouse_id: warehouseId,
-        all_items: false,
-        field: 'code',
-        items: current,
-      });
-      const rows = Array.isArray(res?.data) ? res.data : [];
-      allRows.push(...rows);
-      return { rows: allRows, apiCalls };
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      const badCode = isSFactoryMissingItemError(e)
-        ? e.missingItemCode
-        : extractMissingItemCodeFromError(msg);
-      if (badCode && current.includes(badCode)) {
-        if (!codigosOmitidos.includes(badCode)) {
-          codigosOmitidos.push(badCode);
-        }
-        current = current.filter((c) => c !== badCode);
-        continue;
-      }
-      throw e;
-    }
-  }
-
-  return { rows: allRows, apiCalls };
-}
-
 export class StockPreciosSyncService {
   /**
    * Actualiza stock (y precio minorista si sale_price > 0) desde el depósito ecommerce
@@ -106,13 +49,7 @@ export class StockPreciosSyncService {
     empresaId: number,
     warehouseId?: number
   ): Promise<StockPreciosSyncResult> {
-    const wid =
-      warehouseId ?? Number(process.env.SFACTORY_WAREHOUSE_ID_ECOM || 0);
-    if (!wid || Number.isNaN(wid)) {
-      throw new Error(
-        'Definí SFACTORY_WAREHOUSE_ID_ECOM en el servidor o pasá warehouseId en el body.'
-      );
-    }
+    const wid = warehouseId ?? getEcommerceWarehouseId();
 
     const rubros = await prisma.rubro.findMany({
       where: {

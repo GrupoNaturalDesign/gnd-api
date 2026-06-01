@@ -1,4 +1,26 @@
 import type { SFactoryProduct } from '../types/sfactory.types';
+import {
+  construirNombreBase,
+  extraerColorDesdePalabras,
+  extraerSexoDesdePalabras,
+  extraerTalleDesdePalabras,
+  indicesDesdeParseo,
+  limpiarSufijoGeneroSuelto,
+  resolverUnisexFinal,
+} from '../utils/variantes-parse.utils';
+import {
+  extraerNucleoYSexoDesdeCodigo,
+  resolverClaveGrupoFusion,
+  resolverColorVariante,
+} from '../utils/sku-line-fusion.utils';
+
+export function elegirNombreBase(actual: string, nuevo: string): string {
+  const a = actual.trim();
+  const n = nuevo.trim();
+  if (!a) return n;
+  if (!n) return a;
+  return n.length < a.length ? n : a;
+}
 
 /**
  * Extrae la base del SKU removiendo el número final
@@ -28,6 +50,24 @@ export function extraerBaseSKU(codigo: string): string {
  */
 export function extraerCodigoAgrupacion(codigo: string): string {
   return extraerBaseSKU(codigo);
+}
+
+/**
+ * Resuelve clave de agrupación sin duplicar sufijo de sexo (ej. L-WW-CAM-WR_H + H → WR_H_H).
+ */
+export function resolverClaveAgrupacion(
+  codigo: string,
+  sexoNormalizado: string | null
+): { claveGrupo: string; codigoBaseSinSufijo: string } {
+  const { nucleo: codigoBaseSinSufijo, sexoDesdeCodigo } =
+    extraerNucleoYSexoDesdeCodigo(codigo);
+
+  const sexoFinal = sexoNormalizado ?? sexoDesdeCodigo;
+  const sufijoSexo =
+    sexoFinal === 'Masculino' ? 'H' : sexoFinal === 'Femenino' ? 'D' : 'U';
+  const claveGrupo = `${codigoBaseSinSufijo}_${sufijoSexo}`;
+
+  return { claveGrupo, codigoBaseSinSufijo };
 }
 
 /**
@@ -117,42 +157,36 @@ export function parsearNombreProducto(descripcion: string, codigo?: string): Pro
   }
 
   let nombreLimpio = descripcion.trim();
-  
-  // Remover código SKU del inicio si está presente
-  // Patrón: "50039600 - " o "50039600 -" o similar
+
   if (codigo) {
     const codigoRegex = new RegExp(`^${codigo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*-\\s*`, 'i');
     nombreLimpio = nombreLimpio.replace(codigoRegex, '').trim();
   }
-  
-  // También remover patrón genérico de código al inicio: "NUMBER - "
+
   nombreLimpio = nombreLimpio.replace(/^\d+\s*-\s*/i, '').trim();
-  
-  // MEJORA: Extraer información del código si está disponible
-  // Ejemplo: "L-WW-CAM-DR31" -> "CAM" podría indicar "Camisa"
+
   let rubroDelCodigo: string | null = null;
   if (codigo) {
     const partesCodigo = codigo.split('-');
-    // Buscar abreviaciones comunes de rubros en el código
     const rubrosCodigo: Record<string, string> = {
-      'CAM': 'Camisa',
-      'PAN': 'Pantalón',
-      'REM': 'Remera',
-      'BUZ': 'Buzo',
-      'CHA': 'Chaqueta',
-      'SHO': 'Short',
-      'BER': 'Bermuda',
-      'VES': 'Vestido',
-      'FAL': 'Falda',
-      'SAC': 'Saco',
-      'ABR': 'Abrigo',
-      'SWE': 'Sweater',
-      'POL': 'Polo',
-      'CHI': 'Chomba',
-      'JEA': 'Jean',
-      'JOG': 'Jogging',
+      CAM: 'Camisa',
+      PAN: 'Pantalón',
+      REM: 'Remera',
+      BUZ: 'Buzo',
+      CHA: 'Chaqueta',
+      SHO: 'Short',
+      BER: 'Bermuda',
+      VES: 'Vestido',
+      FAL: 'Falda',
+      SAC: 'Saco',
+      ABR: 'Abrigo',
+      SWE: 'Sweater',
+      POL: 'Polo',
+      CHI: 'Chomba',
+      JEA: 'Jean',
+      JOG: 'Jogging',
     };
-    
+
     for (const parte of partesCodigo) {
       const parteUpper = parte.toUpperCase();
       if (rubrosCodigo[parteUpper]) {
@@ -161,170 +195,33 @@ export function parsearNombreProducto(descripcion: string, codigo?: string): Pro
       }
     }
   }
-  
-  // Mapeo de palabras de sexo (ORDEN IMPORTANTE: más específicas primero)
-  const palabrasSexo = [
-    'masculino', 'femenino', 'unisex', // Completas primero
-    'hombre', 'mujer', 'dama', 'damas', 
-    'niño', 'niña',
-    'm', 'f', 'uni'
-  ];
-  
-  const palabras = nombreLimpio.split(/\s+/);
-  
-  let sexo: string | null = null;
-  let talle: string | null = null;
-  let color: string | null = null;
-  const nombrePartes: string[] = [];
-  
-  // MEJORA: Buscar sexo de forma más precisa
-  // Priorizar palabras completas sobre abreviaciones
-  let indiceSexo = -1;
-  
-  // Primero buscar palabras completas de sexo (más específicas primero)
-  for (let i = 0; i < palabras.length; i++) {
-    const palabra = palabras[i];
-    if (!palabra) continue;
-    const palabraLower = palabra.toLowerCase().trim();
-    
-    // Buscar coincidencia exacta (case insensitive)
-    const sexoEncontrado = palabrasSexo.find(s => 
-      palabraLower === s.toLowerCase()
-    );
-    
-    if (sexoEncontrado) {
-      sexo = normalizarSexo(palabra);
-      indiceSexo = i;
-      break;
-    }
+
+  const palabras = nombreLimpio.split(/\s+/).filter(Boolean);
+
+  let { sexoRaw, indiceSexo } = extraerSexoDesdePalabras(palabras, nombreLimpio);
+
+  const excluirParaTalle = new Set<number>();
+  if (indiceSexo >= 0) excluirParaTalle.add(indiceSexo);
+
+  let { talle, indiceTalle } = extraerTalleDesdePalabras(palabras, excluirParaTalle);
+  const unisexRes = resolverUnisexFinal(palabras, sexoRaw, indiceTalle);
+  sexoRaw = unisexRes.sexoRaw;
+  if (unisexRes.talle) {
+    talle = unisexRes.talle;
+    indiceTalle = unisexRes.indiceTalle;
+  } else if (unisexRes.indiceTalle === -1 && indiceTalle >= 0 && palabras[indiceTalle]?.toUpperCase() === 'UNISEX') {
+    indiceTalle = -1;
   }
-  
-  // Si no encontramos sexo completo, buscar abreviaciones
-  if (!sexo) {
-    for (let i = 0; i < palabras.length; i++) {
-      const palabra = palabras[i];
-      if (!palabra) continue;
-      const palabraUpper = palabra.toUpperCase().trim();
-      
-      if (palabraUpper === 'H' && !/\bHOMBRE\b/i.test(nombreLimpio)) {
-        sexo = 'Masculino';
-        indiceSexo = i;
-        break;
-      }
-      if (palabraUpper === 'D' && !/\bDAMA\b/i.test(nombreLimpio)) {
-        sexo = 'Femenino';
-        indiceSexo = i;
-        break;
-      }
-    }
-  }
-  
-  // Lista de colores comunes (incluyendo compuestos)
-  // IMPORTANTE: Los colores compuestos (2 palabras) deben ir ANTES de los simples
-  // para que tengan prioridad en la detección (ej: "gris topo" antes de "gris")
-  const colores = [
-    // Colores compuestos (2 palabras) - ORDEN IMPORTANTE
-    'azul marino', 'azulmarino', 'azul mar',
-    'gris melange', 'grismelange', 'gris melange',
-    'gris topo', 'gristopo', 'gris topo',
-    'gris perla', 'grisperla',
-    'lavado oscuro', 'lavadooscuro', 'lavado oscuro',
-    'lavado claro', 'lavadoclaro', 'lavado claro',
-    'lavado medio', 'lavadomedio', 'lavado medio',
-    // Colores simples (1 palabra)
-    'arena',
-    'negro',
-    'blanco',
-    'azul',
-    'gris',
-    'rojo',
-    'verde',
-    'amarillo',
-    'naranja',
-    'rosa',
-    'violeta',
-    'beige',
-    'marron', 'marrón',
-    'tostado',
-    'cemento',
-    'celeste',
-  ];
-  
-  // Buscar talle (número o código al final)
-  const patronTalle = /^(\d+|2XS|XS|S|M|L|XL|XXL|XXXL|2XL|3XL|4XL)$/i;
-  let indiceTalle = -1;
-  
-  // Buscar desde el final hacia atrás
-  for (let i = palabras.length - 1; i >= 0; i--) {
-    const palabra = palabras[i];
-    if (!palabra) continue;
-    if (patronTalle.test(palabra)) {
-      talle = palabra;
-      indiceTalle = i;
-      break;
-    }
-  }
-  
-  // Buscar color (generalmente antes del talle o después del sexo)
-  let indiceColor = -1;
-  
-  // Primero intentar encontrar color compuesto (2 palabras)
-  for (let i = 0; i < palabras.length - 1; i++) {
-    const colorCompuesto = `${palabras[i]} ${palabras[i + 1]}`.toLowerCase();
-    if (colores.includes(colorCompuesto)) {
-      color = `${palabras[i]} ${palabras[i + 1]}`;
-      indiceColor = i;
-      break;
-    }
-  }
-  
-  // Si no encontramos color compuesto, buscar color simple
-  if (!color) {
-    // Buscar en toda la descripción, priorizando palabras después del sexo y antes del talle
-    for (let i = 0; i < palabras.length; i++) {
-      if (i === indiceSexo || i === indiceTalle) continue; // Saltar sexo y talle
-      const palabra = palabras[i];
-      if (!palabra) continue;
-      const palabraLower = palabra.toLowerCase();
-      
-      // Buscar coincidencia exacta primero (prioridad a 'negro')
-      const colorExacto = colores.find(c => palabraLower === c || palabraLower === c.replace(/\s+/g, ''));
-      if (colorExacto) {
-        color = palabra; // Mantener capitalización original
-        indiceColor = i;
-        break;
-      }
-      
-      // Buscar coincidencia parcial
-      const colorParcial = colores.find(c => 
-        palabraLower.includes(c) || 
-        c.includes(palabraLower) ||
-        palabraLower.replace(/\s+/g, '') === c.replace(/\s+/g, '')
-      );
-      if (colorParcial) {
-        color = palabra; // Mantener capitalización original
-        indiceColor = i;
-        break;
-      }
-    }
-  }
-  
-  // Construir el nombre base: todas las palabras excepto sexo, color y talle
-  for (let i = 0; i < palabras.length; i++) {
-    // Si es color compuesto, saltar ambas palabras
-    if (indiceColor >= 0 && (i === indiceColor || i === indiceColor + 1)) {
-      continue;
-    }
-    // Saltar sexo, color simple y talle
-    if (i !== indiceSexo && i !== indiceColor && i !== indiceTalle) {
-      const palabra = palabras[i];
-      if (palabra) {
-        nombrePartes.push(palabra);
-      }
-    }
-  }
-  
-  let nombreBase = nombrePartes.join(' ').trim() || nombreLimpio;
+
+  const excluirParaColor = new Set<number>();
+  if (indiceSexo >= 0) excluirParaColor.add(indiceSexo);
+  if (indiceTalle >= 0) excluirParaColor.add(indiceTalle);
+
+  const { color, indiceInicio: indiceColorInicio, longitudPalabras: colorLongitud } =
+    extraerColorDesdePalabras(palabras, excluirParaColor);
+
+  const indices = indicesDesdeParseo(indiceSexo, indiceColorInicio, colorLongitud, indiceTalle);
+  let nombreBase = construirNombreBase(palabras, indices) || nombreLimpio;
   
   // MEJORA: Si tenemos rubro del código y no está en el nombre, agregarlo al inicio
   if (rubroDelCodigo) {
@@ -359,9 +256,9 @@ export function parsearNombreProducto(descripcion: string, codigo?: string): Pro
     }
   }
   
-  // Normalizar sexo antes de retornar
-  const sexoNormalizado = sexo ? normalizarSexo(sexo) : null;
-  
+  const sexoNormalizado = sexoRaw ? normalizarSexo(sexoRaw) : null;
+  nombreBase = limpiarSufijoGeneroSuelto(nombreBase, sexoNormalizado);
+
   return {
     nombreBase: nombreBase || nombreLimpio,
     sexo: sexoNormalizado,
@@ -415,45 +312,35 @@ export function agruparProductosPorCodigoBase(productos: SFactoryProduct[]): Map
     const codigo = (producto as any).Codigo || (producto as any).codigo || '';
     if (!codigo) continue;
     
-    // Extraer código base para agrupación (ej: "L-WW-CAM-WR1" -> "L-WW-CAM-WR")
-    const codigoBase = extraerCodigoAgrupacion(codigo);
-    
     // Extraer número de variante del SKU (solo para ordenamiento)
     const numeroVariante = extraerNumeroVariante(codigo);
-    
+
     // Parsear nombre del producto removiendo código SKU si está presente
     const descripcion = (producto as any).Descripcion || (producto as any).descripcion || codigo;
     const parseado = parsearNombreProducto(descripcion, codigo);
-    
+
     // Normalizar nombre base para comparación
     const nombreBaseNormalizado = normalizarNombre(parseado.nombreBase || descripcion);
-    
+
     // Sexo ya viene normalizado del parseo (Masculino/Femenino/Unisex)
     const sexoNormalizado = parseado.sexo;
-    
-    // Usar color del parseo o de los campos directos (priorizar campos directos si el parseo falló)
-    // Los campos directos pueden tener el color completo sin parsear
-    let color = (producto as any).Color || (producto as any).color || null;
-    if (!color) {
-      // Si no hay color en campos directos, usar el parseado
-      color = parseado.color;
-    } else {
-      // Normalizar el color de campos directos (capitalizar primera letra de cada palabra)
-      const palabrasColor = color.split(/\s+/).map((p: string) => 
-        p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()
-      );
-      color = palabrasColor.join(' ');
-    }
-    const talle = parseado.talle || 
-                  (producto as any).Talle || 
-                  (producto as any).talle || 
-                  null;
-    
-    // Sufijo por sexo: Hombre/Dama/Unisex → productos padre distintos (fotos, talles, etc.)
-    // Los SKU (L-WW-CAM-WR1, L-WW-CAM-WR2, ...) no se modifican; solo la clave de agrupación del padre.
-    const sufijoSexo =
-      sexoNormalizado === 'Masculino' ? 'H' : sexoNormalizado === 'Femenino' ? 'D' : 'U';
-    const claveGrupo = `${codigoBase}_${sufijoSexo}`;
+
+    const { claveGrupo, colorDesdeSku } = resolverClaveGrupoFusion(
+      codigo,
+      sexoNormalizado
+    );
+
+    const colorCampo = (producto as any).Color || (producto as any).color || null;
+    const color = resolverColorVariante(
+      parseado.color,
+      colorCampo,
+      codigo
+    ) ?? colorDesdeSku;
+    const talle =
+      parseado.talle ||
+      (producto as any).Talle ||
+      (producto as any).talle ||
+      null;
     
     // Obtener o crear grupo
     if (!grupos.has(claveGrupo)) {
@@ -472,10 +359,12 @@ export function agruparProductosPorCodigoBase(productos: SFactoryProduct[]): Map
     
     const grupo = grupos.get(claveGrupo)!;
     
-    // Actualizar nombre base si el nuevo es más completo
-    if (parseado.nombreBase && parseado.nombreBase.length > grupo.nombreBase.length) {
-      grupo.nombreBase = parseado.nombreBase;
-      grupo.nombreBaseNormalizado = nombreBaseNormalizado;
+    if (parseado.nombreBase) {
+      const elegido = elegirNombreBase(grupo.nombreBase, parseado.nombreBase);
+      if (elegido !== grupo.nombreBase) {
+        grupo.nombreBase = elegido;
+        grupo.nombreBaseNormalizado = normalizarNombre(elegido);
+      }
     }
     
     // Actualizar sexo si tenemos uno y no había antes
@@ -526,7 +415,9 @@ export function agruparProductosPorCodigoBase(productos: SFactoryProduct[]): Map
         return numA - numB;
       }
       // Luego talles de letras
-      const ordenLetras = ['2XS', 'XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL', 'XXL', 'XXXL'];
+      const ordenLetras = [
+        '2XS', 'XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', 'UNISEX',
+      ];
       const idxA = ordenLetras.indexOf(a.toUpperCase());
       const idxB = ordenLetras.indexOf(b.toUpperCase());
       if (idxA !== -1 && idxB !== -1) return idxA - idxB;
