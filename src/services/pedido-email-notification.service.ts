@@ -3,7 +3,11 @@ import prisma from '../lib/prisma';
 import { emailService } from '../lib/email/email.service';
 import { formatArs } from '../lib/money-format';
 import type { OrderEmailPayload, OrderStatusUiOverrides } from '../types/email.types';
-import { resolvePedidoEntregaFromPedido } from '../utils/pedido-entrega.util';
+import {
+  requiresPostalShipping,
+  resolvePedidoEntregaFromPedido,
+} from '../utils/pedido-entrega.util';
+import { resolvePedidoShippingTracking } from '../utils/pedido-shipping-tracking.util';
 
 function formaPagoLabel(forma: FormaPago | null | undefined): string | undefined {
   if (!forma) return undefined;
@@ -50,11 +54,35 @@ export function buildOrderEmailPayloadFromPedido(
   const totalNeto = Number(pedido.total) - descuento;
   const costoEnvio = Number(pedido.costoEnvio ?? 0);
   const entrega = resolvePedidoEntregaFromPedido(pedido);
+  const postal = requiresPostalShipping(pedido);
+  const resolvedTracking = postal ? resolvePedidoShippingTracking(pedido) : null;
+  const trackingNumber =
+    options?.trackingNumber ?? resolvedTracking?.trackingNumber ?? undefined;
+  const trackingUrl = options?.trackingUrl ?? resolvedTracking?.trackingUrl ?? undefined;
+
+  let deliveryInstructions = options?.deliveryInstructions ?? entrega.deliveryInstructions;
+  if (
+    postal &&
+    status === OrderStatus.CONFIRMED &&
+    !trackingNumber &&
+    !deliveryInstructions?.includes('número de envío')
+  ) {
+    const pending =
+      'Estamos generando tu número de envío. Te lo enviaremos por email en cuanto esté disponible.';
+    deliveryInstructions = deliveryInstructions
+      ? `${deliveryInstructions} ${pending}`
+      : pending;
+  }
 
   let statusUiOverrides = options?.statusUiOverrides;
   if (status === OrderStatus.CONFIRMED && !statusUiOverrides) {
     const lead = confirmLeadForEntrega(entrega.tipo);
     if (lead) statusUiOverrides = { lead };
+    else if (postal && trackingNumber) {
+      statusUiOverrides = {
+        lead: 'Tu pedido fue confirmado. Ya podés hacer seguimiento del envío con el número indicado abajo.',
+      };
+    }
   }
 
   return {
@@ -63,7 +91,7 @@ export function buildOrderEmailPayloadFromPedido(
     customerEmail: pedido.clienteEmail,
     customerPhone: pedido.clienteTelefono ?? undefined,
     shippingSummary: entrega.shippingSummary,
-    deliveryInstructions: options?.deliveryInstructions ?? entrega.deliveryInstructions,
+    deliveryInstructions,
     paymentSummary: formaPagoLabel(pedido.formaPago),
     items: pedido.items.map((it) => {
       const espec = [it.talle, it.color].filter(Boolean).join(' / ');
@@ -73,6 +101,7 @@ export function buildOrderEmailPayloadFromPedido(
         subtotalFormatted: formatArs(Number(it.subtotal)),
         precioUnitarioFormatted: formatArs(Number(it.precioUnitario)),
         ...(espec ? { especificaciones: espec } : {}),
+        ...(it.bordado ? { bordado: true } : {}),
       };
     }),
     itemCount: pedido.cantidadPrendas ?? Math.round(itemUnits),
@@ -83,8 +112,8 @@ export function buildOrderEmailPayloadFromPedido(
     status,
     notes: options?.notes ?? pedido.observaciones ?? undefined,
     statusUiOverrides,
-    ...(options?.trackingNumber ? { trackingNumber: options.trackingNumber } : {}),
-    ...(options?.trackingUrl ? { trackingUrl: options.trackingUrl } : {}),
+    ...(trackingNumber ? { trackingNumber } : {}),
+    ...(trackingUrl ? { trackingUrl } : {}),
   };
 }
 

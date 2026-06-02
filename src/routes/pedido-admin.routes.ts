@@ -81,6 +81,10 @@ router.post(
   pedidoAdminController.syncSfactory.bind(pedidoAdminController)
 );
 router.post(
+  '/:id/crear-envio',
+  pedidoAdminController.crearEnvioPostal.bind(pedidoAdminController)
+);
+router.post(
   '/:id/enviar-listo-retiro',
   pedidoAdminController.enviarListoRetiro.bind(pedidoAdminController)
 );

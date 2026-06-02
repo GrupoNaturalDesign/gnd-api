@@ -12,12 +12,20 @@ export type PedidoEntregaTipo =
   | 'desconocido';
 
 export interface CheckoutEnvioSnapshot {
+  version?: number;
   provider?: string;
   deliveryType?: string;
   cpDestino?: string;
   agencyLabel?: string;
   agencyId?: string;
   clientQuotedAmount?: number;
+  parcel?: {
+    weightGrams: number;
+    height: number;
+    width: number;
+    depth: number;
+    declaredValue: number;
+  };
   address?: {
     streetName?: string;
     street?: string;
@@ -26,6 +34,8 @@ export interface CheckoutEnvioSnapshot {
     province?: string;
     state?: string;
     zipCode?: string;
+    floor?: string;
+    department?: string;
   };
 }
 
@@ -183,4 +193,13 @@ export function resolvePedidoEntregaFromPedido(
 
 export function isRetiroEnTienda(input: PedidoEntregaInput): boolean {
   return resolvePedidoEntrega(input).tipo === 'retiro_tienda';
+}
+
+/** Pedido con envío postal (Andreani/Correo), no retiro en tienda. */
+export function requiresPostalShipping(input: PedidoEntregaInput): boolean {
+  return !isRetiroEnTienda(input);
+}
+
+export function parseCheckoutEnvioSnapshot(raw: unknown): CheckoutEnvioSnapshot | null {
+  return parseSnapshot(raw);
 }

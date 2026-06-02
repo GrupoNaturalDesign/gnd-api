@@ -617,6 +617,14 @@ export class ProductoSyncService {
         },
       });
       const webByCodigo = new Map(websExistentes.map((w) => [w.sfactoryCodigo, w]));
+      const webByPadreSfactory = new Map<string, (typeof websExistentes)[number]>();
+      for (const w of websExistentes) {
+        const sfKey = `${w.productoPadreId}:${w.sfactoryId}`;
+        const prev = webByPadreSfactory.get(sfKey);
+        if (!prev || w.id > prev.id) {
+          webByPadreSfactory.set(sfKey, w);
+        }
+      }
 
       const preciosExistentes = await prisma.productoPrecio.findMany({
         where: {
@@ -821,7 +829,9 @@ export class ProductoSyncService {
                     activoSfactory: (productoSfactoryItem?.activo ?? 'S') === 'S',
                   };
 
-                  const webExistente = webByCodigo.get(codigoStr);
+                  const webExistente =
+                    webByPadreSfactory.get(`${productoPadre.id}:${datosProductoWeb.sfactoryId}`) ??
+                    webByCodigo.get(codigoStr);
                   const webHash = hashProductoWebFields(datosProductoWeb);
                   const webSinCambios =
                     webExistente != null &&
@@ -844,25 +854,32 @@ export class ProductoSyncService {
 
                   let productoWeb = webExistente;
                   if (!webSinCambios) {
-                    productoWeb = await tx.productoWeb.upsert({
-                      where: {
-                        unique_empresa_sfactory: {
+                    const sfKey = `${productoPadre.id}:${datosProductoWeb.sfactoryId}`;
+                    if (webExistente) {
+                      const codigoAnterior = webExistente.sfactoryCodigo;
+                      productoWeb = await tx.productoWeb.update({
+                        where: { id: webExistente.id },
+                        data: {
+                          ...datosProductoWeb,
+                          sfactoryCodigo: codigoStr,
+                          productoPadreId: productoPadre.id,
+                        },
+                      });
+                      if (codigoAnterior !== codigoStr) {
+                        webByCodigo.delete(codigoAnterior);
+                      }
+                    } else {
+                      productoWeb = await tx.productoWeb.create({
+                        data: {
                           empresaId,
                           sfactoryCodigo: codigoStr,
+                          ...datosProductoWeb,
                         },
-                      },
-                      update: {
-                        ...datosProductoWeb,
-                        productoPadreId: productoPadre.id,
-                      },
-                      create: {
-                        empresaId,
-                        sfactoryCodigo: codigoStr,
-                        ...datosProductoWeb,
-                      },
-                    });
-                    productosWebCreados++;
+                      });
+                      productosWebCreados++;
+                    }
                     webByCodigo.set(codigoStr, productoWeb);
+                    webByPadreSfactory.set(sfKey, productoWeb);
                   } else {
                     productosWebOmitidos++;
                   }
@@ -1352,23 +1369,41 @@ export class ProductoSyncService {
           activoSfactory: productoSfactory.activo === 'S',
         };
 
-        const productoWeb = await tx.productoWeb.upsert({
+        const existentePorSfactory = await tx.productoWeb.findFirst({
           where: {
-            unique_empresa_sfactory: {
-              empresaId,
-              sfactoryCodigo: codigoStr,
-            },
-          },
-          update: {
-            ...datosProductoWeb,
-            productoPadreId: productoPadre.id,
-          },
-          create: {
             empresaId,
-            sfactoryCodigo: codigoStr,
-            ...datosProductoWeb,
+            productoPadreId: productoPadre.id,
+            sfactoryId,
           },
+          orderBy: { id: 'desc' },
         });
+
+        const productoWeb = existentePorSfactory
+          ? await tx.productoWeb.update({
+              where: { id: existentePorSfactory.id },
+              data: {
+                ...datosProductoWeb,
+                sfactoryCodigo: codigoStr,
+                productoPadreId: productoPadre.id,
+              },
+            })
+          : await tx.productoWeb.upsert({
+              where: {
+                unique_empresa_sfactory: {
+                  empresaId,
+                  sfactoryCodigo: codigoStr,
+                },
+              },
+              update: {
+                ...datosProductoWeb,
+                productoPadreId: productoPadre.id,
+              },
+              create: {
+                empresaId,
+                sfactoryCodigo: codigoStr,
+                ...datosProductoWeb,
+              },
+            });
 
         // Si hay precio_venta, crear/actualizar ProductoPrecio automáticamente dentro de la transacción
         if (datosProductoWeb.precioCache && datosProductoWeb.precioCache > 0) {

@@ -132,6 +132,11 @@ export class MercadoPagoClient {
     return this.request<MercadoPagoPayment>('GET', `/v1/payments/${id}`);
   }
 
+  /** Valida que el token y la API respondan sin crear efectos secundarios. */
+  async ping(): Promise<void> {
+    await this.request<{ results: unknown[] }>('GET', '/v1/payments/search?limit=1');
+  }
+
   /** GET /v1/payments/search?external_reference=... */
   async searchPaymentsByExternalReference(
     externalReference: string

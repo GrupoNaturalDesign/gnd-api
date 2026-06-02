@@ -29,7 +29,7 @@ Sincronización de catálogo, clientes, stock y **pedidos ecommerce** hacia S-Fa
 
 ## Pedidos externos (ecommerce)
 
-No usar `ventas_crear_orden_pedido` para el flujo web actual: el checkout usa **`ventas_crear_pedido_externo`**. Detalle del pipeline en [checkout-sfactory-pedidos.md](./checkout-sfactory-pedidos.md).
+No usar `ventas_crear_orden_pedido` para el flujo web actual: el checkout usa **`ventas_crear_pedido_externo`**. La confirmación de una PE en cotización usa **`ventas_editar_orden_pedido`** (cambio de `estado` a aprobado), centralizado en `api/src/services/sfactory/sfactory-orden-pedido.service.ts`. Detalle del pipeline en [checkout-sfactory-pedidos.md](./checkout-sfactory-pedidos.md).
 
 - Endpoint de prueba admin: `POST /api/sfactory/ventas/pedido-externo` (auth Firebase + admin), esquema Zod en `src/validation/sfactory-pedido-externo.schema.ts`.
 

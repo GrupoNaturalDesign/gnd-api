@@ -347,17 +347,6 @@ export class SFactoryService {
     );
   }
 
-  /**
-    * Aprobar orden de pedido (`ventas_aprobar_orden_pedido`)
-    */
-  async aprobarOrdenPedido(orderId: number, companyKey?: string) {
-    return sfactoryClient.request(
-      'ventas',
-      'ventas_aprobar_orden_pedido',
-      { order_id: orderId },
-      companyKey
-    );
-  }
 }
 
 export const sfactoryService = new SFactoryService();

@@ -4,7 +4,7 @@ import {
   parseCuponDetalleSnapshot,
   sfactoryDescuentoPctFromCuponLine,
   sfactoryDescuentoPctGlobal,
-} from '../src/utils/cupon-sfactory-payload';
+} from '../../src/utils/cupon-sfactory-payload';
 
 const detalle = {
   cuponId: 1,

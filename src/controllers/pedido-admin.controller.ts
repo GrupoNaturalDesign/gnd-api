@@ -9,7 +9,11 @@ import {
   resolverFallidoSchema,
 } from '../services/pedido-sync.service';
 import { pedidoPickupService } from '../services/pedido-pickup.service';
+import { finalizeShippingAfterPaymentApproved } from '../services/checkout-shipping-finalize.service';
+import { requiresPostalShipping } from '../utils/pedido-entrega.util';
+import { resolvePedidoShippingTracking } from '../utils/pedido-shipping-tracking.util';
 import { sfactoryService } from '../services/sfactory/sfactory.service';
+import { aprobarOrdenPedidoEnSfactory } from '../services/sfactory/sfactory-orden-pedido.service';
 import { pedidosService } from '../services/pedidos.service';
 import { sfactoryCrearPedidoExternoBodySchema, toSfactoryPedidoExternoParams } from '../validation/sfactory-pedido-externo.schema';
 import prisma from '../lib/prisma';
@@ -107,12 +111,22 @@ export class PedidoAdminController {
       const result = await pedidoSyncService.confirmar(empresaId, id);
       const updated = await pedidoSyncService.detalle(empresaId, id);
 
+      if (!result.ok) {
+        res.status(502).json({
+          success: false,
+          error: 'No se pudo confirmar el pedido en SFactory',
+          message: result.message ?? 'Error al sincronizar con SFactory',
+          data: { result, pedido: updated },
+        } as ApiResponse);
+        return;
+      }
+
       const response: ApiResponse = {
         success: true,
         data: { result, pedido: updated },
         message: result.alreadyProcessed
           ? 'El pedido ya habia sido procesado'
-          : result.message ?? 'Procesado',
+          : result.message ?? 'Pedido confirmado',
       };
       res.json(response);
     } catch (error: unknown) {
@@ -188,6 +202,61 @@ export class PedidoAdminController {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       res.status(400).json({ success: false, error: 'No se pudo sincronizar el pedido', message });
+    }
+  }
+
+  async crearEnvioPostal(req: Request, res: Response) {
+    try {
+      const empresaId = getEmpresaId(req);
+      const pedidoId = parsePedidoId(req);
+      const pedido = await prisma.pedido.findFirst({
+        where: { id: pedidoId, empresaId },
+      });
+      if (!pedido) {
+        res.status(404).json({ success: false, error: 'Pedido no encontrado' });
+        return;
+      }
+      if (!requiresPostalShipping(pedido)) {
+        res.status(400).json({
+          success: false,
+          error: 'Este pedido es retiro en tienda; no requiere envío postal.',
+        });
+        return;
+      }
+      const result = await finalizeShippingAfterPaymentApproved(pedidoId);
+      const updated = await pedidoSyncService.detalle(empresaId, pedidoId);
+      const tracking = updated ? resolvePedidoShippingTracking(updated) : null;
+
+      if (!result.ok && !result.skipped) {
+        res.status(502).json({
+          success: false,
+          error: 'No se pudo crear la orden en el carrier',
+          message: result.error,
+          data: { pedido: updated, tracking },
+        } as ApiResponse);
+        return;
+      }
+
+      res.json({
+        success: true,
+        data: {
+          result,
+          pedido: updated,
+          tracking,
+        },
+        message: tracking?.trackingNumber
+          ? `Envío creado: ${tracking.trackingNumber}`
+          : result.skipped
+            ? 'El pedido ya tenía número de envío'
+            : 'Orden de envío procesada',
+      } as ApiResponse);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json({
+        success: false,
+        error: 'No se pudo generar el envío',
+        message,
+      });
     }
   }
 
@@ -436,8 +505,14 @@ export class PedidoAdminController {
         return;
       }
 
-      const data = await sfactoryService.aprobarOrdenPedido(ordenId, empresa.sfactoryCompanyKey);
-      res.json({ success: true, data, message: 'Pedido aprobado en SFactory' } as ApiResponse);
+      const data = await aprobarOrdenPedidoEnSfactory(ordenId, empresa.sfactoryCompanyKey);
+      res.json({
+        success: true,
+        data,
+        message: data.skippedEdit
+          ? 'La orden ya estaba aprobada en SFactory'
+          : 'Pedido aprobado en SFactory',
+      } as ApiResponse);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       res.status(400).json({ success: false, error: 'Error al aprobar pedido en SFactory', message });

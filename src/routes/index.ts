@@ -172,6 +172,7 @@ router.use(
 
 import cuponAdminRoutes from './cupon-admin.routes';
 import cuponRoutes from './cupon.routes';
+import integrationsRoutes from './integrations.routes';
 
 router.use('/cupones', empresaMiddleware, cuponRoutes);
 
@@ -181,6 +182,13 @@ router.use(
   requireAdmin,
   empresaMiddleware,
   cuponAdminRoutes
+);
+
+router.use(
+  '/admin/integrations',
+  firebaseAuthMiddleware,
+  requireAdmin,
+  integrationsRoutes
 );
 
 export default router;

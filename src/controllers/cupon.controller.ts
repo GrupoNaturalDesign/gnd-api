@@ -1,5 +1,5 @@
 import { Response, NextFunction } from 'express';
-import prisma from '../lib/prisma';
+import prismaDefault from '../lib/prisma';
 import {
   CuponEngineService,
   CuponEvaluacionParams,
@@ -7,8 +7,7 @@ import {
 } from '../services/cupon-engine.service';
 import type { ApiResponse } from '../types';
 import type { FirebaseAuthRequest } from '../middleware/firebase-auth.middleware';
-
-const cuponEngine = new CuponEngineService();
+import type { PrismaClient } from '@prisma/client';
 
 interface ValidarCuponBodyItem {
   productoWebId?: number;
@@ -43,6 +42,17 @@ function calcularSubtotal(items: CarritoItem[]): number {
 }
 
 export class CuponController {
+  private prisma: PrismaClient;
+  private cuponEngine: CuponEngineService;
+
+  constructor(
+    prisma?: PrismaClient,
+    cuponEngine?: CuponEngineService
+  ) {
+    this.prisma = prisma ?? prismaDefault;
+    this.cuponEngine = cuponEngine ?? new CuponEngineService();
+  }
+
   async validar(req: FirebaseAuthRequest, res: Response, next: NextFunction) {
     try {
       const empresaId = (req as { empresaId?: number }).empresaId;
@@ -58,7 +68,7 @@ export class CuponController {
         return res.status(401).json({ success: false, error: 'No autenticado.' });
       }
 
-      const usuario = await prisma.usuario.findFirst({
+      const usuario = await this.prisma.usuario.findFirst({
         where: { externalId: uid },
         select: { id: true, cliente: { select: { id: true } } },
       });
@@ -94,7 +104,7 @@ export class CuponController {
         subtotal,
       };
 
-      const resultado = await cuponEngine.validarCupon(params);
+      const resultado = await this.cuponEngine.validarCupon(params);
 
       if (!resultado.valido || !resultado.detalle) {
         const response: ApiResponse = {

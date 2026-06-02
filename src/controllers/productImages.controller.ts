@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { productImageService } from '../services/productImage.service';
+import { CacheService } from '../services/cache.service';
 import { handleZodError } from '../utils/validation';
 import { z } from 'zod';
 import type { MulterFile } from '../types/multer.types';
@@ -33,6 +34,17 @@ const ReorderImagesSchema = z.object({
     )
     .min(1),
 });
+
+async function invalidateProductImagesCache(params: {
+  productoWebId?: number | null;
+  productoPadreId?: number | null;
+  imageId?: number | null;
+}): Promise<void> {
+  const ctx = await productImageService.resolveCacheInvalidation(params);
+  if (ctx) {
+    await CacheService.invalidateProducts(ctx.empresaId, ctx.productoPadreId);
+  }
+}
 
 export class ProductImagesController {
   /**
@@ -108,6 +120,11 @@ export class ProductImagesController {
           color: img.color,
           orden: img.orden,
         });
+      });
+
+      await invalidateProductImagesCache({
+        productoWebId: images[0]?.productoWebId ?? body.productoWebId,
+        productoPadreId: body.productoPadreId,
       });
 
       res.json({
@@ -240,6 +257,8 @@ export class ProductImagesController {
 
       await productImageService.deleteImage(params.imageId);
 
+      await invalidateProductImagesCache({ imageId: params.imageId });
+
       res.json({
         success: true,
         message: 'Imagen eliminada exitosamente',
@@ -272,6 +291,9 @@ export class ProductImagesController {
     try {
       const body = ReorderImagesSchema.parse(req.body);
       await productImageService.reorderImages(body.images);
+
+      await invalidateProductImagesCache({ imageId: body.images[0]?.id });
+
       res.json({
         success: true,
         message: 'Orden actualizado exitosamente',
@@ -305,27 +327,15 @@ export class ProductImagesController {
         color: color || 'todos',
       });
 
-      const images = await productImageService.getProductoPadreImages(
+      const grouped = await productImageService.getProductoPadreImagesByColor(
         productoPadreId,
         color
       );
 
-      console.log(`📥 [GET IMAGES] ${images.length} imagen(es) encontrada(s)`);
-
-      // Agrupar por color
-      const grouped: Record<string, typeof images> = {};
-      images.forEach((img) => {
-        const colorKey = img.color || 'sin-color';
-        if (!grouped[colorKey]) {
-          grouped[colorKey] = [];
-        }
-        grouped[colorKey].push(img);
-      });
-
       console.log('📥 [GET IMAGES] Imágenes agrupadas por color:', {
         colores: Object.keys(grouped),
-        totalPorColor: Object.entries(grouped).map(([color, imgs]) => ({
-          color,
+        totalPorColor: Object.entries(grouped).map(([c, imgs]) => ({
+          color: c,
           cantidad: imgs.length,
         })),
       });

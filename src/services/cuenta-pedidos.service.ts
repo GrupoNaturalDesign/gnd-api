@@ -5,6 +5,9 @@ import {
   resolveCustomerOrderStatus,
   type CustomerOrderStatus,
 } from '../utils/pedido-customer-status.util';
+import { requiresPostalShipping } from '../utils/pedido-entrega.util';
+import { resolvePedidoShippingTracking } from '../utils/pedido-shipping-tracking.util';
+import type { ShippingProviderName } from './shipping/shipping.types';
 import type { CuentaPedidosListQuery } from '../validation/cuenta-pedidos.validation';
 import { abandonarCheckoutMp } from './mp-checkout.service';
 
@@ -19,6 +22,9 @@ export interface CuentaPedidoListItem {
   descuentoTotal: number;
   itemCount: number;
   trackingUrl: string | null;
+  trackingNumber: string | null;
+  shippingProvider: ShippingProviderName | null;
+  requiresPostalShipping: boolean;
   canViewPaymentInstructions: boolean;
   syncStatus: PedidoSyncStatus;
   sfactoryOrdenId: number | null;
@@ -78,7 +84,12 @@ function canViewPaymentInstructions(pedido: Pedido): boolean {
 }
 
 function mapItemLine(item: PedidoDetailRow['items'][number]): CuentaPedidoItemLine {
-  const espec = [item.talle, item.color].filter(Boolean).join(' / ');
+  const parts = [
+    item.talle ? `Talle ${item.talle}` : null,
+    item.color ?? null,
+    item.bordado ? 'Bordado' : null,
+  ].filter(Boolean);
+  const espec = parts.length > 0 ? parts.join(' · ') : undefined;
   const slug = item.productoPadre?.slug?.trim();
   return {
     id: item.id,
@@ -93,6 +104,8 @@ function mapItemLine(item: PedidoDetailRow['items'][number]): CuentaPedidoItemLi
 
 function mapPedidoListItem(pedido: PedidoListRow): CuentaPedidoListItem {
   const estado = resolveCustomerOrderStatus(pedido);
+  const postal = requiresPostalShipping(pedido);
+  const tracking = resolvePedidoShippingTracking(pedido);
   return {
     id: pedido.id,
     numero: formatNumero(pedido.id, pedido.sfactoryExternalOrderId),
@@ -103,7 +116,10 @@ function mapPedidoListItem(pedido: PedidoListRow): CuentaPedidoListItem {
     total: computeTotalNeto(pedido),
     descuentoTotal: computeDescuentoTotal(pedido),
     itemCount: pedido._count.items,
-    trackingUrl: pedido.trackingUrl,
+    trackingUrl: tracking.trackingUrl ?? pedido.trackingUrl,
+    trackingNumber: tracking.trackingNumber,
+    shippingProvider: tracking.shippingProvider,
+    requiresPostalShipping: postal,
     canViewPaymentInstructions: canViewPaymentInstructions(pedido),
     syncStatus: pedido.syncStatus,
     sfactoryOrdenId: pedido.sfactoryOrdenId,

@@ -1,4 +1,4 @@
-import prisma from '../lib/prisma';
+import prismaDefault from '../lib/prisma';
 import { dateOnlyFromStoredDate, todayDateOnlyAR } from '../utils/date-only.util';
 
 export interface CarritoItem {
@@ -45,10 +45,12 @@ export interface CuponValidacionResultado {
 }
 
 export class CuponEngineService {
+  private prisma = prismaDefault;
+
   async validarCupon(params: CuponEvaluacionParams): Promise<CuponValidacionResultado> {
     const { empresaId, codigo, usuarioId, clienteId, items, subtotal } = params;
 
-    const cupon = await prisma.cupon.findFirst({
+    const cupon = await this.prisma.cupon.findFirst({
       where: {
         empresaId,
         codigo: codigo.toUpperCase(),
@@ -87,7 +89,7 @@ export class CuponEngineService {
     }
 
     if (cupon.usoMaximo) {
-      const usoActual = await prisma.cuponUso.count({
+      const usoActual = await this.prisma.cuponUso.count({
         where: { cuponId: cupon.id },
       });
       if (usoActual >= cupon.usoMaximo) {
@@ -96,7 +98,7 @@ export class CuponEngineService {
     }
 
     if (cupon.usoMaximoUsuario && (usuarioId || clienteId)) {
-      const usosUsuario = await prisma.cuponUso.count({
+      const usosUsuario = await this.prisma.cuponUso.count({
         where: {
           cuponId: cupon.id,
           OR: [
@@ -219,7 +221,7 @@ export class CuponEngineService {
     pedidoId: number,
     detalle: CuponDetalle
   ): Promise<void> {
-    await prisma.pedido.update({
+    await this.prisma.pedido.update({
       where: { id: pedidoId },
       data: {
         cuponId: detalle.cuponId,
@@ -238,7 +240,7 @@ export class CuponEngineService {
     clienteId?: number;
   }): Promise<void> {
     const { cuponId, pedidoId, descuento, usuarioId, clienteId } = params;
-    await prisma.cuponUso.create({
+    await this.prisma.cuponUso.create({
       data: {
         cuponId,
         pedidoId,

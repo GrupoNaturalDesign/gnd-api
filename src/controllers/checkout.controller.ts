@@ -212,6 +212,7 @@ export class CheckoutController {
           precioUnitario,
           talle: typeof it.talle === 'string' ? it.talle : undefined,
           color: typeof it.color === 'string' ? it.color : undefined,
+          bordado: it.bordado === true,
         };
       });
 
@@ -371,6 +372,7 @@ export class CheckoutController {
           precioUnitario,
           talle: typeof it.talle === 'string' ? it.talle : undefined,
           color: typeof it.color === 'string' ? it.color : undefined,
+          bordado: it.bordado === true,
         };
       });
 

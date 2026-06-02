@@ -4,6 +4,7 @@ import {
   EstadoPedido,
   FormaEnvio,
   FormaPago,
+  OrderStatus,
   PedidoSyncStatus,
   Prisma,
 } from '@prisma/client';
@@ -27,6 +28,7 @@ import {
 } from './checkout-shipping.service';
 import { CuponEngineService } from './cupon-engine.service';
 import { empresaConfigService } from './empresa-config.service';
+import { sendPedidoStatusEmailAsync } from './pedido-email-notification.service';
 import { sendManualPaymentInstructionsEmailAsync } from './pedido-payment-instructions.service';
 
 const cuponEngine = new CuponEngineService();
@@ -187,6 +189,7 @@ export interface ItemInput {
   precioUnitario: number;
   talle?: string;
   color?: string;
+  bordado?: boolean;
 }
 
 export interface CrearPedidoMpInput {
@@ -251,7 +254,7 @@ function trimBaseUrl(url: string): string {
   return url.replace(/\/$/, '');
 }
 
-function splitNombreApellido(full: string): { name: string; surname: string } {
+export function splitNombreApellido(full: string): { name: string; surname: string } {
   const t = full.trim();
   if (!t) return { name: 'Cliente', surname: 'GND' };
   const parts = t.split(/\s+/);
@@ -386,6 +389,7 @@ export async function crearPedidoMp(
           subtotal,
           talle: item.talle ?? null,
           color: item.color ?? null,
+          bordado: item.bordado ?? false,
         })),
       },
     },
@@ -513,6 +517,12 @@ export async function crearPedidoMp(
     dedupe: false,
   });
 
+  sendPedidoStatusEmailAsync(pedido.id, OrderStatus.PENDING, {
+    statusUiOverrides: {
+      lead: 'Registramos tu pedido. Completá el pago en Mercado Pago para continuar.',
+    },
+  });
+
   const checkoutUrl =
     modo === 'production' ? preference.init_point : preference.sandbox_init_point;
 
@@ -526,7 +536,7 @@ export async function crearPedidoMp(
   };
 }
 
-function extractPedidoIdFromExternalReference(ref: string | null | undefined): number | null {
+export function extractPedidoIdFromExternalReference(ref: string | null | undefined): number | null {
   if (!ref || typeof ref !== 'string') return null;
   const m = ref.match(/^pedido_(\d+)$/);
   if (!m) return null;
@@ -1185,6 +1195,7 @@ export async function crearPedidoManual(
           subtotal,
           talle: item.talle ?? null,
           color: item.color ?? null,
+          bordado: item.bordado ?? false,
         })),
       },
     },
@@ -1222,6 +1233,12 @@ export async function crearPedidoManual(
     dedupe: false,
   });
 
+  sendPedidoStatusEmailAsync(pedido.id, OrderStatus.PENDING, {
+    statusUiOverrides: {
+      lead:
+        'Registramos tu pedido. Te enviaremos por email las instrucciones de pago en breve.',
+    },
+  });
   sendManualPaymentInstructionsEmailAsync(pedido.id);
 
   return {

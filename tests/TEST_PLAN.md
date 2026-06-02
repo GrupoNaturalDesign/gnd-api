@@ -19,16 +19,43 @@
 
 | Métrica | Valor |
 |---------|--------|
-| Tests unit/shipping/checkout/etc. | **~118** en `api/tests/` |
+| Tests unit/shipping/checkout/etc. | **~160+** en `api/tests/` |
 | Comando | `cd api && npm run test` (~33s) |
-| DB / integración | Fuera del pipeline estándar (ver abajo) |
+| DB / integración | `npm run test:integration` (requiere MariaDB) |
 
 **Scripts API** (`api/package.json`):
 
-- `npm run test` — suite principal (sin DB obligatoria)
-- `npm run test:shipping` — solo envíos
-- `npm run test:sandbox` — Andreani/Correo sandbox (manual, credenciales)
-- Integración DB: `admin-notification`, `cupon-engine.integration`, emails con DB
+| Script | Descripción |
+|--------|-------------|
+| `npm run test` | Suite principal (sin DB obligatoria) |
+| `npm run test:unit` | Suite unitaria sin integración/sandbox |
+| `npm run test:ci` | Suite CI (como test pero para pipeline) |
+| `npm run test:shipping` | Solo envíos |
+| `npm run test:sandbox` | Andreani/Correo sandbox (manual, credenciales) |
+| `npm run test:integration` | Tests con DB real (MariaDB) |
+
+**Organización de tests** (`api/tests/`):
+
+| Directorio | Contenido |
+|------------|-----------|
+| `cupones/` | Test del motor de cupones (unit + integration) |
+| `checkout/` | Checkout MP (unit: funciones puras, validación, webhook) |
+| `shipping/` | Envíos (Andreani, Correo Argentino) |
+| `sfactory/` | S-Factory: `buildPedidoExternoParams` |
+| `lib/` | Utilidades y helpers varios |
+| `email/` | Tests de email |
+| `helpers/` | Mock utilities (`mock-fetch`, `test-utils`, `shipping-env`) |
+| `fixtures/` | Datos de prueba (pendiente) |
+| *(raíz)* | Tests sueltos que no requieren subdirectorio (`pedido-sync`, `mp-checkout-webhook`, `maintenance-mode`, etc.) |
+
+**Patrones de mock:**
+
+- **Clases con DI:** `CuponEngineService` usa `this.prisma` (campo privado) + `mockPrisma()` que sobreescribe `instance.prisma` con un objeto mock.
+- **Mock factory:** `createMockPrisma()` en `helpers/test-utils.ts` devuelve un cliente Prisma mock completo con `mock.fn()`.
+- **Express helpers:** `mockExpressReq()` y `mockExpressRes()` en `helpers/test-utils.ts`.
+- **Fetch mock:** `MockFetch` class en `helpers/mock-fetch.ts` para mockear `globalThis.fetch`.
+- **Env helpers:** `withEnv()` / `withShippingEnv()` en `helpers/shipping-env.ts`.
+- **Funciones puras exportadas:** Se exportan desde el service para testeo directo (`extractMercadoPagoPaymentId`, `buildWebhookDedupeKey`, `splitNombreApellido`, `extractPedidoIdFromExternalReference`, `buildPedidoExternoParams`).
 
 ### Client — en progreso (Sprint 1 iniciado)
 
@@ -54,7 +81,7 @@
 |-----------|-----------|-----|
 | `test-mp.ts` | `api/src/services/mercadopago/` | Script **manual** contra MP sandbox (crear preferencia). No es `*.test.ts`. |
 | Tests sandbox shipping | `api/tests/shipping/sandbox/` | Credenciales reales Andreani/Correo |
-| Tests con DB | `admin-notification`, `cupon-engine.integration`, etc. | Cuando hay DB disponible |
+| Tests con DB | `cupon-engine.integration`, `admin-notification.integration`, etc. | `npm run test:integration` cuando hay DB |
 
 ---
 
@@ -200,9 +227,18 @@
 
 ## Fase 6 — CI
 
+### API
+
+Workflow: `.github/workflows/api-tests.yml`
+
+- **PR / push (paths: `api/**`):** `pnpm run test:unit` (node --test, obligatorio)
+- **Push `main` / `master` / `test`:** además `pnpm run test:integration` con MariaDB service container
+
+### Client
+
 Workflow: `.github/workflows/client-tests.yml`
 
-- **PR / push:** `pnpm run test:run` (Vitest, obligatorio)
+- **PR / push (paths: `client/**`):** `pnpm run test:run` (Vitest, obligatorio)
 - **Push `main` / `master` / `test`:** además `pnpm run test:e2e` (Playwright chromium)
 
 ```bash

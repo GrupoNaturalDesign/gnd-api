@@ -10,6 +10,11 @@ import {
 } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { sfactoryService } from './sfactory/sfactory.service';
+import {
+  aprobarOrdenPedidoEnSfactory,
+  puedeReintentarAprobacionErp,
+} from './sfactory/sfactory-orden-pedido.service';
+import { SFACTORY_PE_ESTADO } from './sfactory/sfactory-orden-pedido.config';
 import { adminNotificationService } from './admin-notification.service';
 import { CuponEngineService } from './cupon-engine.service';
 import {
@@ -17,6 +22,7 @@ import {
   sendPedidoStatusEmail,
   sendPedidoStatusEmailAsync,
 } from './pedido-email-notification.service';
+import { finalizeShippingAfterPaymentApproved } from './checkout-shipping-finalize.service';
 import { mercadoPagoConfig } from './mercadopago/mercadopago.config';
 import type {
   SFactoryCrearPedidoExternoParams,
@@ -30,6 +36,7 @@ import {
   sfactoryDescuentoPctFromCuponLine,
   sfactoryDescuentoPctGlobal,
 } from '../utils/cupon-sfactory-payload';
+import { appendBordadoObservaciones } from '../utils/pedido-bordado.util';
 import {
   computeTotalACobrar,
   parseSfactoryEstado,
@@ -145,7 +152,7 @@ async function crearLogSfactory(
  * Payload para ventas_crear_pedido_externo desde un pedido local.
  * Si el pedido tiene cupón, envía `items[].descuento` (0–100 %) por línea según el snapshot del cupón.
  */
-function buildPedidoExternoParams(pedido: {
+export function buildPedidoExternoParams(pedido: {
   id: number;
   fechaPedido: Date;
   observaciones: string | null;
@@ -168,6 +175,7 @@ function buildPedidoExternoParams(pedido: {
     precioUnitario: Prisma.Decimal;
     talle: string | null;
     color: string | null;
+    bordado?: boolean | null;
   }>;
   cliente: {
     cuit: string | null;
@@ -235,6 +243,7 @@ function buildPedidoExternoParams(pedido: {
       descripcion: line.nombre,
       fecha_entrega: fechaEntrega,
       ...(espec ? { especificaciones: espec } : {}),
+      ...(line.bordado ? { notas: 'Bordado: SÍ' } : {}),
     };
   });
 
@@ -262,9 +271,16 @@ function buildPedidoExternoParams(pedido: {
     fecha,
     fecha_entrega: fechaEntrega,
     titulo: `Pedido web #${pedido.id}`,
-    observaciones: appendCuponObservaciones(
-      pedido.observaciones,
-      pedido.cuponCodigoSnapshot
+    observaciones: appendBordadoObservaciones(
+      appendCuponObservaciones(
+        pedido.observaciones,
+        pedido.cuponCodigoSnapshot
+      ),
+      pedido.items.map((line) => ({
+        nombre: line.nombre,
+        cantidad: Number(line.cantidad),
+        bordado: line.bordado,
+      }))
     ),
     ref_cliente: pedido.refCliente ?? String(pedido.id),
     num_orden_compra: pedido.numOrdenCompra ?? undefined,
@@ -438,6 +454,7 @@ async function finalizarPedidoConfirmadoEnSfactory(input: {
     console.log(`[cupon] Uso registrado para cupón ${pedidoAfter.cuponId}, pedido ${pedidoId}`);
   }
 
+  await finalizeShippingAfterPaymentApproved(pedidoId);
   await sendPedidoStatusEmail(pedidoId, OrderStatus.CONFIRMED);
 
   return { ok: true, pedidoId, message: 'Pedido confirmado en SFactory' };
@@ -487,10 +504,13 @@ export async function procesarPedidoConfirmado(pedidoId: number): Promise<Proces
     );
   }
 
-  if (
-    pedidoBase.estadoInterno !== EstadoPedido.pendiente_confirmacion &&
-    pedidoBase.estadoInterno !== EstadoPedido.pendiente_pago
-  ) {
+  const esReintentoAprobacionErp = puedeReintentarAprobacionErp(pedidoBase);
+
+  const estadosEntradaValidos: EstadoPedido[] = [
+    EstadoPedido.pendiente_confirmacion,
+    EstadoPedido.pendiente_pago,
+  ];
+  if (!estadosEntradaValidos.includes(pedidoBase.estadoInterno) && !esReintentoAprobacionErp) {
     throw new Error(
       `Pedido ${pedidoId} no está pendiente de pago o confirmación (estado: ${pedidoBase.estadoInterno})`
     );
@@ -504,24 +524,90 @@ export async function procesarPedidoConfirmado(pedidoId: number): Promise<Proces
   });
   if (!pedidoStockCheck) throw new Error('Pedido no encontrado');
 
-  for (const line of pedidoStockCheck.items) {
-    if (line.productoWebId == null) {
-      throw new Error(`Línea ${line.id} sin productoWebId; no se puede reservar stock.`);
+  if (!esReintentoAprobacionErp) {
+    for (const line of pedidoStockCheck.items) {
+      if (line.productoWebId == null) {
+        throw new Error(`Línea ${line.id} sin productoWebId; no se puede reservar stock.`);
+      }
+      const pw = await prisma.productoWeb.findUnique({
+        where: { id: line.productoWebId },
+      });
+      if (!pw) throw new Error(`ProductoWeb ${line.productoWebId} no encontrado`);
+      const stock = pw.stockCache ?? new Prisma.Decimal(0);
+      if (stock.lt(line.cantidad)) {
+        const msg = `Stock insuficiente para ${line.codigo} (disponible: ${stock}, pedido: ${line.cantidad})`;
+        await prisma.pedido.update({
+          where: { id: pedidoId },
+          data: {
+            estadoInterno: EstadoPedido.fallido,
+            sfactoryError: msg,
+            syncStatus: PedidoSyncStatus.error,
+            syncError: msg,
+          },
+        });
+        await notifyPedidoCheckout({
+          empresaId: pedidoBase.empresaId,
+          type: 'pedido.sync_failed',
+          pedidoId,
+          severity: AdminNotificationSeverity.error,
+          title: `Pedido #${pedidoId} sin stock suficiente`,
+          message: msg,
+          payload: pedidoNotificationPayload(pedidoBase, {
+            estadoAnterior: pedidoBase.estadoInterno,
+            estadoNuevo: EstadoPedido.fallido,
+            syncStatus: PedidoSyncStatus.error,
+          }),
+        });
+        console.error(`[pedido-checkout] Stock insuficiente pedido ${pedidoId}: ${msg}`);
+        return { ok: false, pedidoId, message: 'Stock insuficiente; pedido marcado como fallido.' };
+      }
     }
-    const pw = await prisma.productoWeb.findUnique({
-      where: { id: line.productoWebId },
-    });
-    if (!pw) throw new Error(`ProductoWeb ${line.productoWebId} no encontrado`);
-    const stock = pw.stockCache ?? new Prisma.Decimal(0);
-    if (stock.lt(line.cantidad)) {
-      const msg = `Stock insuficiente para ${line.codigo} (disponible: ${stock}, pedido: ${line.cantidad})`;
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.pedido.update({
+          where: { id: pedidoId },
+          data: {
+            estadoInterno: EstadoPedido.procesando,
+            stockReservadoWeb: true,
+            syncStatus: PedidoSyncStatus.pending,
+            syncError: null,
+            sfactoryExternalOrderId: `WEB-${pedidoId}`,
+          },
+        });
+
+        const pedido = await tx.pedido.findUnique({
+          where: { id: pedidoId },
+          include: { items: true },
+        });
+        if (!pedido) throw new Error('Pedido no encontrado');
+
+        for (const line of pedido.items) {
+          if (line.productoWebId == null) continue;
+          const updated = await tx.productoWeb.updateMany({
+            where: {
+              id: line.productoWebId,
+              stockCache: { gte: line.cantidad },
+            },
+            data: {
+              stockCache: { decrement: line.cantidad },
+            },
+          });
+          if (updated.count !== 1) {
+            throw new Error(`Stock insuficiente para ${line.codigo} durante la reserva.`);
+          }
+        }
+      });
+    } catch (e: unknown) {
+      const errMsg = e instanceof Error ? e.message : String(e);
       await prisma.pedido.update({
         where: { id: pedidoId },
         data: {
           estadoInterno: EstadoPedido.fallido,
-          sfactoryError: msg,
+          sfactoryError: errMsg,
           syncStatus: PedidoSyncStatus.error,
-          syncError: msg,
+          syncError: errMsg,
+          stockReservadoWeb: false,
         },
       });
       await notifyPedidoCheckout({
@@ -529,80 +615,24 @@ export async function procesarPedidoConfirmado(pedidoId: number): Promise<Proces
         type: 'pedido.sync_failed',
         pedidoId,
         severity: AdminNotificationSeverity.error,
-        title: `Pedido #${pedidoId} sin stock suficiente`,
-        message: msg,
+        title: `Pedido #${pedidoId} no pudo reservar stock`,
+        message: errMsg,
         payload: pedidoNotificationPayload(pedidoBase, {
           estadoAnterior: pedidoBase.estadoInterno,
           estadoNuevo: EstadoPedido.fallido,
           syncStatus: PedidoSyncStatus.error,
         }),
       });
-      console.error(`[pedido-checkout] Stock insuficiente pedido ${pedidoId}: ${msg}`);
-      return { ok: false, pedidoId, message: 'Stock insuficiente; pedido marcado como fallido.' };
+      return { ok: false, pedidoId, message: errMsg };
     }
-  }
-
-  try {
-    await prisma.$transaction(async (tx) => {
-      await tx.pedido.update({
-        where: { id: pedidoId },
-        data: {
-          estadoInterno: EstadoPedido.procesando,
-          stockReservadoWeb: true,
-          syncStatus: PedidoSyncStatus.pending,
-          syncError: null,
-          sfactoryExternalOrderId: `WEB-${pedidoId}`,
-        },
-      });
-
-      const pedido = await tx.pedido.findUnique({
-        where: { id: pedidoId },
-        include: { items: true },
-      });
-      if (!pedido) throw new Error('Pedido no encontrado');
-
-      for (const line of pedido.items) {
-        if (line.productoWebId == null) continue;
-        const updated = await tx.productoWeb.updateMany({
-          where: {
-            id: line.productoWebId,
-            stockCache: { gte: line.cantidad },
-          },
-          data: {
-            stockCache: { decrement: line.cantidad },
-          },
-        });
-        if (updated.count !== 1) {
-          throw new Error(`Stock insuficiente para ${line.codigo} durante la reserva.`);
-        }
-      }
-    });
-  } catch (e: unknown) {
-    const errMsg = e instanceof Error ? e.message : String(e);
+  } else {
     await prisma.pedido.update({
       where: { id: pedidoId },
       data: {
-        estadoInterno: EstadoPedido.fallido,
-        sfactoryError: errMsg,
-        syncStatus: PedidoSyncStatus.error,
-        syncError: errMsg,
-        stockReservadoWeb: false,
+        syncStatus: PedidoSyncStatus.pending,
+        syncError: null,
       },
     });
-    await notifyPedidoCheckout({
-      empresaId: pedidoBase.empresaId,
-      type: 'pedido.sync_failed',
-      pedidoId,
-      severity: AdminNotificationSeverity.error,
-      title: `Pedido #${pedidoId} no pudo reservar stock`,
-      message: errMsg,
-      payload: pedidoNotificationPayload(pedidoBase, {
-        estadoAnterior: pedidoBase.estadoInterno,
-        estadoNuevo: EstadoPedido.fallido,
-        syncStatus: PedidoSyncStatus.error,
-      }),
-    });
-    return { ok: false, pedidoId, message: errMsg };
   }
 
   const pedidoAfter = await prisma.pedido.findUnique({
@@ -615,18 +645,29 @@ export async function procesarPedidoConfirmado(pedidoId: number): Promise<Proces
 
   if (pedidoAfter.sfactoryOrdenId != null) {
     const ordenId = pedidoAfter.sfactoryOrdenId;
+    const readPayload = { order_id: ordenId, accion: 'aprobar', estadoDestino: SFACTORY_PE_ESTADO.aprobado };
     try {
-      const response = await sfactoryService.aprobarOrdenPedido(ordenId, companyKey);
-      const est = parseSfactoryEstado(response) ?? pedidoAfter.sfactoryEstado;
-
+      const sfResult = await aprobarOrdenPedidoEnSfactory(ordenId, companyKey);
+      await crearLogSfactory(
+        pedidoId,
+        PedidoSfactoryAccion.leer,
+        readPayload,
+        true,
+        sfResult.remote,
+        null
+      );
       await crearLogSfactory(
         pedidoId,
         PedidoSfactoryAccion.editar,
-        { order_id: ordenId, accion: 'aprobar' },
+        sfResult.editPayload ?? { skippedEdit: sfResult.skippedEdit, estado: SFACTORY_PE_ESTADO.aprobado },
         true,
-        response,
+        sfResult.response,
         null
       );
+
+      const est =
+        parseSfactoryEstado(sfResult.response) ??
+        SFACTORY_PE_ESTADO.aprobado;
 
       return finalizarPedidoConfirmadoEnSfactory({
         pedidoId,
@@ -636,10 +677,10 @@ export async function procesarPedidoConfirmado(pedidoId: number): Promise<Proces
         sfactoryEstado: est,
         sfactoryExternalOrderId: pedidoAfter.sfactoryExternalOrderId ?? `WEB-${pedidoId}`,
         sfactorySnapshot:
-          (response as Prisma.InputJsonValue) ??
+          (sfResult.response as Prisma.InputJsonValue) ??
           (pedidoAfter.sfactorySnapshot as Prisma.InputJsonValue),
         notifyTitle: `Pedido #${pedidoId} confirmado`,
-        notifyMessage: `Pedido confirmado; orden SFactory ${ordenId} aprobada.`,
+        notifyMessage: `Pedido confirmado; orden SFactory ${ordenId} aprobada (estado ${est}).`,
       });
     } catch (e: unknown) {
       const errMsg = e instanceof Error ? e.message : String(e);
@@ -651,12 +692,13 @@ export async function procesarPedidoConfirmado(pedidoId: number): Promise<Proces
           syncStatus: PedidoSyncStatus.error,
           syncError: errMsg,
           sfactoryIntentos: { increment: 1 },
+          stockReservadoWeb: true,
         },
       });
       await crearLogSfactory(
         pedidoId,
         PedidoSfactoryAccion.editar,
-        { order_id: ordenId, accion: 'aprobar' },
+        readPayload,
         false,
         undefined,
         errMsg

@@ -10,6 +10,12 @@ import {
 import { z } from 'zod';
 import prisma from '../lib/prisma';
 import { sfactoryService } from './sfactory/sfactory.service';
+import {
+  cancelarOrdenPedidoEnSfactory,
+  parseEstadoFromOrdenResponse,
+  puedeReintentarAprobacionErp,
+} from './sfactory/sfactory-orden-pedido.service';
+import { SFACTORY_PE_ESTADO } from './sfactory/sfactory-orden-pedido.config';
 import { stockPreciosSyncService } from './sync/stock-precios-sync.service';
 import { adminNotificationService } from './admin-notification.service';
 import {
@@ -21,7 +27,6 @@ import { sendPedidoStatusEmailAsync } from './pedido-email-notification.service'
 import { stableHash } from '../utils/sync-hash.utils';
 
 const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional();
-const SFACTORY_ESTADO_CANCELADO = process.env.SFACTORY_ORDEN_ESTADO_CANCELADO ?? '4';
 
 export const pedidoListQuerySchema = z.object({
   estado: z.nativeEnum(EstadoPedido).optional(),
@@ -43,6 +48,7 @@ export const pedidoManualItemSchema = z.object({
   precioUnitario: z.number().nonnegative().finite(),
   talle: z.string().trim().max(50).optional(),
   color: z.string().trim().max(100).optional(),
+  bordado: z.boolean().optional(),
 });
 
 export const crearPedidoManualSchema = z.object({
@@ -103,28 +109,6 @@ function parseRemoteId(response: unknown): number | null {
   return null;
 }
 
-function parseRemoteEstado(response: unknown): string | null {
-  if (!response || typeof response !== 'object') return null;
-  const o = response as Record<string, unknown>;
-  const data = o.data && typeof o.data === 'object' ? (o.data as Record<string, unknown>) : null;
-  const value =
-    o.estado ??
-    o.estado_id ??
-    o.estadoId ??
-    o.codigo_estado ??
-    o.estadoInterno ??
-    o.Estado ??
-    o.status ??
-    data?.estado ??
-    data?.estado_id ??
-    data?.estadoId ??
-    data?.codigo_estado ??
-    data?.Estado ??
-    data?.status;
-  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
-  return typeof value === 'string' ? value : null;
-}
-
 /**
  * Mapea códigos PE de SFactory (Orden Pedido) a `OrderStatus` para emails/sync.
  * Referencia tenant: 1 Cotización, 2 Aprobado, 3 Terminado, 4 Cancelado, 5 En curso, 6 A entregar.
@@ -148,31 +132,6 @@ export function mapRemoteOrderStatus(estado: string | null): OrderStatus | null 
   if (e.includes('confirm') || e.includes('aprob')) return OrderStatus.CONFIRMED;
   if (e.includes('cotiz') || e.includes('pend')) return OrderStatus.PENDING;
   return null;
-}
-
-function extractPedidoData(response: unknown): Record<string, unknown> | null {
-  if (!response || typeof response !== 'object') return null;
-  const o = response as Record<string, unknown>;
-  if (o.data && typeof o.data === 'object' && !Array.isArray(o.data)) {
-    return { ...(o.data as Record<string, unknown>) };
-  }
-  if (o.pedido && typeof o.pedido === 'object' && !Array.isArray(o.pedido)) {
-    return { ...(o.pedido as Record<string, unknown>) };
-  }
-  return { ...o };
-}
-
-function extractPedidoItems(response: unknown): Record<string, unknown>[] {
-  if (!response || typeof response !== 'object') return [];
-  const o = response as Record<string, unknown>;
-  const data = o.data && typeof o.data === 'object' ? (o.data as Record<string, unknown>) : null;
-  const candidates = [o.items, o.detalle, o.detalles, data?.items, data?.detalle, data?.detalles];
-  for (const candidate of candidates) {
-    if (Array.isArray(candidate)) {
-      return candidate.filter((x): x is Record<string, unknown> => x != null && typeof x === 'object');
-    }
-  }
-  return [];
 }
 
 function pedidoNotificationPayload(pedido: {
@@ -340,6 +299,7 @@ export class PedidoSyncService {
             subtotal: lineSubtotal,
             talle: item.talle ?? null,
             color: item.color ?? null,
+            bordado: item.bordado ?? false,
           })),
         },
       },
@@ -400,6 +360,10 @@ export class PedidoSyncService {
       throw new Error(
         'El pedido está pendiente de pago y no puede confirmarse manualmente desde el admin.'
       );
+    }
+
+    if (puedeReintentarAprobacionErp(pedido)) {
+      return procesarPedidoConfirmado(pedidoId);
     }
 
     if (pedido.estadoInterno !== EstadoPedido.pendiente_confirmacion) {
@@ -475,30 +439,25 @@ export class PedidoSyncService {
     }
 
     const readPayload = { orderId: pedido.sfactoryOrdenId };
-    const remote = await sfactoryService.leerOrdenPedido(
-      pedido.sfactoryOrdenId,
-      pedido.empresa.sfactoryCompanyKey
-    );
-    await crearLogSfactory(pedidoId, PedidoSfactoryAccion.leer, readPayload, true, remote, null);
-
-    const data = extractPedidoData(remote);
-    if (!data) {
-      throw new Error('No se pudo obtener data de la orden SFactory para editar estado.');
-    }
-
-    const editPayload = {
-      data: {
-        ...data,
-        id: data.id ?? pedido.sfactoryOrdenId,
-        estado: SFACTORY_ESTADO_CANCELADO,
-        ...(motivo ? { observaciones: `${String(data.observaciones ?? '')}\n[Cancelación web] ${motivo}`.trim() } : {}),
-      },
-      items: extractPedidoItems(remote),
-    };
+    let editPayload: unknown = null;
 
     try {
-      const response = await sfactoryService.editarOrdenPedido(editPayload as any, pedido.empresa.sfactoryCompanyKey);
-      await crearLogSfactory(pedidoId, PedidoSfactoryAccion.editar, editPayload, true, response, null);
+      const result = await cancelarOrdenPedidoEnSfactory(
+        pedido.sfactoryOrdenId,
+        pedido.empresa.sfactoryCompanyKey,
+        motivo
+      );
+      await crearLogSfactory(pedidoId, PedidoSfactoryAccion.leer, readPayload, true, result.remote, null);
+      editPayload = result.editPayload ?? { skippedEdit: true, estado: SFACTORY_PE_ESTADO.cancelado };
+      await crearLogSfactory(
+        pedidoId,
+        PedidoSfactoryAccion.editar,
+        editPayload,
+        true,
+        result.response,
+        null
+      );
+      const response = result.response;
 
       await prisma.$transaction(async (tx) => {
         await devolverStockSiReservado(tx, pedidoId);
@@ -507,7 +466,7 @@ export class PedidoSyncService {
           data: {
             estadoInterno: EstadoPedido.cancelado,
             estadoErp: OrderStatus.CANCELLED,
-            sfactoryEstado: SFACTORY_ESTADO_CANCELADO,
+            sfactoryEstado: SFACTORY_PE_ESTADO.cancelado,
             syncStatus: PedidoSyncStatus.synced,
             syncError: null,
             sfactorySyncedAt: new Date(),
@@ -522,6 +481,9 @@ export class PedidoSyncService {
       const updated = await this.detalle(empresaId, pedidoId);
       if (updated) {
         await this.notifyCancelled(empresaId, updated, pedido.estadoInterno);
+        sendPedidoStatusEmailAsync(pedidoId, OrderStatus.CANCELLED, {
+          notes: updated.observaciones ?? undefined,
+        });
       }
       return updated;
     } catch (e: unknown) {
@@ -547,6 +509,18 @@ export class PedidoSyncService {
   async reintentarSfactory(empresaId: number, pedidoId: number) {
     const before = await prisma.pedido.findFirst({ where: { id: pedidoId, empresaId } });
     if (!before) throw new Error('Pedido no encontrado');
+
+    if (puedeReintentarAprobacionErp(before)) {
+      const result = await procesarPedidoConfirmado(pedidoId);
+      const pedido = await this.detalle(empresaId, pedidoId);
+      return {
+        alreadySynced: false,
+        reintentoAprobacionErp: true,
+        result,
+        pedido,
+      };
+    }
+
     if (before.sfactoryOrdenId != null) {
       return { alreadySynced: true, pedido: before };
     }
@@ -602,7 +576,7 @@ export class PedidoSyncService {
         pedido.empresa.sfactoryCompanyKey
       );
       const remoteId = parseRemoteId(response) ?? pedido.sfactoryOrdenId;
-      const remoteEstado = parseRemoteEstado(response);
+      const remoteEstado = parseEstadoFromOrdenResponse(response);
       const estadoErp = mapRemoteOrderStatus(remoteEstado);
       const hash = stableHashPedidoPayload(response);
       const now = new Date();

@@ -23,6 +23,13 @@ import { generoFiltroAValorBd } from '../constants/variantes-filtros';
 import { ECOMMERCE_RUBROS_SFACTORY_IDS, isRubroPermitidoEcommerce } from '../config/ecommerce.config';
 import { calcularTodosLosPrecios, CUOTAS_FINANCIADO_DEFAULT } from '../config/precios.config';
 import { buildProductoPadreTextSearchFilter } from '../utils/producto-padre-search.util';
+import { deduplicateProductosWeb } from '../utils/variante-dedup.utils';
+import { productImageService } from './productImage.service';
+import {
+  enrichProductosWebWithPadreImages,
+  firstPadreImagenUrl,
+  padreImagenForColor,
+} from '../utils/producto-imagen.util';
 
 export class ProductoService {
   /**
@@ -288,6 +295,22 @@ export class ProductoService {
       console.log('[ProductoService.getBySlug] Product not found after all attempts');
     } else {
       console.log('[ProductoService.getBySlug] Product found:', producto.id);
+
+      if (includeVariantes && producto.productosWeb?.length) {
+        const padreImages = await productImageService.getProductoPadreImages(
+          producto.id,
+        );
+        enrichProductosWebWithPadreImages(
+          producto.productosWeb as Parameters<
+            typeof enrichProductosWebWithPadreImages
+          >[0],
+          padreImages.map((img) => ({
+            imagenUrl: img.imagenUrl,
+            color: img.color,
+            orden: img.orden,
+          })),
+        );
+      }
     }
 
     return producto;
@@ -1011,13 +1034,17 @@ export class ProductoService {
       take: limit,
     });
 
+    const padreIds = productos.map((p) => p.id);
+    const padreImagesMap =
+      await productImageService.getProductoPadreImagesBatch(padreIds);
+
     // Transformar a estructura optimizada
     const productosFormateados: ProductoPublicado[] = productos
       .filter((p: any) => p.productosWeb && p.productosWeb.length > 0)
       .map((producto: any): ProductoPublicado => {
         // Type assertion para acceder a las propiedades
         const p = producto as any;
-        const variantesActivas = p.productosWeb || [];
+        const variantesActivas = deduplicateProductosWeb(p.productosWeb || []) as any[];
 
         // Obtener precios de ProductoPrecio si están disponibles, sino usar precioCache
         const preciosProductoPrecio = variantesActivas
@@ -1057,7 +1084,13 @@ export class ProductoService {
         const precioMin = preciosCache.length > 0 ? Math.min(...preciosCache) : precioLista;
         const precioMax = preciosCache.length > 0 ? Math.max(...preciosCache) : precioLista;
 
-        // Seleccionar imagen principal (priorizar variante con imagen)
+        const padreImagenRows = (padreImagesMap.get(p.id) ?? []).map((img) => ({
+          imagenUrl: img.imagenUrl,
+          color: img.color,
+          orden: img.orden,
+        }));
+
+        // Seleccionar imagen principal (variante activa → JSON padre → imágenes BD padre)
         let imagenPrincipal: string | null = null;
         const varianteConImagen = variantesActivas.find(
           (v: any) => v.imagenes && v.imagenes.length > 0
@@ -1074,6 +1107,9 @@ export class ProductoService {
             imagenPrincipal = imagenesArray[0];
           }
         }
+        if (!imagenPrincipal && padreImagenRows.length > 0) {
+          imagenPrincipal = firstPadreImagenUrl(padreImagenRows);
+        }
 
         // Crear mapa de imágenes por color (todas las variantes del mismo color usan la misma imagen)
         const imagenesPorColor = new Map<string, string | null>();
@@ -1081,21 +1117,28 @@ export class ProductoService {
         variantesActivas.forEach((v: any): void => {
           if (v.color && !imagenesPorColor.has(v.color)) {
             // Buscar primera variante de este color con imagen
-            const varianteConImagen = variantesActivas.find(
+            const varianteConImagenColor = variantesActivas.find(
               (v2: any): boolean => v2.color === v.color &&
                 (v2.imagenes?.[0]?.imagenUrl || v2.imagenVariante)
             );
 
-            const imagen = varianteConImagen?.imagenes?.[0]?.imagenUrl ||
-              varianteConImagen?.imagenVariante ||
+            let imagen = varianteConImagenColor?.imagenes?.[0]?.imagenUrl ||
+              varianteConImagenColor?.imagenVariante ||
               null;
+
+            if (!imagen) {
+              imagen = padreImagenForColor(padreImagenRows, v.color);
+            }
+
             imagenesPorColor.set(v.color, imagen);
           }
         });
 
         // Variantes simplificadas
         const variantes: VariantePublicada[] = variantesActivas.map((v: any): VariantePublicada => {
-          const imagenColor = v.color ? imagenesPorColor.get(v.color) || null : null;
+          const imagenColor = v.color
+            ? imagenesPorColor.get(v.color) || padreImagenForColor(padreImagenRows, v.color) || imagenPrincipal
+            : imagenPrincipal;
 
           return {
             id: v.id,
