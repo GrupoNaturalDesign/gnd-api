@@ -117,22 +117,20 @@ export class SyncController {
       let stockPrecios: Awaited<
         ReturnType<typeof stockPreciosSyncService.syncStockPreciosPorDepositoEcommerce>
       > | null = null;
-      if (process.env.SYNC_STOCK_AFTER_PRODUCTOS === 'true') {
-        try {
-          stockPrecios = await stockPreciosSyncService.syncStockPreciosPorDepositoEcommerce(
-            empresaId
-          );
-        } catch (err: unknown) {
-          console.error('[syncProductos] SYNC_STOCK_AFTER_PRODUCTOS falló:', err);
-        }
+      try {
+        stockPrecios = await stockPreciosSyncService.syncStockPreciosPorDepositoEcommerce(
+          empresaId
+        );
+      } catch (err: unknown) {
+        console.error('[syncProductos] stock/precios post-sync falló:', err);
       }
 
       const response: ApiResponse = {
         success: true,
         data: stockPrecios ? { ...resultado, stockPrecios } : resultado,
         message: stockPrecios
-          ? 'Productos sincronizados y stock/precios actualizados desde depósito ecommerce'
-          : 'Productos sincronizados exitosamente',
+          ? 'Productos sincronizados; stock/precios y activo por depósito ecommerce aplicados'
+          : 'Productos sincronizados (stock/precios post-sync no disponible)',
       };
       res.json(response);
     } catch (error: any) {
@@ -244,14 +242,12 @@ export class SyncController {
       let stockPrecios: Awaited<
         ReturnType<typeof stockPreciosSyncService.syncStockPreciosPorDepositoEcommerce>
       > | null = null;
-      if (process.env.SYNC_STOCK_AFTER_PRODUCTOS === 'true') {
-        try {
-          stockPrecios = await stockPreciosSyncService.syncStockPreciosPorDepositoEcommerce(
-            empresaId
-          );
-        } catch (err: unknown) {
-          console.error('[syncAll] SYNC_STOCK_AFTER_PRODUCTOS falló:', err);
-        }
+      try {
+        stockPrecios = await stockPreciosSyncService.syncStockPreciosPorDepositoEcommerce(
+          empresaId
+        );
+      } catch (err: unknown) {
+        console.error('[syncAll] stock/precios post-sync falló:', err);
       }
 
       const response: ApiResponse = {
@@ -263,8 +259,8 @@ export class SyncController {
           ...(stockPrecios ? { stockPrecios } : {}),
         },
         message: stockPrecios
-          ? 'Sincronización completa (incl. stock depósito ecommerce)'
-          : 'Sincronización completa exitosa',
+          ? 'Sincronización completa (incl. stock y activo por depósito ecommerce)'
+          : 'Sincronización completa (stock/precios post-sync no disponible)',
       };
       res.json(response);
     } catch (error: any) {

@@ -38,6 +38,7 @@ export const COLOR_ALIASES: Record<string, ColorCanonico> = {
   WHITE: 'BLANCO',
   MEL: 'MELANGE',
   CL: 'CELESTE',
+  'AZUL MAR': 'AZUL MARINO',
 };
 
 /** Frases a buscar al parsear (canónicos + alias), más largas primero */

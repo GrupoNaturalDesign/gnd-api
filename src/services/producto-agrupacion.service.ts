@@ -9,10 +9,19 @@ import {
   resolverUnisexFinal,
 } from '../utils/variantes-parse.utils';
 import {
+  colorDesdePatronesDescripcion,
+  consolidarColoresCanonico,
+  resolverColorDesdeSfactory,
+} from '../utils/sfactory-color-parse.utils';
+import {
   extraerNucleoYSexoDesdeCodigo,
   resolverClaveGrupoFusion,
-  resolverColorVariante,
 } from '../utils/sku-line-fusion.utils';
+import {
+  aplicarSublineaACodigoAgrupacion,
+  detectarSufijoSublineaAgrupacion,
+  enriquecerNombreBaseSublinea,
+} from '../utils/sfactory-sublinea-agrupacion.utils';
 
 export function elegirNombreBase(actual: string, nuevo: string): string {
   const a = actual.trim();
@@ -217,8 +226,10 @@ export function parsearNombreProducto(descripcion: string, codigo?: string): Pro
   if (indiceSexo >= 0) excluirParaColor.add(indiceSexo);
   if (indiceTalle >= 0) excluirParaColor.add(indiceTalle);
 
-  const { color, indiceInicio: indiceColorInicio, longitudPalabras: colorLongitud } =
+  const { color: colorPalabras, indiceInicio: indiceColorInicio, longitudPalabras: colorLongitud } =
     extraerColorDesdePalabras(palabras, excluirParaColor);
+  const color =
+    colorDesdePatronesDescripcion(nombreLimpio) ?? colorPalabras;
 
   const indices = indicesDesdeParseo(indiceSexo, indiceColorInicio, colorLongitud, indiceTalle);
   let nombreBase = construirNombreBase(palabras, indices) || nombreLimpio;
@@ -319,23 +330,26 @@ export function agruparProductosPorCodigoBase(productos: SFactoryProduct[]): Map
     const descripcion = (producto as any).Descripcion || (producto as any).descripcion || codigo;
     const parseado = parsearNombreProducto(descripcion, codigo);
 
-    // Normalizar nombre base para comparación
-    const nombreBaseNormalizado = normalizarNombre(parseado.nombreBase || descripcion);
-
     // Sexo ya viene normalizado del parseo (Masculino/Femenino/Unisex)
     const sexoNormalizado = parseado.sexo;
 
-    const { claveGrupo, colorDesdeSku } = resolverClaveGrupoFusion(
+    const { claveGrupo: claveGrupoSku, colorDesdeSku } = resolverClaveGrupoFusion(
       codigo,
       sexoNormalizado
     );
+    const sufijoSublinea = detectarSufijoSublineaAgrupacion(descripcion);
+    const claveGrupo = sufijoSublinea
+      ? aplicarSublineaACodigoAgrupacion(claveGrupoSku, sufijoSublinea)
+      : claveGrupoSku;
+    const nombreBaseGrupo = enriquecerNombreBaseSublinea(
+      parseado.nombreBase || descripcion,
+      descripcion
+    );
 
     const colorCampo = (producto as any).Color || (producto as any).color || null;
-    const color = resolverColorVariante(
-      parseado.color,
-      colorCampo,
-      codigo
-    ) ?? colorDesdeSku;
+    const color =
+      resolverColorDesdeSfactory(descripcion, parseado.color, colorCampo, codigo) ??
+      colorDesdeSku;
     const talle =
       parseado.talle ||
       (producto as any).Talle ||
@@ -347,8 +361,8 @@ export function agruparProductosPorCodigoBase(productos: SFactoryProduct[]): Map
       const nuevoGrupo: ProductoAgrupado = {
         codigoAgrupacion: claveGrupo,
         codigoBase: claveGrupo,
-        nombreBase: parseado.nombreBase || descripcion,
-        nombreBaseNormalizado,
+        nombreBase: nombreBaseGrupo,
+        nombreBaseNormalizado: normalizarNombre(nombreBaseGrupo),
         sexo: sexoNormalizado,
         productos: [],
         colores: [],
@@ -360,7 +374,8 @@ export function agruparProductosPorCodigoBase(productos: SFactoryProduct[]): Map
     const grupo = grupos.get(claveGrupo)!;
     
     if (parseado.nombreBase) {
-      const elegido = elegirNombreBase(grupo.nombreBase, parseado.nombreBase);
+      const candidato = enriquecerNombreBaseSublinea(parseado.nombreBase, descripcion);
+      const elegido = elegirNombreBase(grupo.nombreBase, candidato);
       if (elegido !== grupo.nombreBase) {
         grupo.nombreBase = elegido;
         grupo.nombreBaseNormalizado = normalizarNombre(elegido);
@@ -403,8 +418,7 @@ export function agruparProductosPorCodigoBase(productos: SFactoryProduct[]): Map
       return numA - numB;
     });
     
-    // Ordenar colores alfabéticamente
-    grupo.colores.sort((a, b) => normalizarNombre(a).localeCompare(normalizarNombre(b)));
+    grupo.colores = consolidarColoresCanonico(grupo.colores);
     
     // Ordenar talles
     grupo.talles.sort((a, b) => {

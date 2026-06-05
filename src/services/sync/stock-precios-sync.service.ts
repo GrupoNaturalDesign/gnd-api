@@ -4,12 +4,21 @@ import { ECOMMERCE_RUBROS_SFACTORY_IDS } from '../../config/ecommerce.config';
 import { calcularTodosLosPrecios, CUOTAS_FINANCIADO_DEFAULT } from '../../config/precios.config';
 import { getDbWriteConcurrency } from '../../lib/db-config';
 import { shouldUpdateStockPrecio } from '../../utils/sync-hash.utils';
+import { activoSfactoryConWhitelist } from '../../config/colores-padre-whitelist.utils';
 import {
+  activoSfactoryDesdeDeposito,
   fetchStockRowsResilient,
   getEcommerceWarehouseId,
+  inventarioDesdeStockRow,
+  obtenerInventarioPorCodigos,
   STOCK_BATCH_CODES,
+  type InventarioDepositoRow,
   type StockRow,
 } from '../../utils/sfactory-stock-fetch.utils';
+import {
+  publicarPadresSublineaAlineados,
+  refrescarColoresDisponiblesPadres,
+} from '../../utils/padre-colores-sync.utils';
 
 const BATCH_CODES = STOCK_BATCH_CODES;
 
@@ -26,6 +35,19 @@ export interface StockPreciosSyncResult {
   /** Total de llamadas HTTP a inventory_stock_items_by_warehouse_v2 (incluye reintentos por código omitido). */
   llamadasApi: number;
   /** Códigos que S-Factory indicó como inexistentes (se omitieron y se siguió con el resto). */
+  codigosOmitidos: string[];
+  /** Variantes desactivadas por no estar vendibles en depósito ecommerce. */
+  variantesDesactivadas: number;
+  /** Variantes reactivadas por stock/precio en depósito. */
+  variantesActivadas: number;
+  /** Padres despublicados sin variantes vendibles (solo si despublicarPadresSinVendibles). */
+  padresDespublicados: number;
+}
+
+export interface DesactivarFueraDepositoResult {
+  variantesDesactivadas: number;
+  variantesActivadas: number;
+  padresDespublicados: number;
   codigosOmitidos: string[];
 }
 
@@ -68,10 +90,15 @@ export class StockPreciosSyncService {
     const variantes = await prisma.productoWeb.findMany({
       where: {
         empresaId,
-        activoSfactory: true,
         productoPadre: { rubroId: { in: rubroIds } },
       },
-      select: { id: true, sfactoryCodigo: true, stockCache: true, precioCache: true },
+      select: {
+        id: true,
+        sfactoryCodigo: true,
+        stockCache: true,
+        precioCache: true,
+        activoSfactory: true,
+      },
     });
 
     const codigos = variantes.map((v) => v.sfactoryCodigo).filter(Boolean);
@@ -83,6 +110,10 @@ export class StockPreciosSyncService {
     let lotes = 0;
     let llamadasApi = 0;
     const codigosOmitidos: string[] = [];
+    const inventarioPorCodigo = new Map<string, InventarioDepositoRow>();
+    for (const c of codigos) {
+      inventarioPorCodigo.set(c, { stock: 0, salePrice: null });
+    }
 
     for (let i = 0; i < codigos.length; i += BATCH_CODES) {
       const chunk = codigos.slice(i, i + BATCH_CODES);
@@ -94,6 +125,9 @@ export class StockPreciosSyncService {
         codigosOmitidos
       );
       llamadasApi += calls;
+      for (const row of rows) {
+        inventarioPorCodigo.set(row.item_code, inventarioDesdeStockRow(row));
+      }
 
       const tareas = rows
         .map((row) => {
@@ -202,6 +236,15 @@ export class StockPreciosSyncService {
       );
     }
 
+    const purge = await this.desactivarVariantesFueraDepositoEcommerce(empresaId, {
+      warehouseId: wid,
+      rubroIds,
+      inventarioPrecargado: inventarioPorCodigo,
+      codigosOmitidosAcumulados: codigosOmitidos,
+      despublicarPadresSinVendibles:
+        process.env.SYNC_DESPUBLICAR_PADRES_SIN_VENDIBLES === 'true',
+    });
+
     return {
       warehouseId: wid,
       codigosConsultados: codigos.length,
@@ -211,6 +254,145 @@ export class StockPreciosSyncService {
       lotes,
       llamadasApi,
       codigosOmitidos,
+      variantesDesactivadas: purge.variantesDesactivadas,
+      variantesActivadas: purge.variantesActivadas,
+      padresDespublicados: purge.padresDespublicados,
+    };
+  }
+
+  /**
+   * Alinea activoSfactory con inventario del depósito ecommerce (por código, no por grupo).
+   */
+  async desactivarVariantesFueraDepositoEcommerce(
+    empresaId: number,
+    options?: {
+      warehouseId?: number;
+      rubroIds?: number[];
+      inventarioPrecargado?: Map<string, InventarioDepositoRow> | null;
+      codigosOmitidosAcumulados?: string[];
+      despublicarPadresSinVendibles?: boolean;
+    }
+  ): Promise<DesactivarFueraDepositoResult> {
+    const wid = options?.warehouseId ?? getEcommerceWarehouseId();
+
+    let rubroIds = options?.rubroIds;
+    if (!rubroIds || rubroIds.length === 0) {
+      const rubros = await prisma.rubro.findMany({
+        where: {
+          empresaId,
+          sfactoryId: { in: ECOMMERCE_RUBROS_SFACTORY_IDS },
+        },
+        select: { id: true },
+      });
+      rubroIds = rubros.map((r) => r.id);
+    }
+    if (rubroIds.length === 0) {
+      return {
+        variantesDesactivadas: 0,
+        variantesActivadas: 0,
+        padresDespublicados: 0,
+        codigosOmitidos: options?.codigosOmitidosAcumulados ?? [],
+      };
+    }
+
+    const variantes = await prisma.productoWeb.findMany({
+      where: {
+        empresaId,
+        productoPadre: { rubroId: { in: rubroIds } },
+      },
+      select: {
+        id: true,
+        sfactoryCodigo: true,
+        activoSfactory: true,
+        color: true,
+        productoPadre: { select: { codigoAgrupacion: true } },
+      },
+    });
+
+    const codigos = variantes.map((v) => v.sfactoryCodigo).filter(Boolean);
+    const codigosOmitidos = [...(options?.codigosOmitidosAcumulados ?? [])];
+    let inventario = options?.inventarioPrecargado ?? null;
+    if (!inventario) {
+      if (codigos.length > 0) {
+        const inv = await obtenerInventarioPorCodigos(codigos, wid);
+        inventario = inv.inventarioPorCodigo;
+        for (const c of inv.codigosOmitidos) {
+          if (!codigosOmitidos.includes(c)) codigosOmitidos.push(c);
+        }
+      } else {
+        inventario = new Map<string, InventarioDepositoRow>();
+      }
+    }
+
+    const omitSet = new Set(codigosOmitidos);
+    let variantesDesactivadas = 0;
+    let variantesActivadas = 0;
+
+    await runPool(variantes, getDbWriteConcurrency(), async (v) => {
+      const codigo = v.sfactoryCodigo;
+      const activoDeposito =
+        !omitSet.has(codigo) && activoSfactoryDesdeDeposito(codigo, inventario);
+      const debeActivo = activoSfactoryConWhitelist(
+        v.productoPadre.codigoAgrupacion,
+        v.color,
+        activoDeposito
+      );
+      if (debeActivo === v.activoSfactory) return;
+      await prisma.productoWeb.update({
+        where: { id: v.id },
+        data: { activoSfactory: debeActivo },
+      });
+      if (debeActivo) variantesActivadas++;
+      else variantesDesactivadas++;
+    });
+
+    let padresDespublicados = 0;
+    if (options?.despublicarPadresSinVendibles) {
+      const padresPublicados = await prisma.productoPadre.findMany({
+        where: {
+          empresaId,
+          publicado: true,
+          rubroId: { in: rubroIds },
+        },
+        select: {
+          id: true,
+          productosWeb: {
+            where: { activoSfactory: true },
+            select: { stockCache: true, precioCache: true },
+          },
+        },
+      });
+      const idsSinVendibles = padresPublicados
+        .filter((p) => {
+          const vendible = p.productosWeb.some(
+            (w) => Number(w.stockCache ?? 0) > 0 && Number(w.precioCache ?? 0) > 0
+          );
+          return !vendible;
+        })
+        .map((p) => p.id);
+      if (idsSinVendibles.length > 0) {
+        const res = await prisma.productoPadre.updateMany({
+          where: { id: { in: idsSinVendibles } },
+          data: { publicado: false },
+        });
+        padresDespublicados = res.count;
+      }
+    }
+
+    const publicadosSublinea = await publicarPadresSublineaAlineados(prisma, empresaId);
+    const coloresPadres = await refrescarColoresDisponiblesPadres(
+      prisma,
+      empresaId,
+      rubroIds
+    );
+
+    return {
+      variantesDesactivadas,
+      variantesActivadas,
+      padresDespublicados,
+      codigosOmitidos,
+      publicadosSublinea: publicadosSublinea.publicados,
+      coloresPadresRefrescados: coloresPadres.padresActualizados,
     };
   }
 }

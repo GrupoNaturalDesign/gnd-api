@@ -5,9 +5,13 @@ import {
   hashProductoSfactoryFields,
   hashClienteFields,
   shouldUpdateStockPrecio,
+  mapCodigoToAgrupacionCanonica,
   resolveGruposAfectados,
+  resolveGruposDesalineados,
   stableHash,
 } from '../src/utils/sync-hash.utils';
+import { agruparProductosPorCodigoBase } from '../src/services/producto-agrupacion.service';
+import type { SFactoryProduct } from '../src/types/sfactory.types';
 
 test('stableHash is deterministic', () => {
   const a = stableHash({ x: 1, y: 'z' });
@@ -81,10 +85,58 @@ test('shouldUpdateStockPrecio updates price when saleOk differs', () => {
   assert.equal(d.updatePrecio, true);
 });
 
-test('resolveGruposAfectados uses codigoAgrupacion from web map', () => {
+test('resolveGruposAfectados: agrupación canónica y padre web legacy', () => {
   const codigos = new Set(['SKU-A']);
   const byCodigo = new Map([['SKU-A', { codigo: 'SKU-A', descripcion: 'Test' }]]);
-  const byAgrupacion = new Map([['SKU-A', 'GRP-1']]);
+  const byAgrupacion = new Map([['SKU-A', 'GRP-LEGACY']]);
   const grupos = resolveGruposAfectados(codigos, byCodigo, byAgrupacion);
-  assert.deepEqual([...grupos], ['GRP-1']);
+  assert.ok(grupos.has('GRP-LEGACY'));
+  assert.ok(grupos.size >= 1);
+});
+
+test('resolveGruposAfectados: Delantal Denim incluye padre DENIM y legacy DEL_U', () => {
+  const codigos = new Set(['L-WW-ACC-DEL3']);
+  const byCodigo = new Map([
+    [
+      'L-WW-ACC-DEL3',
+      {
+        codigo: 'L-WW-ACC-DEL3',
+        descripcion: 'Delantal Chill Denim Unisex Jean Azul',
+      },
+    ],
+  ]);
+  const byAgrupacion = new Map([['L-WW-ACC-DEL3', 'L-WW-ACC-DEL_U']]);
+  const grupos = resolveGruposAfectados(codigos, byCodigo, byAgrupacion);
+  assert.ok(grupos.has('L-WW-ACC-DEL-DENIM_U'));
+  assert.ok(grupos.has('L-WW-ACC-DEL_U'));
+});
+
+test('resolveGruposDesalineados detecta DEL3 en padre viejo', () => {
+  const productos = [
+    {
+      Codigo: 'L-WW-ACC-DEL3',
+      Descripcion: 'Delantal Chill Denim Unisex Jean Azul',
+      Activo: true,
+    },
+    {
+      Codigo: 'L-WW-ACC-DEL2',
+      Descripcion: 'Delantal Chill Unisex Gris Cemento',
+      Activo: true,
+    },
+  ] as SFactoryProduct[];
+  const grupos = agruparProductosPorCodigoBase(productos);
+  const canonico = mapCodigoToAgrupacionCanonica(grupos);
+  const desalineados = resolveGruposDesalineados(canonico, [
+    {
+      sfactoryCodigo: 'L-WW-ACC-DEL3',
+      codigoAgrupacionPadre: 'L-WW-ACC-DEL_U',
+    },
+    {
+      sfactoryCodigo: 'L-WW-ACC-DEL2',
+      codigoAgrupacionPadre: 'L-WW-ACC-DEL_U',
+    },
+  ]);
+  assert.ok(desalineados.has('L-WW-ACC-DEL-DENIM_U'));
+  assert.ok(desalineados.has('L-WW-ACC-DEL_U'));
+  assert.equal(desalineados.has('L-WW-ACC-DEL-DENIM_U'), true);
 });

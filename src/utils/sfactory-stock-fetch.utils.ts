@@ -13,6 +13,46 @@ export type StockRow = {
   sale_price?: number;
 };
 
+export type InventarioDepositoRow = {
+  stock: number;
+  salePrice: number | null;
+};
+
+const SKU_MARCADOR_SUFFIX = /_(D|H|U)$/;
+
+/** SKU de agrupación por sexo (_D/_H/_U), no variante de venta salvo precio en depósito. */
+export function esSkuMarcadorEcommerce(codigo: string): boolean {
+  return SKU_MARCADOR_SUFFIX.test(String(codigo || '').trim());
+}
+
+export function salePriceDesdeRow(row: StockRow): number | null {
+  const saleRaw = row.sale_price != null ? Number(row.sale_price) : null;
+  if (saleRaw == null || Number.isNaN(saleRaw) || saleRaw <= 0) return null;
+  return saleRaw;
+}
+
+/** Vendible en depósito ecommerce: stock > 0 o precio minorista del depósito > 0. */
+export function codigoVendibleEnDeposito(row: InventarioDepositoRow): boolean {
+  return row.stock > 0 || row.salePrice != null;
+}
+
+export function inventarioDesdeStockRow(row: StockRow): InventarioDepositoRow {
+  return {
+    stock: Number(row.stock ?? 0),
+    salePrice: salePriceDesdeRow(row),
+  };
+}
+
+export function activoSfactoryDesdeDeposito(
+  codigo: string,
+  inventario: Map<string, InventarioDepositoRow>
+): boolean {
+  const row = inventario.get(codigo);
+  if (!row || !codigoVendibleEnDeposito(row)) return false;
+  if (esSkuMarcadorEcommerce(codigo) && row.salePrice == null) return false;
+  return true;
+}
+
 export function getEcommerceWarehouseId(): number {
   const wid = Number(process.env.SFACTORY_WAREHOUSE_ID_ECOM || 0);
   if (!wid || Number.isNaN(wid)) {
@@ -79,19 +119,19 @@ export async function fetchStockRowsResilient(
   return { rows: allRows, apiCalls };
 }
 
-export async function obtenerStockPorCodigos(
+export async function obtenerInventarioPorCodigos(
   codigos: string[],
   warehouseId?: number
 ): Promise<{
-  stockPorCodigo: Map<string, number>;
+  inventarioPorCodigo: Map<string, InventarioDepositoRow>;
   llamadasApi: number;
   codigosOmitidos: string[];
 }> {
   const wid = warehouseId ?? getEcommerceWarehouseId();
   const unicos = [...new Set(codigos.filter(Boolean))];
-  const stockPorCodigo = new Map<string, number>();
+  const inventarioPorCodigo = new Map<string, InventarioDepositoRow>();
   for (const c of unicos) {
-    stockPorCodigo.set(c, 0);
+    inventarioPorCodigo.set(c, { stock: 0, salePrice: null });
   }
 
   const codigosOmitidos: string[] = [];
@@ -102,14 +142,80 @@ export async function obtenerStockPorCodigos(
     const { rows, apiCalls } = await fetchStockRowsResilient(wid, chunk, codigosOmitidos);
     llamadasApi += apiCalls;
     for (const row of rows) {
-      stockPorCodigo.set(row.item_code, Number(row.stock ?? 0));
+      inventarioPorCodigo.set(row.item_code, inventarioDesdeStockRow(row));
     }
   }
 
+  return { inventarioPorCodigo, llamadasApi, codigosOmitidos };
+}
+
+/** @deprecated Usar obtenerInventarioPorCodigos; mantiene compatibilidad de tests legacy. */
+export async function obtenerStockPorCodigos(
+  codigos: string[],
+  warehouseId?: number
+): Promise<{
+  stockPorCodigo: Map<string, number>;
+  llamadasApi: number;
+  codigosOmitidos: string[];
+}> {
+  const { inventarioPorCodigo, llamadasApi, codigosOmitidos } =
+    await obtenerInventarioPorCodigos(codigos, warehouseId);
+  const stockPorCodigo = new Map<string, number>();
+  for (const [codigo, row] of inventarioPorCodigo) {
+    stockPorCodigo.set(codigo, row.stock);
+  }
   return { stockPorCodigo, llamadasApi, codigosOmitidos };
 }
 
 /**
+ * Códigos con presencia vendible en depósito (por ítem, no por grupo).
+ * Un grupo puede procesarse si al menos un código suyo está en el set.
+ */
+export function resolverCodigosPermitidosDeposito(
+  grupos: Map<string, ProductoAgrupado>,
+  inventarioPorCodigo: Map<string, InventarioDepositoRow>
+): {
+  codigosPermitidos: Set<string>;
+  clavesGrupoConStock: Set<string>;
+  gruposSinStock: number;
+  variantesEnDeposito: number;
+} {
+  const codigosPermitidos = new Set<string>();
+  const clavesGrupoConStock = new Set<string>();
+  let gruposSinStock = 0;
+  let variantesEnDeposito = 0;
+
+  for (const [clave, grupo] of grupos) {
+    let grupoTieneAlguno = false;
+    for (const item of grupo.productos) {
+      const codigo = codigoDesdeItemSfactory(
+        item.producto as { Codigo?: string; codigo?: string }
+      );
+      if (!codigo) continue;
+      const row = inventarioPorCodigo.get(codigo);
+      if (!row || !codigoVendibleEnDeposito(row)) continue;
+      if (esSkuMarcadorEcommerce(codigo) && row.salePrice == null) continue;
+      codigosPermitidos.add(codigo);
+      variantesEnDeposito++;
+      grupoTieneAlguno = true;
+    }
+    if (grupoTieneAlguno) {
+      clavesGrupoConStock.add(clave);
+    } else {
+      gruposSinStock++;
+    }
+  }
+
+  return {
+    codigosPermitidos,
+    clavesGrupoConStock,
+    gruposSinStock,
+    variantesEnDeposito,
+  };
+}
+
+/**
+ * @deprecated Usar resolverCodigosPermitidosDeposito (por ítem, no arrastra el grupo entero).
  * Si al menos una variante del grupo tiene stock > 0, se incluyen todos los SKUs del grupo.
  */
 export function resolverGruposConStock(

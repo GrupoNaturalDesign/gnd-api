@@ -220,8 +220,45 @@ export function toSFactoryProductFromRow(p: ProductoSfactoryRow): SFactoryProduc
   } as SFactoryProduct;
 }
 
+/** SKU → codigo_agrupacion canónico según agrupación actual (sublíneas, fusión PAL, etc.). */
+export function mapCodigoToAgrupacionCanonica(
+  grupos: Map<string, { productos: Array<{ producto: SFactoryProduct }> }>
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const [clave, grupo] of grupos) {
+    for (const item of grupo.productos) {
+      const codigo = String(
+        (item.producto as { Codigo?: string; codigo?: string }).Codigo ||
+          (item.producto as { codigo?: string }).codigo ||
+          ''
+      );
+      if (codigo) map.set(codigo, clave);
+    }
+  }
+  return map;
+}
+
+/**
+ * Padres a reprocesar cuando productos_web siguen en codigo_agrupacion viejo
+ * (ej. Delantal Denim aún en L-WW-ACC-DEL_U tras cambio de reglas).
+ */
+export function resolveGruposDesalineados(
+  canonicoPorCodigo: Map<string, string>,
+  webs: Array<{ sfactoryCodigo: string; codigoAgrupacionPadre: string }>
+): Set<string> {
+  const grupos = new Set<string>();
+  for (const w of webs) {
+    const esperado = canonicoPorCodigo.get(w.sfactoryCodigo);
+    if (!esperado || esperado === w.codigoAgrupacionPadre) continue;
+    grupos.add(esperado);
+    grupos.add(w.codigoAgrupacionPadre);
+  }
+  return grupos;
+}
+
 /**
  * Dado un set de códigos afectados, resuelve codigoAgrupacion a reprocesar en paso 2.
+ * Incluye agrupación canónica (reglas actuales) y la del padre web (legacy) para migrar variantes.
  */
 export function resolveGruposAfectados(
   codigosAfectados: Set<string>,
@@ -231,18 +268,17 @@ export function resolveGruposAfectados(
   const grupos = new Set<string>();
 
   for (const codigo of codigosAfectados) {
+    const row = productosSfactoryByCodigo.get(codigo);
+    if (row) {
+      const agrupados = agruparProductosPorCodigoBase([toSFactoryProductFromRow(row)]);
+      for (const [, grupo] of agrupados) {
+        grupos.add(grupo.codigoAgrupacion);
+      }
+    }
+
     const fromWeb = codigoAgrupacionByCodigo?.get(codigo);
     if (fromWeb) {
       grupos.add(fromWeb);
-      continue;
-    }
-
-    const row = productosSfactoryByCodigo.get(codigo);
-    if (!row) continue;
-
-    const agrupados = agruparProductosPorCodigoBase([toSFactoryProductFromRow(row)]);
-    for (const [, grupo] of agrupados) {
-      grupos.add(grupo.codigoAgrupacion);
     }
   }
 
