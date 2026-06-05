@@ -49,6 +49,10 @@ export interface DesactivarFueraDepositoResult {
   variantesActivadas: number;
   padresDespublicados: number;
   codigosOmitidos: string[];
+  /** Padres de sublínea publicados por alineación post-sync. */
+  publicadosSublinea: number;
+  /** Padres con colores_disponibles refrescados. */
+  coloresPadresRefrescados: number;
 }
 
 async function runPool<T>(
@@ -292,6 +296,8 @@ export class StockPreciosSyncService {
         variantesActivadas: 0,
         padresDespublicados: 0,
         codigosOmitidos: options?.codigosOmitidosAcumulados ?? [],
+        publicadosSublinea: 0,
+        coloresPadresRefrescados: 0,
       };
     }
 
