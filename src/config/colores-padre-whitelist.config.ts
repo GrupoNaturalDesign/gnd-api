@@ -7,24 +7,46 @@ import type { ColorCanonico } from '../constants/variantes-filtros';
 export const COLORES_PERMITIDOS_POR_PADRE: Readonly<
   Record<string, readonly ColorCanonico[]>
 > = {
-  'L-OF-CAM-JOY_D': ['CELESTE', 'RAYAS 1: COMBINADAS', 'RAYADO CELESTE ANCHO'],
+  'L-OF-CAM-JOY_D': ['CELESTE', 'RAYA COMBINADA', 'RAYADO CELESTE ANCHO'],
 
   'L-OF-CAM-MAN_D': ['CELESTE'],
 
   'L-OF-CAM-MAN_H': [
     'CELESTE',
     'AZUL MARINO',
-    'RAYAS 1: COMBINADAS',
-    'RAYAS 2: FINA AZUL',
+    'RAYA COMBINADA',
+    'RAYA AZUL',
   ],
 
   'L-WW-CAM-WR_H': ['AZUL MARINO', 'GRIS TOPO'],
   'L-WW-CAM-WR_D': ['AZUL MARINO', 'GRIS TOPO'],
 
-  'L-OF-TEJ-CAR-CHA_D': ['NEGRO', 'GRIS MELANGE', 'GRIS PERLA', 'AZUL MARINO'],
-  'L-OF-TEJ-CAR-CHA_H': ['NEGRO', 'GRIS MELANGE', 'GRIS PERLA', 'AZUL MARINO'],
+  'L-OF-TEJ-CAR-CHA_D': [
+    'NEGRO',
+    'GRIS MELANGE OSCURO',
+    'GRIS MELANGE CLARO',
+    'AZUL MARINO',
+  ],
+  'L-OF-TEJ-CAR-CHA_H': [
+    'NEGRO',
+    'GRIS MELANGE OSCURO',
+    'GRIS MELANGE CLARO',
+    'AZUL MARINO',
+  ],
 
-  'L-OF-TEJ- SW - ESSE_H': ['NEGRO', 'GRIS MELANGE', 'GRIS PERLA', 'AZUL MARINO'],
+  'L-OF-TEJ- SW - ESSE_H': [
+    'NEGRO',
+    'GRIS MELANGE OSCURO',
+    'GRIS MELANGE CLARO',
+    'AZUL MARINO',
+  ],
+
+  'L-OF-CA-BMBES_H': [
+    'NEGRO',
+    'GRIS MELANGE OSCURO',
+    'GRIS MELANGE CLARO',
+    'AZUL MARINO',
+  ],
 
   'L-WW-PAN-CIMP_U': ['CEMENTO', 'AZUL MARINO', 'NEGRO'],
 

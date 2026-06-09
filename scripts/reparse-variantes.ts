@@ -11,9 +11,12 @@ import {
 } from '../src/services/producto-agrupacion.service';
 import {
   resolverClaveGrupoFusion,
-  resolverColorVariante,
   esCodigoLineaStatus,
 } from '../src/utils/sku-line-fusion.utils';
+import {
+  consolidarColoresCanonico,
+  resolverColorDesdeSfactory,
+} from '../src/utils/sfactory-color-parse.utils';
 import { limpiarSufijoGeneroSuelto } from '../src/utils/variantes-parse.utils';
 import { ECOMMERCE_RUBROS_SFACTORY_IDS } from '../src/config/ecommerce.config';
 
@@ -53,7 +56,12 @@ async function main() {
   for (const item of items) {
     const desc = item.descripcion || item.descrip_corta || item.codigo;
     const parseado = parsearNombreProducto(desc, item.codigo);
-    const color = resolverColorVariante(parseado.color, null, item.codigo);
+    const color = resolverColorDesdeSfactory(
+      desc,
+      parseado.color,
+      null,
+      item.codigo
+    );
     const nombre = (parseado.nombreBase || desc).trim();
 
     const web = await prisma.productoWeb.findFirst({
@@ -91,9 +99,9 @@ async function main() {
       where: { productoPadreId: padre.id, activoSfactory: true },
       select: { color: true, talle: true, sexo: true, nombre: true },
     });
-    const colores = Array.from(
-      new Set(variantes.map((v) => v.color).filter((c): c is string => !!c))
-    ).sort();
+    const colores = consolidarColoresCanonico(
+      variantes.map((v) => v.color).filter((c): c is string => !!c)
+    );
     const talles = Array.from(
       new Set(variantes.map((v) => v.talle).filter((t): t is string => !!t))
     );
@@ -171,9 +179,9 @@ async function main() {
       where: { productoPadreId: canonico.id, activoSfactory: true },
       select: { color: true, talle: true, sexo: true },
     });
-    const colores = Array.from(
-      new Set(variantesCanon.map((v) => v.color).filter((c): c is string => !!c))
-    ).sort();
+    const colores = consolidarColoresCanonico(
+      variantesCanon.map((v) => v.color).filter((c): c is string => !!c)
+    );
     const talles = Array.from(
       new Set(variantesCanon.map((v) => v.talle).filter((t): t is string => !!t))
     );

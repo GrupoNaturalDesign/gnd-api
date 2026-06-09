@@ -14,12 +14,16 @@ export const COLORES_CANONICOS = [
   'CEMENTO',
   'GRIS',
   'GRIS ACERO',
+  'GRIS MELANGE CLARO',
+  'GRIS MELANGE OSCURO',
   'GRIS MELANGE',
   'GRIS PERLA',
   'GRIS TOPO',
   'MELANGE',
   'NEGRO',
   'RAYADO CELESTE ANCHO',
+  'RAYA AZUL',
+  'RAYA COMBINADA',
   'RAYAS 1: CELESTE',
   'RAYAS 1: COMBINADAS',
   'RAYAS 2: COMBINADAS',
@@ -33,12 +37,15 @@ export type ColorCanonico = (typeof COLORES_CANONICOS)[number];
 /** Alias en descripción/nombre → color canónico ERP */
 export const COLOR_ALIASES: Record<string, ColorCanonico> = {
   BLACK: 'NEGRO',
+  NEG: 'NEGRO',
   NEGRA: 'NEGRO',
   BLANCA: 'BLANCO',
   WHITE: 'BLANCO',
   MEL: 'MELANGE',
   CL: 'CELESTE',
   'AZUL MAR': 'AZUL MARINO',
+  'RAYAS 1: COMBINADAS': 'RAYA COMBINADA',
+  'RAYAS 2: FINA AZUL': 'RAYA AZUL',
 };
 
 /** Frases a buscar al parsear (canónicos + alias), más largas primero */

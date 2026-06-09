@@ -9,16 +9,24 @@ const DESCRIPCION_COLOR_PATTERNS: ReadonlyArray<{
   test: (texto: string) => boolean;
   color: ColorCanonico;
 }> = [
-  { test: (t) => /\bGRIS\s+MEL\s+CL\b/i.test(t), color: 'GRIS MELANGE' },
-  { test: (t) => /\bGRIS\s+MEL\s+OS\b/i.test(t), color: 'GRIS MELANGE' },
+  {
+    test: (t) => /\bGRIS\s+MEL(ANGE)?\s+CL(ARO)?\b/i.test(t),
+    color: 'GRIS MELANGE CLARO',
+  },
+  { test: (t) => /\bGRIS\s+MEL\s+CL\b/i.test(t), color: 'GRIS MELANGE CLARO' },
+  {
+    test: (t) => /\bGRIS\s+MEL(ANGE)?\s+OS(CURO)?\b/i.test(t),
+    color: 'GRIS MELANGE OSCURO',
+  },
+  { test: (t) => /\bGRIS\s+MEL\s+OS\b/i.test(t), color: 'GRIS MELANGE OSCURO' },
   { test: (t) => /\bGRIS\s+MELANGE\b/i.test(t), color: 'GRIS MELANGE' },
   { test: (t) => /\bGRIS\s+PERLA\b/i.test(t), color: 'GRIS PERLA' },
   { test: (t) => /\bGRIS\s+TOPO\b/i.test(t), color: 'GRIS TOPO' },
   { test: (t) => /\bGRIS\s+ACERO\b/i.test(t), color: 'GRIS ACERO' },
   { test: (t) => /\bAZUL\s+MARINO\b/i.test(t), color: 'AZUL MARINO' },
   { test: (t) => /\bAZUL\s+MAR\b/i.test(t), color: 'AZUL MARINO' },
-  { test: (t) => /\bRAY\s+COMBINADA\b/i.test(t), color: 'RAYAS 1: COMBINADAS' },
-  { test: (t) => /\bRAY\s+AZUL\b/i.test(t), color: 'RAYAS 2: FINA AZUL' },
+  { test: (t) => /\bRAY\s+COMBINADA\b/i.test(t), color: 'RAYA COMBINADA' },
+  { test: (t) => /\bRAY\s+AZUL\b/i.test(t), color: 'RAYA AZUL' },
   { test: (t) => /\bRAY\s+CEL\b/i.test(t), color: 'CELESTE' },
   { test: (t) => /\bRAYADO\s+CELESTE\b/i.test(t), color: 'RAYADO CELESTE ANCHO' },
   /** ACERO como color (ej. Remera Base Pro Dama ACERO M) */
