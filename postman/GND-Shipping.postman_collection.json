@@ -106,6 +106,36 @@
       ]
     },
     {
+      "name": "Admin pedidos — etiqueta",
+      "description": "Rutas bajo `/api/admin/pedidos`. Requiere admin + empresaMiddleware.",
+      "item": [
+        {
+          "name": "GET Etiqueta disponibilidad",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/pedidos/{{pedidoId}}/etiqueta/disponibilidad",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "pedidos", "{{pedidoId}}", "etiqueta", "disponibilidad"]
+            },
+            "description": "Devuelve canDownload, reason, provider. Correo → canDownload false."
+          }
+        },
+        {
+          "name": "GET Descargar etiqueta (PDF)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/pedidos/{{pedidoId}}/etiqueta",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "pedidos", "{{pedidoId}}", "etiqueta"]
+            },
+            "description": "Andreani: PDF attachment. Agregar ?format=json para base64."
+          }
+        }
+      ]
+    },
+    {
       "name": "Correo — test (solo desarrollo)",
       "description": "404 si `NODE_ENV=production`. No usa `shippingEmpresaMiddleware`; sí Firebase admin.",
       "item": [

@@ -84,6 +84,14 @@ router.post(
   '/:id/crear-envio',
   pedidoAdminController.crearEnvioPostal.bind(pedidoAdminController)
 );
+router.get(
+  '/:id/etiqueta/disponibilidad',
+  pedidoAdminController.getEtiquetaDisponibilidad.bind(pedidoAdminController)
+);
+router.get(
+  '/:id/etiqueta',
+  pedidoAdminController.descargarEtiqueta.bind(pedidoAdminController)
+);
 router.post(
   '/:id/enviar-listo-retiro',
   pedidoAdminController.enviarListoRetiro.bind(pedidoAdminController)

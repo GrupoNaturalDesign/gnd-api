@@ -1,7 +1,7 @@
 import type { FormaEnvio, Pedido } from '@prisma/client';
 import type { ShippingProviderName } from '../services/shipping/shipping.types';
 
-type PedidoTrackingFields = Pick<
+export type PedidoTrackingFields = Pick<
   Pedido,
   | 'formaEnvio'
   | 'andreaniNumeroEnvio'

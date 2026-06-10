@@ -33,3 +33,15 @@ export class ShippingHttpError extends Error {
     Object.setPrototypeOf(this, ShippingHttpError.prototype);
   }
 }
+
+export class PedidoLabelNotAvailableError extends Error {
+  constructor(
+    message: string,
+    public readonly reason: string,
+    public readonly httpStatus: number = 409
+  ) {
+    super(message);
+    this.name = 'PedidoLabelNotAvailableError';
+    Object.setPrototypeOf(this, PedidoLabelNotAvailableError.prototype);
+  }
+}

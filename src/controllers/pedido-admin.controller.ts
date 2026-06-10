@@ -12,6 +12,8 @@ import { pedidoPickupService } from '../services/pedido-pickup.service';
 import { finalizeShippingAfterPaymentApproved } from '../services/checkout-shipping-finalize.service';
 import { requiresPostalShipping } from '../utils/pedido-entrega.util';
 import { resolvePedidoShippingTracking } from '../utils/pedido-shipping-tracking.util';
+import { pedidoShippingLabelService } from '../services/pedido-shipping-label.service';
+import { PedidoLabelNotAvailableError } from '../services/shipping/shipping.errors';
 import { sfactoryService } from '../services/sfactory/sfactory.service';
 import { aprobarOrdenPedidoEnSfactory } from '../services/sfactory/sfactory-orden-pedido.service';
 import { pedidosService } from '../services/pedidos.service';
@@ -62,12 +64,18 @@ export class PedidoAdminController {
 
   async detalle(req: Request, res: Response) {
     try {
-      const data = await pedidoSyncService.detalle(getEmpresaId(req), parsePedidoId(req));
+      const empresaId = getEmpresaId(req);
+      const pedidoId = parsePedidoId(req);
+      const data = await pedidoSyncService.detalle(empresaId, pedidoId);
       if (!data) {
         res.status(404).json({ success: false, error: 'Pedido no encontrado' });
         return;
       }
-      res.json({ success: true, data } as ApiResponse);
+      const shippingLabel = await pedidoShippingLabelService.getAvailability(
+        empresaId,
+        pedidoId
+      );
+      res.json({ success: true, data: { ...data, shippingLabel } } as ApiResponse);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       res.status(400).json({ success: false, error: 'Error al leer pedido', message });
@@ -258,6 +266,75 @@ export class PedidoAdminController {
         message,
       });
     }
+  }
+
+  async getEtiquetaDisponibilidad(req: Request, res: Response) {
+    try {
+      const data = await pedidoShippingLabelService.getAvailability(
+        getEmpresaId(req),
+        parsePedidoId(req)
+      );
+      res.json({
+        success: true,
+        data,
+        message: 'Disponibilidad de etiqueta',
+      } as ApiResponse);
+    } catch (error: unknown) {
+      this.sendLabelError(res, error);
+    }
+  }
+
+  async descargarEtiqueta(req: Request, res: Response) {
+    try {
+      const format =
+        typeof req.query.format === 'string' && req.query.format.trim().toLowerCase() === 'json'
+          ? 'json'
+          : 'binary';
+      const result = await pedidoShippingLabelService.downloadLabel(
+        getEmpresaId(req),
+        parsePedidoId(req)
+      );
+
+      if (format === 'json') {
+        res.json({
+          success: true,
+          data: {
+            trackingNumber: result.trackingNumber,
+            fileName: result.fileName,
+            fileBase64: result.buffer.toString('base64'),
+          },
+          message: 'Etiqueta',
+        } as ApiResponse);
+        return;
+      }
+
+      res.setHeader('Content-Type', result.contentType);
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${result.fileName.replace(/"/g, '')}"`
+      );
+      res.send(result.buffer);
+    } catch (error: unknown) {
+      this.sendLabelError(res, error);
+    }
+  }
+
+  private sendLabelError(res: Response, error: unknown): void {
+    if (error instanceof PedidoLabelNotAvailableError) {
+      res.status(error.httpStatus).json({
+        success: false,
+        error: 'Etiqueta no disponible',
+        message: error.message,
+        reason: error.reason,
+      });
+      return;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(400).json({
+      success: false,
+      error: 'No se pudo obtener la etiqueta',
+      message,
+    });
   }
 
   async enviarListoRetiro(req: Request, res: Response) {

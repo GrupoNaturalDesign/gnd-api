@@ -13,6 +13,31 @@ import {
 import { shippingTrackingQuerySchema } from '../validation/shipping-tracking.validation';
 import { paramAsString } from '../utils/http-param.util';
 import { buildShippingTrackingUrl } from '../utils/shipping-tracking-url.util';
+import {
+  resolvePedidoShippingTracking,
+  type PedidoTrackingFields,
+} from '../utils/pedido-shipping-tracking.util';
+import type { ShippingProviderName } from '../services/shipping/shipping.types';
+
+const pedidoShippingSelect = {
+  formaEnvio: true,
+  checkoutEnvioSnapshot: true,
+  andreaniNumeroEnvio: true,
+  correoTrackingNumber: true,
+  trackingUrl: true,
+} as const;
+
+function resolveShippingProviderForPedido(
+  providerRaw: string | undefined,
+  pedido: PedidoTrackingFields | null,
+  defaultProv: ShippingProviderName
+): ShippingProviderName {
+  if (providerRaw === 'correo' || providerRaw === 'andreani') return providerRaw;
+  const fromPedido = pedido
+    ? resolvePedidoShippingTracking(pedido).shippingProvider
+    : null;
+  return fromPedido ?? defaultProv;
+}
 
 const recipientSchema = z.object({
   name: z.string().min(1),
@@ -151,29 +176,22 @@ export class ShippingController {
     const q = req.query;
     const defaultProv = await shippingService.resolveDefaultProvider(empresaId);
     const providerRaw = typeof q.provider === 'string' ? q.provider : undefined;
-    const provider =
-      providerRaw === 'correo' || providerRaw === 'andreani'
-        ? providerRaw
-        : defaultProv;
     const trackingNumber =
       typeof q.trackingNumber === 'string' && q.trackingNumber.trim()
         ? q.trackingNumber.trim()
         : undefined;
     try {
-      let tn = trackingNumber;
-      if (!tn) {
-        const pedido = await prisma.pedido.findFirst({
-          where: { id: pedidoId, empresaId },
-          select: {
-            andreaniNumeroEnvio: true,
-            correoTrackingNumber: true,
-          },
-        });
-        tn =
-          provider === 'andreani'
-            ? pedido?.andreaniNumeroEnvio ?? undefined
-            : pedido?.correoTrackingNumber ?? undefined;
-      }
+      const pedido = await prisma.pedido.findFirst({
+        where: { id: pedidoId, empresaId },
+        select: pedidoShippingSelect,
+      });
+      const provider = resolveShippingProviderForPedido(
+        providerRaw,
+        pedido,
+        defaultProv
+      );
+      const resolved = pedido ? resolvePedidoShippingTracking(pedido) : null;
+      const tn = trackingNumber ?? resolved?.trackingNumber ?? undefined;
       if (!tn) {
         res.status(400).json({
           success: false,
@@ -212,29 +230,26 @@ export class ShippingController {
     const q = req.query;
     const defaultProv = await shippingService.resolveDefaultProvider(empresaId);
     const providerRaw = typeof q.provider === 'string' ? q.provider : undefined;
-    const provider =
-      providerRaw === 'correo' || providerRaw === 'andreani'
-        ? providerRaw
-        : defaultProv;
     const numbersRaw = typeof q.numbers === 'string' ? q.numbers : '';
     const numbers = numbersRaw
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
     try {
+      const pedido = await prisma.pedido.findFirst({
+        where: { id: pedidoId, empresaId },
+        select: pedidoShippingSelect,
+      });
+      const provider = resolveShippingProviderForPedido(
+        providerRaw,
+        pedido,
+        defaultProv
+      );
       let list = numbers;
       if (list.length === 0) {
-        const pedido = await prisma.pedido.findFirst({
-          where: { id: pedidoId, empresaId },
-          select: {
-            andreaniNumeroEnvio: true,
-            correoTrackingNumber: true,
-          },
-        });
-        const tn =
-          provider === 'andreani'
-            ? pedido?.andreaniNumeroEnvio
-            : pedido?.correoTrackingNumber;
+        const tn = pedido
+          ? resolvePedidoShippingTracking(pedido).trackingNumber
+          : null;
         if (tn) list = [tn];
       }
       if (list.length === 0) {
