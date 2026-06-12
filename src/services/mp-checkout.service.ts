@@ -25,6 +25,7 @@ import { adminNotificationService } from './admin-notification.service';
 import {
   validateCheckoutEnvioForMp,
   type CheckoutEnvioClientPayload,
+  type CheckoutShippingItemInput,
 } from './checkout-shipping.service';
 import { CuponEngineService } from './cupon-engine.service';
 import { empresaConfigService } from './empresa-config.service';
@@ -192,6 +193,13 @@ export interface ItemInput {
   bordado?: boolean;
 }
 
+function mapOrderItemsForShippingParcel(items: ItemInput[]): CheckoutShippingItemInput[] {
+  return items.map((i) => ({
+    productoWebId: i.productoWebId,
+    cantidad: i.cantidad,
+  }));
+}
+
 export interface CrearPedidoMpInput {
   empresaId: number;
   clienteNombre: string;
@@ -310,7 +318,12 @@ export async function crearPedidoMp(
   let clienteDireccionPersist = input.clienteDireccion?.trim() || null;
 
   if (input.checkoutEnvio) {
-    const v = await validateCheckoutEnvioForMp(input.empresaId, input.checkoutEnvio);
+    const v = await validateCheckoutEnvioForMp(
+      input.empresaId,
+      input.checkoutEnvio,
+      mapOrderItemsForShippingParcel(input.items),
+      Number(subtotalPedido)
+    );
     costoEnvio = v.costoEnvio;
     formaEnvio = v.formaEnvio;
     checkoutEnvioSnapshot = v.snapshot;
@@ -1118,7 +1131,12 @@ export async function crearPedidoManual(
   let clienteDireccionPersist = input.clienteDireccion?.trim() || null;
 
   if (input.checkoutEnvio) {
-    const v = await validateCheckoutEnvioForMp(input.empresaId, input.checkoutEnvio);
+    const v = await validateCheckoutEnvioForMp(
+      input.empresaId,
+      input.checkoutEnvio,
+      mapOrderItemsForShippingParcel(input.items),
+      Number(subtotalPedido)
+    );
     costoEnvio = v.costoEnvio;
     formaEnvio = v.formaEnvio;
     checkoutEnvioSnapshot = v.snapshot;

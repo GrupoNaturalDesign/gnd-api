@@ -1,4 +1,10 @@
-import { AdminNotificationSeverity, EstadoPedido, type FormaEnvio, type Pedido } from '@prisma/client';
+import {
+  AdminNotificationSeverity,
+  EstadoPedido,
+  type FormaEnvio,
+  type Pedido,
+  type PedidoItem,
+} from '@prisma/client';
 import prisma from '../lib/prisma';
 import { adminNotificationService } from './admin-notification.service';
 import { shippingService } from './shipping/shipping.service';
@@ -18,13 +24,7 @@ import {
 } from '../utils/pedido-entrega.util';
 import { resolvePedidoShippingTracking } from '../utils/pedido-shipping-tracking.util';
 import { shippingLogger } from '../lib/shipping-logger';
-
-const DEFAULT_PARCEL: Omit<ShippingParcel, 'declaredValue'> = {
-  weightGrams: 1000,
-  height: 20,
-  width: 30,
-  depth: 10,
-};
+import { buildParcelFromPedidoItems } from '../utils/shipping-parcel.util';
 
 function providerFromFormaEnvio(forma: FormaEnvio | null | undefined): ShippingProviderName | null {
   if (!forma) return null;
@@ -55,30 +55,12 @@ function resolveDeliveryType(
   return 'homeDelivery';
 }
 
-function resolveParcel(
-  snap: CheckoutEnvioSnapshot | null,
-  declaredValue: number
-): ShippingParcel {
-  const p = snap?.parcel;
-  if (
-    p &&
-    Number(p.weightGrams) > 0 &&
-    Number(p.height) > 0 &&
-    Number(p.width) > 0 &&
-    Number(p.depth) > 0
-  ) {
-    return {
-      weightGrams: Number(p.weightGrams),
-      height: Number(p.height),
-      width: Number(p.width),
-      depth: Number(p.depth),
-      declaredValue: Number(p.declaredValue ?? declaredValue) || declaredValue,
-    };
-  }
-  return {
-    ...DEFAULT_PARCEL,
-    declaredValue: Math.max(0, declaredValue),
-  };
+async function resolveParcelForPedido(
+  pedido: Pick<Pedido, 'empresaId' | 'subtotal' | 'total'>,
+  items: Pick<PedidoItem, 'productoWebId' | 'codigo' | 'cantidad'>[]
+): Promise<ShippingParcel> {
+  const declaredValue = Math.max(0, Number(pedido.subtotal) || Number(pedido.total) || 0);
+  return buildParcelFromPedidoItems(pedido.empresaId, items, declaredValue);
 }
 
 function snapshotAddressToShippingAddress(
@@ -122,8 +104,8 @@ export type BuildShippingOrderInputResult =
   | { ok: true; input: CreateShippingOrderInput }
   | { ok: false; reason: 'retiro' | 'already_has_tracking' | 'invalid_config'; message: string };
 
-/** Arma el input de carrier desde pedido confirmado (snapshot + datos cliente). */
-export function buildCreateShippingOrderInputFromPedido(
+/** Arma el input de carrier desde pedido confirmado (snapshot + ítems + datos cliente). */
+export async function buildCreateShippingOrderInputFromPedido(
   pedido: Pick<
     Pedido,
     | 'id'
@@ -142,8 +124,9 @@ export function buildCreateShippingOrderInputFromPedido(
     | 'subtotal'
     | 'total'
     | 'costoEnvio'
-  >
-): BuildShippingOrderInputResult {
+  >,
+  items: Pick<PedidoItem, 'productoWebId' | 'codigo' | 'cantidad'>[]
+): Promise<BuildShippingOrderInputResult> {
   if (isRetiroEnTienda(pedido)) {
     return { ok: false, reason: 'retiro', message: 'Retiro en tienda: sin envío postal.' };
   }
@@ -168,8 +151,13 @@ export function buildCreateShippingOrderInputFromPedido(
   }
 
   const deliveryType = resolveDeliveryType(snap, pedido.formaEnvio);
-  const declaredValue = Math.max(0, Number(pedido.subtotal) || Number(pedido.total) || 0);
-  const parcel = resolveParcel(snap, declaredValue);
+  let parcel: ShippingParcel;
+  try {
+    parcel = await resolveParcelForPedido(pedido, items);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, reason: 'invalid_config', message: msg };
+  }
 
   if (deliveryType === 'agency') {
     const agencyId = snap?.agencyId?.trim() || pedido.andreaniSucursalId?.trim();
@@ -243,7 +231,10 @@ export interface FinalizeShippingResult {
 export async function finalizeShippingAfterPaymentApproved(
   pedidoId: number
 ): Promise<FinalizeShippingResult> {
-  const pedido = await prisma.pedido.findUnique({ where: { id: pedidoId } });
+  const pedido = await prisma.pedido.findUnique({
+    where: { id: pedidoId },
+    include: { items: true },
+  });
   if (!pedido) {
     return { ok: false, error: `Pedido ${pedidoId} no encontrado` };
   }
@@ -252,7 +243,7 @@ export async function finalizeShippingAfterPaymentApproved(
     return { ok: true, skipped: true };
   }
 
-  const built = buildCreateShippingOrderInputFromPedido(pedido);
+  const built = await buildCreateShippingOrderInputFromPedido(pedido, pedido.items);
   if (!built.ok) {
     if (built.reason === 'already_has_tracking' || built.reason === 'retiro') {
       return { ok: true, skipped: true };

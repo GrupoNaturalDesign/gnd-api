@@ -11,18 +11,16 @@ import {
   ShippingValidationError,
 } from '../services/shipping/shipping.errors';
 
-const parcelSchema = z.object({
-  weightGrams: z.number().positive(),
-  height: z.number().positive(),
-  width: z.number().positive(),
-  depth: z.number().positive(),
-  declaredValue: z.number().nonnegative(),
+const quoteItemSchema = z.object({
+  productoWebId: z.number().int().positive(),
+  cantidad: z.number().positive(),
 });
 
 const quoteBodySchema = z.object({
   provider: z.enum(['correo', 'andreani']),
   deliveryType: z.enum(['homeDelivery', 'agency']),
-  parcel: parcelSchema,
+  items: z.array(quoteItemSchema).min(1),
+  declaredValueSubtotal: z.number().nonnegative(),
   cpDestino: z.string().min(2),
 });
 

@@ -71,8 +71,6 @@ function parseCheckoutEnvio(raw: unknown): CheckoutEnvioClientPayload | null {
   const deliveryType = o.deliveryType;
   if (provider !== 'correo' && provider !== 'andreani') return null;
   if (deliveryType !== 'homeDelivery' && deliveryType !== 'agency') return null;
-  const parcel = parseParcelForCheckout(o.parcel);
-  if (!parcel) return null;
   const cpDestino = typeof o.cpDestino === 'string' ? o.cpDestino.trim() : '';
   if (cpDestino.length < 2) return null;
   const clientQuotedAmount = Number(o.clientQuotedAmount);
@@ -87,12 +85,13 @@ function parseCheckoutEnvio(raw: unknown): CheckoutEnvioClientPayload | null {
   if (deliveryType === 'agency' && !agencyId) return null;
   const address = parseAddressForCheckout(o.address);
   if (deliveryType === 'homeDelivery' && !address) return null;
+  const parcel = parseParcelForCheckout(o.parcel) ?? undefined;
   return {
     provider,
     deliveryType,
-    parcel,
     cpDestino,
     clientQuotedAmount,
+    ...(parcel ? { parcel } : {}),
     ...(correoProductType ? { correoProductType } : {}),
     ...(agencyId ? { agencyId } : {}),
     ...(agencyLabel ? { agencyLabel } : {}),

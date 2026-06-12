@@ -3,6 +3,10 @@ import { shippingService } from './shipping/shipping.service';
 import type { ShippingDeliveryType, ShippingParcel, ShippingProviderName } from './shipping/shipping.types';
 import { ShippingValidationError } from './shipping/shipping.errors';
 import type { CorreoShippingQuote } from './shipping/correo/correo.types';
+import {
+  buildParcelFromCheckoutItems,
+  type CheckoutShippingItemInput,
+} from '../utils/shipping-parcel.util';
 
 /** Diferencia máxima aceptada entre monto cotizado en cliente vs re-cotización en servidor (ARS). */
 export const CHECKOUT_ENVIO_QUOTE_TOLERANCE_ARS = 2.5;
@@ -10,7 +14,8 @@ export const CHECKOUT_ENVIO_QUOTE_TOLERANCE_ARS = 2.5;
 export interface CheckoutEnvioClientPayload {
   provider: ShippingProviderName;
   deliveryType: ShippingDeliveryType;
-  parcel: ShippingParcel;
+  /** Calculado en servidor; el cliente puede enviar el de la última cotización (se revalida). */
+  parcel?: ShippingParcel;
   cpDestino: string;
   clientQuotedAmount: number;
   /** MiCorreo: código de producto (p. ej. CP, EP). Obligatorio si el monto no es el mínimo. */
@@ -27,6 +32,8 @@ export interface CheckoutEnvioClientPayload {
     department?: string;
   };
 }
+
+export type { CheckoutShippingItemInput };
 
 export function mapFormaEnvioCheckout(
   provider: ShippingProviderName,
@@ -112,25 +119,32 @@ export async function resolveServerShippingQuoteAmount(
   throw new ShippingValidationError(`Proveedor de cotización no soportado: ${provider}`);
 }
 
-/** Respuesta para `POST /checkout/shipping/quote` (sin validar monto cliente). */
+/** Respuesta para `POST /checkout/shipping/quote`. */
 export async function quoteCheckoutShipping(params: {
   empresaId: number;
   provider: ShippingProviderName;
   deliveryType: ShippingDeliveryType;
-  parcel: ShippingParcel;
+  items: CheckoutShippingItemInput[];
+  declaredValueSubtotal: number;
   cpDestino: string;
 }): Promise<{
   precio: number;
   moneda: string;
   provider: ShippingProviderName;
+  parcel: ShippingParcel;
   correoOpciones?: CorreoShippingQuote[];
   raw?: unknown;
 }> {
+  const parcel = await buildParcelFromCheckoutItems(
+    params.empresaId,
+    params.items,
+    params.declaredValueSubtotal
+  );
   const { amount, correoQuotes, andreaniRaw } = await resolveServerShippingQuoteAmount(
     params.empresaId,
     params.provider,
     params.deliveryType,
-    params.parcel,
+    parcel,
     params.cpDestino,
     params.provider === 'correo' ? {} : undefined
   );
@@ -138,6 +152,7 @@ export async function quoteCheckoutShipping(params: {
     precio: amount,
     moneda: 'ARS',
     provider: params.provider,
+    parcel,
     correoOpciones: correoQuotes,
     raw: andreaniRaw ?? (correoQuotes?.length ? { rates: correoQuotes } : undefined),
   };
@@ -145,20 +160,29 @@ export async function quoteCheckoutShipping(params: {
 
 /**
  * Re-cotiza en servidor y valida contra el monto enviado por el cliente (anti-manipulación).
+ * El bulto se calcula siempre desde `items` del pedido (ignora medidas del cliente).
  */
 export async function validateCheckoutEnvioForMp(
   empresaId: number,
-  input: CheckoutEnvioClientPayload
+  input: CheckoutEnvioClientPayload,
+  items: CheckoutShippingItemInput[],
+  declaredValueSubtotal: number
 ): Promise<{
   costoEnvio: Prisma.Decimal;
   formaEnvio: FormaEnvio;
   snapshot: Prisma.InputJsonValue;
+  parcel: ShippingParcel;
 }> {
+  const parcel = await buildParcelFromCheckoutItems(
+    empresaId,
+    items,
+    declaredValueSubtotal
+  );
   const { amount, correoQuotes, andreaniRaw } = await resolveServerShippingQuoteAmount(
     empresaId,
     input.provider,
     input.deliveryType,
-    input.parcel,
+    parcel,
     input.cpDestino,
     input.provider === 'correo'
       ? { correoProductType: input.correoProductType }
@@ -170,10 +194,10 @@ export async function validateCheckoutEnvioForMp(
     );
   }
   const snapshot = {
-    version: 1,
+    version: 2,
     provider: input.provider,
     deliveryType: input.deliveryType,
-    parcel: input.parcel,
+    parcel,
     cpDestino: input.cpDestino.trim(),
     correoProductType: input.correoProductType,
     agencyId: input.agencyId,
@@ -187,5 +211,6 @@ export async function validateCheckoutEnvioForMp(
     costoEnvio: new Prisma.Decimal(amount.toFixed(2)),
     formaEnvio: mapFormaEnvioCheckout(input.provider, input.deliveryType),
     snapshot: JSON.parse(JSON.stringify(snapshot)) as Prisma.InputJsonValue,
+    parcel,
   };
 }
