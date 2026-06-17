@@ -25,10 +25,15 @@ const corsOrigin = process.env.CORS_ORIGIN || '';
 const allowedOrigins = corsOrigin
   ? corsOrigin.split(',').map((o) => o.trim())
   : [];
+const isProduction = process.env.NODE_ENV === 'production';
+
+if (isProduction && allowedOrigins.length === 0) {
+  throw new Error('CORS_ORIGIN es obligatorio en produccion.');
+}
 
 app.use(
   cors({
-    origin: allowedOrigins.length > 0 ? allowedOrigins : true,
+    origin: allowedOrigins.length > 0 ? allowedOrigins : !isProduction,
     credentials: true,
   })
 );

@@ -1,5 +1,5 @@
 export class ShippingMethodNotSupportedError extends Error {
-  constructor(message: string = 'Andreani: método no implementado todavía') {
+  constructor(message: string = 'Operacion de envio no soportada por el proveedor seleccionado') {
     super(message);
     this.name = 'ShippingMethodNotSupportedError';
     Object.setPrototypeOf(this, ShippingMethodNotSupportedError.prototype);

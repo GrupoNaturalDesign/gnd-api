@@ -7,16 +7,15 @@ import { shippingController } from '../controllers/shipping.controller';
 const router = Router();
 
 router.use(firebaseAuthMiddleware);
-// router.use(requireAdmin);
 router.use(shippingEmpresaMiddleware);
 
-router.get('/tracking', (req, res) => {
+router.get('/tracking', requireAdmin, (req, res) => {
   void shippingController.getTrackingQuery(req, res);
 });
 router.post('/quote', (req, res) => {
   void shippingController.quote(req, res);
 });
-router.get('/orders/:pedidoId/label', (req, res) => {
+router.get('/orders/:pedidoId/label', requireAdmin, (req, res) => {
   void shippingController.getOrderLabel(req, res);
 });
 router.get('/orders/:pedidoId/tracking', (req, res) => {

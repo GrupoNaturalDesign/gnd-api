@@ -31,7 +31,55 @@ import usuarioAdminRoutes from './usuario-admin.routes';
 
 const router = Router();
 
-// Rate limiters: protegen auth y sync de abuso/DoS
+function createLimiter(name: string, windowMs: number, max: number, error: string) {
+  return rateLimit({
+    windowMs,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler: (req, res) => {
+      console.warn('[rate-limit]', {
+        limiter: name,
+        method: req.method,
+        path: req.originalUrl,
+        ip: req.ip,
+      });
+      res.status(429).json({ success: false, error });
+    },
+  });
+}
+
+// Rate limiters: protegen endpoints publicos, auth e integraciones de abuso/DoS
+const authLimiter = createLimiter(
+  'auth',
+  15 * 60 * 1000,
+  60,
+  'Demasiadas solicitudes de autenticacion. Intente mas tarde.'
+);
+const publicEmailLimiter = createLimiter(
+  'public-email',
+  15 * 60 * 1000,
+  20,
+  'Demasiadas solicitudes de email. Intente mas tarde.'
+);
+const newsletterLimiter = createLimiter(
+  'newsletter',
+  15 * 60 * 1000,
+  20,
+  'Demasiadas solicitudes de newsletter. Intente mas tarde.'
+);
+const checkoutLimiter = createLimiter(
+  'checkout',
+  15 * 60 * 1000,
+  40,
+  'Demasiadas solicitudes de checkout. Intente mas tarde.'
+);
+const webhookLimiter = createLimiter(
+  'mercadopago-webhook',
+  60 * 1000,
+  300,
+  'Demasiadas solicitudes de webhook.'
+);
 const sfactoryAuthLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,
@@ -67,7 +115,7 @@ router.get('/health', (req, res) => {
 });
 
 // Auth routes (register, login/credentials, forgot-password, reset-password, verify-email)
-router.use('/auth', authRoutes);
+router.use('/auth', authLimiter, authRoutes);
 
 // SFactory Auth routes (rate limited, companyKey solo desde env)
 router.use('/sfactory/auth', sfactoryAuthLimiter, sfactoryAuthRoutes);
@@ -104,11 +152,11 @@ router.use('/audit-logs', firebaseAuthMiddleware, requireAdmin, empresaMiddlewar
 router.use('/shipping/correo/test', correoTestRoutes);
 router.use('/shipping', shippingRoutes);
 
-router.use('/checkout', checkoutRoutes);
+router.use('/checkout', checkoutLimiter, checkoutRoutes);
 router.use('/cuenta', firebaseAuthMiddleware, cuentaRoutes);
-router.use('/webhooks/mercadopago', webhookMpRoutes);
+router.use('/webhooks/mercadopago', webhookLimiter, webhookMpRoutes);
 
-router.use('/emails', emailPublicRoutes);
+router.use('/emails', publicEmailLimiter, emailPublicRoutes);
 router.use('/orders', orderStatusRoutes);
 router.use(
   '/admin/newsletter',
@@ -123,7 +171,7 @@ router.get(
   newsletterAdminController.getEmailLogs
 );
 
-router.use('/newsletter', newsletterPublicRoutes);
+router.use('/newsletter', newsletterLimiter, newsletterPublicRoutes);
 
 import empresaAdminRoutes from './empresa.routes';
 import dashboardAdminRoutes from './dashboard-admin.routes';

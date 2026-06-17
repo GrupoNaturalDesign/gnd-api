@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { EstadoPedido } from '@prisma/client';
+import { EstadoPedido, OrderStatus } from '@prisma/client';
 import type { ApiResponse } from '../types';
 import {
   crearPedidoManualSchema,
@@ -9,6 +9,7 @@ import {
   resolverFallidoSchema,
 } from '../services/pedido-sync.service';
 import { pedidoPickupService } from '../services/pedido-pickup.service';
+import { sendPedidoStatusEmail } from '../services/pedido-email-notification.service';
 import { finalizeShippingAfterPaymentApproved } from '../services/checkout-shipping-finalize.service';
 import { requiresPostalShipping } from '../utils/pedido-entrega.util';
 import { resolvePedidoShippingTracking } from '../utils/pedido-shipping-tracking.util';
@@ -210,6 +211,40 @@ export class PedidoAdminController {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       res.status(400).json({ success: false, error: 'No se pudo sincronizar el pedido', message });
+    }
+  }
+
+  async enviarConfirmacion(req: Request, res: Response) {
+    try {
+      const empresaId = getEmpresaId(req);
+      const id = parsePedidoId(req);
+      const pedido = await prisma.pedido.findFirst({
+        where: { id, empresaId },
+        select: { id: true },
+      });
+      if (!pedido) {
+        res.status(404).json({
+          success: false,
+          error: 'Pedido no encontrado',
+        });
+        return;
+      }
+
+      await sendPedidoStatusEmail(id, OrderStatus.CONFIRMED, {
+        sendInternal: true,
+        source: 'admin_manual',
+      });
+
+      const response: ApiResponse = {
+        success: true,
+        message: 'Confirmacion enviada por email.',
+      };
+      res.json(response);
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message,
+      });
     }
   }
 

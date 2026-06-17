@@ -1,7 +1,9 @@
 import { Response } from 'express';
 import { z } from 'zod';
+import { EstadoPedido, Prisma } from '@prisma/client';
 import type { FirebaseAuthRequest } from '../middleware/firebase-auth.middleware';
 import prisma from '../lib/prisma';
+import { firebaseAuthService } from '../services/firebase-auth.service';
 import { shippingService } from '../services/shipping/shipping.service';
 import type { ApiResponse } from '../types';
 import {
@@ -20,12 +22,24 @@ import {
 import type { ShippingProviderName } from '../services/shipping/shipping.types';
 
 const pedidoShippingSelect = {
+  id: true,
+  usuarioId: true,
+  clienteEmail: true,
+  estadoInterno: true,
   formaEnvio: true,
   checkoutEnvioSnapshot: true,
   andreaniNumeroEnvio: true,
   correoTrackingNumber: true,
   trackingUrl: true,
 } as const;
+
+type PedidoShippingAccess = Prisma.PedidoGetPayload<{ select: typeof pedidoShippingSelect }>;
+
+const ESTADOS_CREATE_ENVIO_CLIENTE = new Set<EstadoPedido>([
+  EstadoPedido.procesando,
+  EstadoPedido.confirmado,
+  EstadoPedido.despachado,
+]);
 
 function resolveShippingProviderForPedido(
   providerRaw: string | undefined,
@@ -77,7 +91,7 @@ const quoteBodySchema = z.object({
   cpDestino: z.string().min(2),
   deliveryType: z.enum(['homeDelivery', 'agency']),
   parcel: parcelSchema,
-  provider: z.enum(['andreani']).optional(),
+  provider: z.enum(['correo', 'andreani']).optional(),
 });
 
 function boolQuery(v: unknown): boolean | undefined {
@@ -88,6 +102,64 @@ function boolQuery(v: unknown): boolean | undefined {
 }
 
 export class ShippingController {
+  private async getSession(req: FirebaseAuthRequest) {
+    if (!req.uid) return null;
+    return firebaseAuthService.getSessionByUid(req.uid);
+  }
+
+  private async ensurePedidoAccess(
+    req: FirebaseAuthRequest,
+    res: Response,
+    pedidoId: number,
+    empresaId: number,
+    options?: { requireCreateAllowed?: boolean }
+  ): Promise<PedidoShippingAccess | null> {
+    const pedido = await prisma.pedido.findFirst({
+      where: { id: pedidoId, empresaId },
+      select: pedidoShippingSelect,
+    });
+    if (!pedido) {
+      res.status(404).json({ success: false, error: 'Pedido no encontrado.' });
+      return null;
+    }
+
+    const session = await this.getSession(req);
+    if (!session) {
+      res.status(401).json({ success: false, error: 'No autenticado.' });
+      return null;
+    }
+
+    const isAdmin = session.role === 'ADMIN';
+    const ownsPedido =
+      pedido.usuarioId === session.usuarioId ||
+      pedido.clienteEmail.trim().toLowerCase() === session.email.trim().toLowerCase();
+
+    if (!isAdmin && !ownsPedido) {
+      res.status(403).json({ success: false, error: 'El pedido no pertenece al usuario autenticado.' });
+      return null;
+    }
+
+    if (options?.requireCreateAllowed) {
+      if (!ESTADOS_CREATE_ENVIO_CLIENTE.has(pedido.estadoInterno)) {
+        res.status(409).json({
+          success: false,
+          error: 'Estado de pedido no permitido para crear envio.',
+          message: `Estado actual: ${pedido.estadoInterno}`,
+        });
+        return null;
+      }
+      if (pedido.correoTrackingNumber || pedido.andreaniNumeroEnvio) {
+        res.status(409).json({
+          success: false,
+          error: 'El pedido ya tiene un envio creado.',
+        });
+        return null;
+      }
+    }
+
+    return pedido;
+  }
+
   async createOrder(req: FirebaseAuthRequest, res: Response): Promise<void> {
     const empresaId = req.empresaId;
     if (empresaId == null) {
@@ -105,6 +177,10 @@ export class ShippingController {
     }
     const body = parsed.data;
     try {
+      const pedido = await this.ensurePedidoAccess(req, res, body.pedidoId, empresaId, {
+        requireCreateAllowed: true,
+      });
+      if (!pedido) return;
       const defaultProv = await shippingService.resolveDefaultProvider(empresaId);
       const provider = body.provider ?? defaultProv;
       const result = await shippingService.createOrder({
@@ -144,13 +220,23 @@ export class ShippingController {
       return;
     }
     try {
-      const data = await shippingService.quoteAndreani({
-        empresaId,
-        cpDestino: parsed.data.cpDestino,
-        deliveryType: parsed.data.deliveryType,
-        parcel: parsed.data.parcel,
-        provider: parsed.data.provider,
-      });
+      const defaultProv = await shippingService.resolveDefaultProvider(empresaId);
+      const provider = parsed.data.provider ?? defaultProv;
+      const data =
+        provider === 'correo'
+          ? await shippingService.quoteCorreo({
+              empresaId,
+              cpDestino: parsed.data.cpDestino,
+              deliveryType: parsed.data.deliveryType,
+              parcel: parsed.data.parcel,
+            })
+          : await shippingService.quoteAndreani({
+              empresaId,
+              cpDestino: parsed.data.cpDestino,
+              deliveryType: parsed.data.deliveryType,
+              parcel: parsed.data.parcel,
+              provider,
+            });
       const response: ApiResponse = {
         success: true,
         data,
@@ -181,10 +267,8 @@ export class ShippingController {
         ? q.trackingNumber.trim()
         : undefined;
     try {
-      const pedido = await prisma.pedido.findFirst({
-        where: { id: pedidoId, empresaId },
-        select: pedidoShippingSelect,
-      });
+      const pedido = await this.ensurePedidoAccess(req, res, pedidoId, empresaId);
+      if (!pedido) return;
       const provider = resolveShippingProviderForPedido(
         providerRaw,
         pedido,
@@ -236,10 +320,8 @@ export class ShippingController {
       .map((s) => s.trim())
       .filter(Boolean);
     try {
-      const pedido = await prisma.pedido.findFirst({
-        where: { id: pedidoId, empresaId },
-        select: pedidoShippingSelect,
-      });
+      const pedido = await this.ensurePedidoAccess(req, res, pedidoId, empresaId);
+      if (!pedido) return;
       const provider = resolveShippingProviderForPedido(
         providerRaw,
         pedido,

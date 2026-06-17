@@ -69,6 +69,10 @@ router.post(
   pedidoAdminController.rechazar.bind(pedidoAdminController)
 );
 router.post(
+  '/:id/enviar-confirmacion',
+  pedidoAdminController.enviarConfirmacion.bind(pedidoAdminController)
+);
+router.post(
   '/:id/reintentar-sfactory',
   pedidoAdminController.reintentarSfactory.bind(pedidoAdminController)
 );

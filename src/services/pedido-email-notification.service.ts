@@ -136,6 +136,7 @@ export async function sendPedidoStatusEmail(
     deliveryInstructions?: string;
     trackingNumber?: string;
     trackingUrl?: string;
+    source?: 'automatic' | 'admin_manual';
   }
 ): Promise<void> {
   const pedido = await prisma.pedido.findUnique({
@@ -144,7 +145,10 @@ export async function sendPedidoStatusEmail(
   });
   if (!pedido?.clienteEmail?.trim()) return;
 
-  const payload = buildOrderEmailPayloadFromPedido(pedido, status, options);
+  const payload = buildOrderEmailPayloadFromPedido(pedido, status, {
+    ...options,
+  });
+  payload.source = options?.source ?? 'automatic';
   try {
     const result = await emailService.sendOrderStatusEmail(payload);
     if (!result.success) {
@@ -172,6 +176,7 @@ export function sendPedidoStatusEmailAsync(
     deliveryInstructions?: string;
     trackingNumber?: string;
     trackingUrl?: string;
+    source?: 'automatic' | 'admin_manual';
   }
 ): void {
   void sendPedidoStatusEmail(pedidoId, status, options);

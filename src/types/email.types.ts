@@ -70,6 +70,7 @@ export interface OrderEmailPayload {
   deliveryInstructions?: string;
   /** Personaliza título, lead o colores del banner sin cambiar el enum `status`. */
   statusUiOverrides?: OrderStatusUiOverrides;
+  source?: 'automatic' | 'admin_manual' | 'public_compat';
 }
 
 export interface ContactEmailPayload {

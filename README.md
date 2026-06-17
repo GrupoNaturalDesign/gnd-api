@@ -19,21 +19,22 @@ Contratos, variables de entorno y flujos (Mercado Pago, Andreani, S-Factory, che
 
 - Node.js >= 18
 - MySQL >= 8.0
-- npm o yarn
+- pnpm 9+
 
 ## 🔧 Instalación
 
 1. **Instalar dependencias:**
 ```bash
-npm install
+pnpm install
 ```
 
 2. **Configurar variables de entorno:**
 Crea un archivo `.env` en la raíz del proyecto con:
 ```env
 DATABASE_URL="mysql://usuario:password@localhost:3306/nombre_db"
-PORT=3001
+PORT=3002
 NODE_ENV=development
+CORS_ORIGIN=http://localhost:3000
 
 # S-Factory API Credentials
 SFACTORY_API_URL=https://sfactory-api.com.ar/sfactory/api
@@ -46,31 +47,40 @@ SFACTORY_COMPANY_KEY=tu_company_key
 
 3. **Generar cliente Prisma:**
 ```bash
-npm run prisma:generate
+pnpm prisma:generate
 ```
 
 4. **Ejecutar migraciones (si la DB ya existe):**
 ```bash
-npm run prisma:push
+pnpm prisma:push
 ```
 
 O crear migraciones:
 ```bash
-npm run prisma:migrate
+pnpm prisma:migrate
 ```
 
 ## 🏃 Ejecutar
 
 **Desarrollo:**
 ```bash
-npm run dev
+pnpm dev
 ```
 
 **Producción:**
 ```bash
-npm run build
-npm start
+pnpm build
+pnpm start
 ```
+
+## Produccion: seguridad minima
+
+- `CORS_ORIGIN` es obligatorio en produccion. No usar wildcard con credenciales.
+- No usar ni subir `serviceAccountKey.json`. Si alguna vez estuvo versionado, rotar la service account en Firebase/GCP.
+- Firebase Admin debe usar `FIREBASE_ADMIN_SDK_JSON` o credenciales del runtime/cloud provider. `GOOGLE_APPLICATION_CREDENTIALS` por archivo esta bloqueado en produccion.
+- `POST /api/emails/order-confirmation` queda restringido por `ORDER_CONFIRMATION_EMAIL_SECRET`; el flujo normal debe disparar emails desde backend o desde endpoints admin.
+- Health check recomendado: `GET /api/health`.
+- Comandos operativos: `pnpm install`, `pnpm build`, `pnpm prisma:migrate:deploy`, `pnpm start`, `pnpm test:unit`, `pnpm audit`.
 
 ## 📚 Endpoints
 

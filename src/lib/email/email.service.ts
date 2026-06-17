@@ -323,7 +323,7 @@ export const emailService = {
         to: order.customerEmail,
         status: 'failed',
         error: err,
-        metadata: { orderId: order.orderId ?? null, status: order.status },
+        metadata: { orderId: order.orderId ?? null, status: order.status, source: order.source ?? 'automatic' },
       });
       return { success: false, error: err };
     }
@@ -348,7 +348,7 @@ export const emailService = {
         to: order.customerEmail,
         status: 'failed',
         error: error.message,
-        metadata: { orderId: order.orderId ?? null, status: order.status },
+        metadata: { orderId: order.orderId ?? null, status: order.status, source: order.source ?? 'automatic' },
       });
       return { success: false, error: error.message };
     }
@@ -358,7 +358,7 @@ export const emailService = {
       to: order.customerEmail,
       status: 'sent',
       messageId,
-      metadata: { orderId: order.orderId ?? null, status: order.status },
+      metadata: { orderId: order.orderId ?? null, status: order.status, source: order.source ?? 'automatic' },
     });
     return { success: true, messageId };
   },

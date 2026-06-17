@@ -24,7 +24,7 @@ router.use((req, res, next) => {
 });
 
 router.use(firebaseAuthMiddleware);
-// router.use(requireAdmin);
+router.use(requireAdmin);
 
 const quoteBodySchema = z.object({
   cpOrigen: z.string().min(2),
