@@ -23,7 +23,6 @@ import type { CorreoShippingQuote } from './correo/correo.types';
 import {
   getAndreaniClienteCode,
   getAndreaniContratoDomicilio,
-  getAndreaniContratoSucursal,
   getAndreaniSucursalOrigen,
 } from './andreani/andreani.config';
 import { getIntegrationsMode } from '../../lib/integrations-mode';
@@ -408,15 +407,15 @@ export class ShippingService {
     if (!cliente) {
       throw new ShippingValidationError('Configure ANDREANI_CLIENTE');
     }
-    const contrato =
-      params.deliveryType === 'homeDelivery'
-        ? getAndreaniContratoDomicilio()
-        : getAndreaniContratoSucursal();
+    if (params.deliveryType !== 'homeDelivery') {
+      throw new ShippingValidationError(
+        'Andreani: la cotizacion de checkout solo esta habilitada para envio a domicilio'
+      );
+    }
+    const contrato = getAndreaniContratoDomicilio();
     if (!contrato) {
       throw new ShippingValidationError(
-        params.deliveryType === 'homeDelivery'
-          ? 'Configure ANDREANI_CONTRATO_DOM'
-          : 'Configure ANDREANI_CONTRATO_SUC'
+        'Configure ANDREANI_CONTRATO_ENTREGA_DOMICILIO o ANDREANI_CONTRATO_DOM'
       );
     }
     const p = this.getAndreaniProvider(config);

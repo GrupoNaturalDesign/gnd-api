@@ -96,11 +96,17 @@ export function getAndreaniClienteCode(): string {
 }
 
 export function getAndreaniContratoDomicilio(): string {
-  return process.env.ANDREANI_CONTRATO_DOM?.trim() || '';
+  return firstNonEmpty(
+    process.env.ANDREANI_CONTRATO_ENTREGA_DOMICILIO,
+    process.env.ANDREANI_CONTRATO_DOM
+  );
 }
 
 export function getAndreaniContratoSucursal(): string {
-  return process.env.ANDREANI_CONTRATO_SUC?.trim() || '';
+  return firstNonEmpty(
+    process.env.ANDREANI_CONTRATO_ENTREGA_SUCURSAL,
+    process.env.ANDREANI_CONTRATO_SUC
+  );
 }
 
 export function getAndreaniSucursalOrigen(): string {

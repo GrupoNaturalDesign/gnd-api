@@ -27,6 +27,7 @@ describe('SH-S-01 — ShippingService unit', () => {
   afterEach(() => {
     delete process.env.ANDREANI_MOCK;
     delete process.env.ANDREANI_CLIENTE;
+    delete process.env.ANDREANI_CONTRATO_ENTREGA_DOMICILIO;
     delete process.env.ANDREANI_CONTRATO_DOM;
     delete process.env.ANDREANI_CONTRATO_SUC;
     delete process.env.ANDREANI_SUCURSAL_ORIGEN;
@@ -76,6 +77,7 @@ describe('SH-S-01 — ShippingService unit', () => {
   });
 
   it('quoteAndreani sin contrato para homeDelivery lanza', async () => {
+    delete process.env.ANDREANI_CONTRATO_ENTREGA_DOMICILIO;
     delete process.env.ANDREANI_CONTRATO_DOM;
     await assert.rejects(
       service.quoteAndreani({
@@ -88,8 +90,7 @@ describe('SH-S-01 — ShippingService unit', () => {
     );
   });
 
-  it('quoteAndreani sin contrato para agencia lanza', async () => {
-    delete process.env.ANDREANI_CONTRATO_SUC;
+  it('quoteAndreani para agencia Andreani lanza aunque exista contrato sucursal', async () => {
     await assert.rejects(
       service.quoteAndreani({
         empresaId: 1,
@@ -97,7 +98,7 @@ describe('SH-S-01 — ShippingService unit', () => {
         deliveryType: 'agency',
         parcel: { weightGrams: 500, height: 10, width: 15, depth: 20, declaredValue: 1000 },
       }),
-      ShippingValidationError
+      /solo esta habilitada para envio a domicilio/
     );
   });
 
