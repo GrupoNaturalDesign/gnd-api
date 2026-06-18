@@ -7,6 +7,18 @@ import { mockCotizar } from './andreani.mock';
 import type { AndreaniCotizacionInput, AndreaniCotizacionResultado } from './andreani.types';
 import { extractPrecioCotizacion } from './andreani.mapper';
 
+function formatPositiveDecimal(value: number, decimals: number): string {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '0';
+  return n.toFixed(decimals).replace(/\.?0+$/, '');
+}
+
+function formatPositiveInteger(value: number): string {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '0';
+  return String(Math.max(0, Math.round(n)));
+}
+
 export class AndreaniCotizacionService {
   constructor(
     private readonly http: AndreaniHttp,
@@ -32,17 +44,14 @@ export class AndreaniCotizacionService {
       fields.sucursalOrigen = input.sucursalOrigen;
     }
     input.bultos.forEach((b, i) => {
-      fields[`bultos[${i}][volumen]`] = String(b.volumenCm3);
-      if (b.kilos != null) fields[`bultos[${i}][kilos]`] = String(b.kilos);
+      fields[`bultos[${i}][volumen]`] = formatPositiveInteger(b.volumenCm3);
+      if (b.kilos != null) fields[`bultos[${i}][kilos]`] = formatPositiveDecimal(b.kilos, 3);
       if (b.valorDeclarado != null) {
-        const v = String(b.valorDeclarado);
-        fields[`bultos[${i}][valorDeclarado]`] = v;
-        fields[`bultos[${i}][valorDeclaradoSinImpuestos]`] = v;
-        fields[`bultos[${i}][valorDeclaradoConImpuestos]`] = v;
+        fields[`bultos[${i}][valorDeclarado]`] = formatPositiveDecimal(b.valorDeclarado, 2);
       }
-      if (b.altoCm != null) fields[`bultos[${i}][altoCm]`] = String(b.altoCm);
-      if (b.largoCm != null) fields[`bultos[${i}][largoCm]`] = String(b.largoCm);
-      if (b.anchoCm != null) fields[`bultos[${i}][anchoCm]`] = String(b.anchoCm);
+      if (b.altoCm != null) fields[`bultos[${i}][altoCm]`] = formatPositiveInteger(b.altoCm);
+      if (b.largoCm != null) fields[`bultos[${i}][largoCm]`] = formatPositiveInteger(b.largoCm);
+      if (b.anchoCm != null) fields[`bultos[${i}][anchoCm]`] = formatPositiveInteger(b.anchoCm);
     });
 
     if (isNonProd) {

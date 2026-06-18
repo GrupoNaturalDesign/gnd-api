@@ -62,6 +62,45 @@ function mapStatusToError(status: number, body: unknown): Error {
   return new ShippingHttpError(msg, status, body);
 }
 
+function fetchFailureDetails(e: unknown): Record<string, unknown> {
+  if (!(e instanceof Error)) return { message: String(e) };
+  const cause = (e as Error & { cause?: unknown }).cause;
+  const details: Record<string, unknown> = {
+    name: e.name,
+    message: e.message,
+  };
+  if (cause instanceof Error) {
+    details.cause = {
+      name: cause.name,
+      message: cause.message,
+      code: (cause as Error & { code?: unknown }).code,
+    };
+  } else if (cause != null) {
+    details.cause = String(cause);
+  }
+  return details;
+}
+
+function mapFetchFailure(e: unknown, path: string): ShippingHttpError {
+  const details = fetchFailureDetails(e);
+  const message =
+    typeof details.message === 'string' && details.message.trim()
+      ? `MiCorreo: ${details.message}`
+      : 'MiCorreo: error de red consultando proveedor';
+  return new ShippingHttpError(message, 502, { path, ...details });
+}
+
+function isFetchFailureError(e: unknown): e is ShippingHttpError {
+  return (
+    e instanceof ShippingHttpError &&
+    e.status === 502 &&
+    e.body != null &&
+    typeof e.body === 'object' &&
+    !Array.isArray(e.body) &&
+    (e.body as Record<string, unknown>).name === 'TypeError'
+  );
+}
+
 function extractTrackingNumberFromImportResponse(data: unknown): string | null {
   if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
   const o = data as Record<string, unknown>;
@@ -95,7 +134,8 @@ export class CorreoProvider implements ShippingProvider {
   private timeoutSignal(): AbortSignal {
     const ms = getCorreoTimeoutMs();
     const c = new AbortController();
-    setTimeout(() => c.abort(), ms);
+    const t = setTimeout(() => c.abort(), ms);
+    t.unref?.();
     return c.signal;
   }
 
@@ -273,12 +313,22 @@ export class CorreoProvider implements ShippingProvider {
         }
       }
       const started = Date.now();
-      const pathOnly = pathWithQuery.split('?')[0];
+      const pathOnly = pathWithQuery.split('?')[0] ?? pathWithQuery;
       shippingLogger.info('MiCorreo request start', {
         method,
         path: pathOnly,
       });
-      const res = await this.fetchImpl(url, init);
+      let res: FetchResponse;
+      try {
+        res = await this.fetchImpl(url, init);
+      } catch (e: unknown) {
+        shippingLogger.error('MiCorreo fetch error', {
+          method,
+          path: pathOnly,
+          details: fetchFailureDetails(e),
+        });
+        throw mapFetchFailure(e, pathOnly);
+      }
       const latencyMs = Date.now() - started;
       shippingLogger.info('MiCorreo request end', {
         method,
@@ -289,7 +339,17 @@ export class CorreoProvider implements ShippingProvider {
       return res;
     };
 
-    let res = await doFetch();
+    let res: FetchResponse;
+    try {
+      res = await doFetch();
+    } catch (e: unknown) {
+      if (!isFetchFailureError(e)) throw e;
+      shippingLogger.info('MiCorreo request retry after fetch error', {
+        method,
+        path: pathWithQuery.split('?')[0] ?? pathWithQuery,
+      });
+      res = await doFetch();
+    }
     let text = await res.text();
     let data = parseJsonUnknown(text);
 

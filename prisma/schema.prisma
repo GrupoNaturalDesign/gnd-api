@@ -26,6 +26,8 @@ model Empresa {
   descuentoTransferencia Decimal   @default(0.15) @map("descuento_transferencia")
   iva                    Decimal   @default(0.21) @map("iva")
   cuotasFinanciado       Int       @default(3) @map("cuotas_financiado")
+  installmentProvider  String    @default("mercado_pago") @map("installment_provider") @db.VarChar(50)
+  installmentProviderOptions Json? @map("installment_provider_options")
   precioConfigUpdatedAt  DateTime? @map("precio_config_updated_at") @db.Timestamp(0)
 
   createdAt            DateTime             @default(now()) @map("created_at") @db.Timestamp(0)
@@ -327,6 +329,7 @@ model ProductoPrecio {
   precioFinanciado Decimal?    @map("precio_financiado") @db.Decimal(10, 2)
   cuotasFinanciado Int?        @default(3) @map("cuotas_financiado") @db.UnsignedInt
   precioSinImp     Decimal?    @map("precio_sin_imp") @db.Decimal(10, 2)
+  cuotasSnapshot   Json?       @map("cuotas_snapshot")
   minimoUnidades   Decimal?    @db.Decimal(10, 2)
 
   // Override de config de precios (opcional - null = usar config de empresa)

@@ -174,6 +174,74 @@ describe('SH-C-09 — CorreoProvider errores HTTP', () => {
     };
     await assert.rejects(p.getQuote(input), ShippingHttpError);
   });
+
+  it('getQuote con fetch failed lanza ShippingHttpError 502', async () => {
+    process.env.CORREO_CUSTOMER_ID = 'CID';
+    const fetchFailed = Object.assign(new TypeError('fetch failed'), {
+      cause: Object.assign(new Error('connect ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+    });
+    let calls = 0;
+    const p = new CorreoProvider(
+      { name: 'Test Sender' },
+      'test',
+      (async () => {
+        calls += 1;
+        if (calls === 1) {
+          return new Response(JSON.stringify({ token: 'tok' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        throw fetchFailed;
+      }) as unknown as typeof fetch
+    );
+    const input: CorreoQuoteInput = {
+      postalCodeOrigin: '5000',
+      postalCodeDestination: '1000',
+      dimensions: { weight: 500, height: 10, width: 15, length: 20 },
+    };
+
+    await assert.rejects(
+      p.getQuote(input),
+      (e: unknown) =>
+        e instanceof ShippingHttpError &&
+        e.status === 502 &&
+        e.message.includes('MiCorreo: fetch failed')
+    );
+  });
+
+  it('getQuote reintenta una vez si /rates falla por fetch failed', async () => {
+    process.env.CORREO_CUSTOMER_ID = 'CID';
+    const fetchFailed = new TypeError('fetch failed');
+    let calls = 0;
+    const p = new CorreoProvider(
+      { name: 'Test Sender' },
+      'test',
+      (async () => {
+        calls += 1;
+        if (calls === 1) {
+          return new Response(JSON.stringify({ token: 'tok' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        if (calls === 2) throw fetchFailed;
+        return new Response(
+          JSON.stringify({ rates: [{ serviceCode: 'CP', serviceName: 'Clasico', price: 1234 }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }) as unknown as typeof fetch
+    );
+
+    const result = await p.getQuote({
+      postalCodeOrigin: '5000',
+      postalCodeDestination: '1000',
+      dimensions: { weight: 500, height: 10, width: 15, length: 20 },
+    });
+
+    assert.strictEqual(result[0]!.price, 1234);
+    assert.strictEqual(calls, 3);
+  });
 });
 
 describe('SH-C-10 — getLabel / cancelOrder', () => {

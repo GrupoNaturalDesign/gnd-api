@@ -465,6 +465,7 @@ export class CheckoutController {
           descuentoTransferencia: config.descuentoTransferencia,
           iva: config.iva,
           cuotasFinanciado: config.cuotasFinanciado,
+          installmentProvider: config.installmentProvider,
         },
       });
     } catch (error: unknown) {
@@ -472,6 +473,42 @@ export class CheckoutController {
       res.status(500).json({
         success: false,
         error: 'Error al obtener configuración de precios',
+        message,
+      });
+    }
+  }
+
+  /** GET /api/checkout/cuotas?amount=&cuotas= — cotización pública de cuotas. */
+  async getCuotasQuotePublic(req: Request, res: Response): Promise<void> {
+    try {
+      const empresaId = getCheckoutEmpresaIdFromEnv();
+      const amount = Number(req.query.amount);
+      const cuotasParam = req.query.cuotas;
+      const cuotasOverride =
+        cuotasParam != null && String(cuotasParam).length > 0
+          ? Number(cuotasParam)
+          : undefined;
+
+      if (!Number.isFinite(amount) || amount <= 0) {
+        res.status(400).json({
+          success: false,
+          error: 'Parámetro amount inválido',
+        });
+        return;
+      }
+
+      const cuotas = await empresaConfigService.quoteCuotasForAmount(
+        empresaId,
+        amount,
+        cuotasOverride
+      );
+
+      res.json({ success: true, data: cuotas });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(500).json({
+        success: false,
+        error: 'Error al cotizar cuotas',
         message,
       });
     }

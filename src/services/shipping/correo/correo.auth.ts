@@ -63,7 +63,8 @@ export class CorreoAuth {
   private timeoutSignal(): AbortSignal {
     const ms = getCorreoTimeoutMs();
     const c = new AbortController();
-    setTimeout(() => c.abort(), ms);
+    const t = setTimeout(() => c.abort(), ms);
+    t.unref?.();
     return c.signal;
   }
 

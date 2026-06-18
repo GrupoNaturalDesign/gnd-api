@@ -1,16 +1,18 @@
 import prisma from '../lib/prisma';
+import { Prisma } from '@prisma/client';
+import { calcularPreciosDerivadosCompletos } from './precios-derivados.service';
+import type { InstallmentProviderOptions } from '../types/installment.types';
 
 export interface PrecioConfig {
   descuentoTransferencia: number;
   iva: number;
   cuotasFinanciado: number;
+  installmentProvider: string;
+  installmentProviderOptions: InstallmentProviderOptions;
 }
 
-export interface EmpresaPrecioConfig {
+export interface EmpresaPrecioConfig extends PrecioConfig {
   empresaId: number;
-  descuentoTransferencia: number;
-  iva: number;
-  cuotasFinanciado: number;
   precioConfigUpdatedAt: Date | null;
 }
 
@@ -18,39 +20,65 @@ export interface UpdatePrecioConfigInput {
   descuentoTransferencia?: number;
   iva?: number;
   cuotasFinanciado?: number;
+  installmentProvider?: string;
+  installmentProviderOptions?: InstallmentProviderOptions;
 }
+
+function mapEmpresaPrecioConfig(empresa: {
+  id: number;
+  descuentoTransferencia: unknown;
+  iva: unknown;
+  cuotasFinanciado: number;
+  installmentProvider: string;
+  installmentProviderOptions: unknown;
+  precioConfigUpdatedAt: Date | null;
+}): EmpresaPrecioConfig {
+  const rawOpts = empresa.installmentProviderOptions;
+  const installmentProviderOptions =
+    rawOpts != null && typeof rawOpts === 'object' && !Array.isArray(rawOpts)
+      ? (rawOpts as InstallmentProviderOptions)
+      : {};
+
+  return {
+    empresaId: empresa.id,
+    descuentoTransferencia: Number(empresa.descuentoTransferencia),
+    iva: Number(empresa.iva),
+    cuotasFinanciado: empresa.cuotasFinanciado,
+    installmentProvider: empresa.installmentProvider,
+    installmentProviderOptions,
+    precioConfigUpdatedAt: empresa.precioConfigUpdatedAt,
+  };
+}
+
+const empresaPrecioSelect = {
+  id: true,
+  descuentoTransferencia: true,
+  iva: true,
+  cuotasFinanciado: true,
+  installmentProvider: true,
+  installmentProviderOptions: true,
+  precioConfigUpdatedAt: true,
+} as const;
 
 export class EmpresaConfigService {
   async getPrecioConfig(empresaId: number): Promise<EmpresaPrecioConfig> {
     const empresa = await prisma.empresa.findUnique({
       where: { id: empresaId },
-      select: {
-        id: true,
-        descuentoTransferencia: true,
-        iva: true,
-        cuotasFinanciado: true,
-        precioConfigUpdatedAt: true,
-      },
+      select: empresaPrecioSelect,
     });
 
     if (!empresa) {
       throw new Error(`Empresa ${empresaId} no encontrada`);
     }
 
-    return {
-      empresaId: empresa.id,
-      descuentoTransferencia: Number(empresa.descuentoTransferencia),
-      iva: Number(empresa.iva),
-      cuotasFinanciado: empresa.cuotasFinanciado,
-      precioConfigUpdatedAt: empresa.precioConfigUpdatedAt,
-    };
+    return mapEmpresaPrecioConfig(empresa);
   }
 
   async updatePrecioConfig(
     empresaId: number,
     input: UpdatePrecioConfigInput
   ): Promise<EmpresaPrecioConfig> {
-    const updateData: any = {
+    const updateData: Record<string, unknown> = {
       precioConfigUpdatedAt: new Date(),
     };
 
@@ -63,31 +91,25 @@ export class EmpresaConfigService {
     if (input.cuotasFinanciado !== undefined) {
       updateData.cuotasFinanciado = input.cuotasFinanciado;
     }
+    if (input.installmentProvider !== undefined) {
+      updateData.installmentProvider = input.installmentProvider;
+    }
+    if (input.installmentProviderOptions !== undefined) {
+      updateData.installmentProviderOptions = input.installmentProviderOptions;
+    }
 
     const empresa = await prisma.empresa.update({
       where: { id: empresaId },
       data: updateData,
-      select: {
-        id: true,
-        descuentoTransferencia: true,
-        iva: true,
-        cuotasFinanciado: true,
-        precioConfigUpdatedAt: true,
-      },
+      select: empresaPrecioSelect,
     });
 
-    return {
-      empresaId: empresa.id,
-      descuentoTransferencia: Number(empresa.descuentoTransferencia),
-      iva: Number(empresa.iva),
-      cuotasFinanciado: empresa.cuotasFinanciado,
-      precioConfigUpdatedAt: empresa.precioConfigUpdatedAt,
-    };
+    return mapEmpresaPrecioConfig(empresa);
   }
 
   async recalcularTodosLosPrecios(empresaId: number): Promise<{ actualizados: number }> {
     const config = await this.getPrecioConfig(empresaId);
-    
+
     const productosWeb = await prisma.productoWeb.findMany({
       where: { empresaId },
       include: {
@@ -102,46 +124,58 @@ export class EmpresaConfigService {
     for (const pw of productosWeb) {
       for (const precio of pw.precios) {
         const precioLista = Number(precio.precioLista);
-        
+        if (!Number.isFinite(precioLista) || precioLista <= 0) continue;
+
+        let derivados;
         if (precio.usaConfigPersonalizada && precio.descuentoTransferencia !== null) {
-          const descuento = Number(precio.descuentoTransferencia);
-          const iva = Number(precio.iva ?? config.iva);
-          const cuotas = precio.cuotasFinanciadoOverride ?? config.cuotasFinanciado;
-          
-          const precioTransfer = precioLista * (1 - descuento);
-          const precioSinImp = precioTransfer / (1 + iva);
-          const precioFinanciado = precioLista / cuotas;
-
-          await prisma.productoPrecio.update({
-            where: { id: precio.id },
-            data: {
-              precioTransfer: Number(precioTransfer.toFixed(2)),
-              precioSinImp: Number(precioSinImp.toFixed(2)),
-              precioFinanciado: Number(precioFinanciado.toFixed(2)),
-              cuotasFinanciado: cuotas,
-            },
+          derivados = await calcularPreciosDerivadosCompletos({
+            precioLista,
+            empresaId,
+            empresaConfig: config,
+            cuotasOverride: precio.cuotasFinanciadoOverride ?? config.cuotasFinanciado,
+            descuentoOverride: Number(precio.descuentoTransferencia),
+            ivaOverride: Number(precio.iva ?? config.iva),
           });
-          actualizados++;
         } else {
-          const precioTransfer = precioLista * (1 - config.descuentoTransferencia);
-          const precioSinImp = precioTransfer / (1 + config.iva);
-          const precioFinanciado = precioLista / config.cuotasFinanciado;
-
-          await prisma.productoPrecio.update({
-            where: { id: precio.id },
-            data: {
-              precioTransfer: Number(precioTransfer.toFixed(2)),
-              precioSinImp: Number(precioSinImp.toFixed(2)),
-              precioFinanciado: Number(precioFinanciado.toFixed(2)),
-              cuotasFinanciado: config.cuotasFinanciado,
-            },
+          derivados = await calcularPreciosDerivadosCompletos({
+            precioLista,
+            empresaId,
+            empresaConfig: config,
           });
-          actualizados++;
         }
+
+        await prisma.productoPrecio.update({
+          where: { id: precio.id },
+          data: {
+            precioTransfer: derivados.precioTransfer,
+            precioSinImp: derivados.precioSinImp,
+            precioFinanciado: derivados.precioFinanciado,
+            cuotasFinanciado: derivados.cuotas,
+            cuotasSnapshot: (derivados.cuotasSnapshot ?? undefined) as Prisma.InputJsonValue | undefined,
+          },
+        });
+        actualizados++;
       }
     }
 
     return { actualizados };
+  }
+
+  /** Cotiza cuotas para un monto (carrito / preview). */
+  async quoteCuotasForAmount(
+    empresaId: number,
+    amount: number,
+    cuotasOverride?: number
+  ) {
+    const config = await this.getPrecioConfig(empresaId);
+    const cuotas = cuotasOverride ?? config.cuotasFinanciado;
+    const derivados = await calcularPreciosDerivadosCompletos({
+      precioLista: amount,
+      empresaId,
+      empresaConfig: config,
+      cuotasOverride: cuotas,
+    });
+    return derivados.cuotasSnapshot;
   }
 }
 

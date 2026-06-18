@@ -10,6 +10,7 @@ interface MockResponse {
 export class MockFetch {
   private responses: MockResponse[];
   private callCount = 0;
+  private calls: { input: unknown; init?: unknown }[] = [];
 
   constructor(responses: MockResponse[] = []) {
     this.responses = responses;
@@ -18,12 +19,14 @@ export class MockFetch {
   setResponses(responses: MockResponse[]): void {
     this.responses = responses;
     this.callCount = 0;
+    this.calls = [];
   }
 
   get fetch() {
-    return async (): Promise<Response> => {
+    return async (input: unknown, init?: unknown): Promise<Response> => {
       const idx = Math.min(this.callCount, this.responses.length - 1);
       const resp = this.responses[idx] ?? { status: 500 };
+      this.calls.push({ input, init });
       this.callCount++;
       return new Response(
         resp.json != null ? JSON.stringify(resp.json) : (resp.text ?? '{}'),
@@ -38,6 +41,11 @@ export class MockFetch {
 
   reset(): void {
     this.callCount = 0;
+    this.calls = [];
+  }
+
+  getCalls(): { input: unknown; init?: unknown }[] {
+    return this.calls;
   }
 }
 

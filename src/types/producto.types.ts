@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { BaseQueryParams, BaseQueryParamsSchema, PaginatedResponse } from './common.types';
+import type { InstallmentQuote } from './installment.types';
 
 // ============================================
 // ProductoWeb Response Types
@@ -300,8 +301,10 @@ export interface ProductoPublicado {
   // Precios calculados
   precioLista: number | null;
   precioTransfer: number | null;
+  /** @deprecated usar cuotas.montoCuota */
   precio3Cuotas: number | null;
   precioSinImp: number | null;
+  cuotas: InstallmentQuote | null;
   
   // Variantes simplificadas
   variantes: VariantePublicada[];

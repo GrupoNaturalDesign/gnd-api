@@ -32,6 +32,9 @@ export type ProductoSfactoryHashInput = {
   linea?: string | null;
   material?: string | null;
   sfactory_id?: number | null;
+  peso_bruto?: Prisma.Decimal | number | string | null;
+  ancho?: Prisma.Decimal | number | string | null;
+  largo?: Prisma.Decimal | number | string | null;
 };
 
 export function hashProductoSfactoryFields(datos: ProductoSfactoryHashInput): string {
@@ -47,6 +50,9 @@ export function hashProductoSfactoryFields(datos: ProductoSfactoryHashInput): st
     linea: datos.linea ?? null,
     material: datos.material ?? null,
     sfactory_id: datos.sfactory_id ?? null,
+    peso_bruto: datos.peso_bruto != null ? Number(datos.peso_bruto) : null,
+    ancho: datos.ancho != null ? Number(datos.ancho) : null,
+    largo: datos.largo != null ? Number(datos.largo) : null,
   });
 }
 

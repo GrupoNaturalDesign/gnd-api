@@ -63,14 +63,21 @@ describe('SH-A-04 — AndreaniProvider con ANDREANI_MOCK=true', () => {
   });
 
   it('cotizarEnvio entorno PROD', async () => {
-    const p = makeProvider('prod');
-    const result = await p.cotizarEnvio({
-      cpDestino: '5000',
-      contrato: '1',
-      cliente: 'MOCK',
-      bultos: [{ volumenCm3: 3000, kilos: 0.5, valorDeclarado: 1000 }],
-    });
-    assert.strictEqual(result.entorno, 'PROD');
+    const prev = process.env.INTEGRATIONS_ENV;
+    process.env.INTEGRATIONS_ENV = 'production';
+    try {
+      const p = makeProvider('prod');
+      const result = await p.cotizarEnvio({
+        cpDestino: '5000',
+        contrato: '1',
+        cliente: 'MOCK',
+        bultos: [{ volumenCm3: 3000, kilos: 0.5, valorDeclarado: 1000 }],
+      });
+      assert.strictEqual(result.entorno, 'PROD');
+    } finally {
+      if (prev == null) delete process.env.INTEGRATIONS_ENV;
+      else process.env.INTEGRATIONS_ENV = prev;
+    }
   });
 
   it('validateCredentials no lanza con MOCK', async () => {
@@ -201,6 +208,49 @@ describe('SH-A-05 — AndreaniProvider errores HTTP (sin MOCK)', () => {
       cliente: 'CLI',
       bultos: [{ volumenCm3: 3000, kilos: 0.5 }],
     }), /Error en API Andreani/);
+  });
+
+  it('cotizarEnvio arma query segun XLSX del cotizador', async () => {
+    mockFetch.setResponses([
+      { status: 200, json: { token: 'tok' } },
+      { status: 200, json: { tarifaConIva: { total: '7041.21' } } },
+    ]);
+    const p = makeProvider();
+
+    const result = await p.cotizarEnvio({
+      cpDestino: '5000',
+      contrato: '1',
+      cliente: 'CLI',
+      sucursalOrigen: '283',
+      bultos: [
+        {
+          volumenCm3: 12800.4,
+          kilos: 0.391234,
+          valorDeclarado: 28917.355371900827,
+          altoCm: 8,
+          largoCm: 40,
+          anchoCm: 40,
+        },
+      ],
+    });
+
+    assert.strictEqual(result.precio, 7041.21);
+    const quoteCall = mockFetch.getCalls()[1];
+    assert.ok(quoteCall);
+    const url = new URL(String(quoteCall.input));
+    assert.strictEqual(url.pathname, '/v1/tarifas');
+    assert.strictEqual(url.searchParams.get('cpDestino'), '5000');
+    assert.strictEqual(url.searchParams.get('contrato'), '1');
+    assert.strictEqual(url.searchParams.get('cliente'), 'CLI');
+    assert.strictEqual(url.searchParams.get('sucursalOrigen'), '283');
+    assert.strictEqual(url.searchParams.get('bultos[0][volumen]'), '12800');
+    assert.strictEqual(url.searchParams.get('bultos[0][kilos]'), '0.391');
+    assert.strictEqual(url.searchParams.get('bultos[0][valorDeclarado]'), '28917.36');
+    assert.strictEqual(url.searchParams.get('bultos[0][altoCm]'), '8');
+    assert.strictEqual(url.searchParams.get('bultos[0][largoCm]'), '40');
+    assert.strictEqual(url.searchParams.get('bultos[0][anchoCm]'), '40');
+    assert.strictEqual(url.searchParams.has('bultos[0][valorDeclaradoSinImpuestos]'), false);
+    assert.strictEqual(url.searchParams.has('bultos[0][valorDeclaradoConImpuestos]'), false);
   });
 });
 

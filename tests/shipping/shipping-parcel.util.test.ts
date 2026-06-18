@@ -63,6 +63,26 @@ describe('buildParcelFromShippingLines', () => {
     assert.strictEqual(parcel.depth, 80);
   });
 
+  it('usa fallback de subrubro CAMISA cuando faltan medidas', () => {
+    process.env.SHIPPING_ALTO_POR_PRENDA_CM = '8';
+    const parcel = buildParcelFromShippingLines(
+      [
+        {
+          codigo: 'L-OF-CAM-MAN17',
+          cantidad: 1,
+          pesoGrams: 350,
+          anchoCm: null,
+          largoCm: null,
+          subrubro: 'CAMISA',
+        },
+      ],
+      46990
+    );
+    assert.strictEqual(parcel.width, 40);
+    assert.strictEqual(parcel.depth, 40);
+    assert.strictEqual(parcel.weightGrams, 350);
+  });
+
   it('falla si falta peso y no hay fallback', () => {
     assert.throws(
       () =>

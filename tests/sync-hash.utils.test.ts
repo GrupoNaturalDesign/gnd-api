@@ -40,8 +40,24 @@ test('hashProductoSfactoryFields ignores ultima_sync', () => {
     linea: null,
     material: null,
     sfactory_id: 99,
+    peso_bruto: null,
+    ancho: null,
+    largo: null,
   };
   assert.equal(hashProductoSfactoryFields(base), hashProductoSfactoryFields({ ...base }));
+});
+
+test('hashProductoSfactoryFields changes when peso_bruto changes', () => {
+  const base = {
+    codigo: 'SKU-1',
+    precio_venta: 100,
+    activo: 'S',
+    peso_bruto: null,
+    ancho: 40,
+    largo: 40,
+  };
+  const withPeso = { ...base, peso_bruto: 391 };
+  assert.notEqual(hashProductoSfactoryFields(base), hashProductoSfactoryFields(withPeso));
 });
 
 test('hashClienteFields changes when email changes', () => {

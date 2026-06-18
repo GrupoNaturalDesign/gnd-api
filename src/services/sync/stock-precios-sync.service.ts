@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import prisma from '../../lib/prisma';
 import { ECOMMERCE_RUBROS_SFACTORY_IDS } from '../../config/ecommerce.config';
-import { calcularTodosLosPrecios, CUOTAS_FINANCIADO_DEFAULT } from '../../config/precios.config';
+import { productoPrecioService } from '../productoPrecio.service';
 import { getDbWriteConcurrency } from '../../lib/db-config';
 import { shouldUpdateStockPrecio } from '../../utils/sync-hash.utils';
 import { activoSfactoryConWhitelist } from '../../config/colores-padre-whitelist.utils';
@@ -176,39 +176,10 @@ export class StockPreciosSyncService {
         });
 
         if (decision.updatePrecio && saleOk != null) {
-          const preciosDerivados = calcularTodosLosPrecios(
-            saleOk,
-            CUOTAS_FINANCIADO_DEFAULT
-          );
-          await prisma.productoPrecio.upsert({
-            where: {
-              unique_producto_tipo: {
-                productoWebId: variante.id,
-                tipoCliente: 'minorista',
-              },
-            },
-            create: {
-              productoWebId: variante.id,
-              tipoCliente: 'minorista',
-              precioLista: new Prisma.Decimal(saleOk),
-              precio: new Prisma.Decimal(saleOk),
-              precioTransfer: new Prisma.Decimal(preciosDerivados.precioTransfer),
-              precioFinanciado: new Prisma.Decimal(
-                preciosDerivados.precioFinanciado
-              ),
-              cuotasFinanciado: CUOTAS_FINANCIADO_DEFAULT,
-              precioSinImp: new Prisma.Decimal(preciosDerivados.precioSinImp),
-            },
-            update: {
-              precioLista: new Prisma.Decimal(saleOk),
-              precio: new Prisma.Decimal(saleOk),
-              precioTransfer: new Prisma.Decimal(preciosDerivados.precioTransfer),
-              precioFinanciado: new Prisma.Decimal(
-                preciosDerivados.precioFinanciado
-              ),
-              cuotasFinanciado: CUOTAS_FINANCIADO_DEFAULT,
-              precioSinImp: new Prisma.Decimal(preciosDerivados.precioSinImp),
-            },
+          await productoPrecioService.upsert({
+            productoWebId: variante.id,
+            tipoCliente: 'minorista',
+            precioLista: saleOk,
           });
           preciosActualizados++;
         }

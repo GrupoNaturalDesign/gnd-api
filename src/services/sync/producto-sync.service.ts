@@ -8,7 +8,7 @@ import {
   normalizarRubro,
   parsearNombreProducto,
 } from '../producto-agrupacion.service';
-import { calcularTodosLosPrecios, CUOTAS_FINANCIADO_DEFAULT } from '../../config/precios.config';
+import { productoPrecioService } from '../productoPrecio.service';
 import { ECOMMERCE_RUBROS_SFACTORY_IDS } from '../../config/ecommerce.config';
 import {
   hashProductoPadreFields,
@@ -68,6 +68,36 @@ function toDecimal(value: any): Prisma.Decimal | null {
 function toStringOrNull(value: any): string | null {
   if (value === null || value === undefined || value === '') return null;
   return String(value);
+}
+
+/** Persiste precio minorista con cuotas vía proveedor (MP) fuera de transacciones largas. */
+async function flushPrecioMinoristaFromMp(pending: Map<number, number>): Promise<void> {
+  if (pending.size === 0) return;
+  for (const [productoWebId, precioLista] of pending) {
+    try {
+      await productoPrecioService.upsert({
+        productoWebId,
+        tipoCliente: 'minorista',
+        precioLista,
+      });
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `[producto-sync] Error upsert precio MP productoWebId=${productoWebId}:`,
+        msg
+      );
+    }
+  }
+  pending.clear();
+}
+
+/** Primer campo numérico presente en la respuesta cruda de S-Factory (PascalCase / camelCase / snake_case). */
+function sfactoryDecimal(producto: any, ...keys: string[]): Prisma.Decimal | null {
+  for (const key of keys) {
+    const d = toDecimal(producto?.[key]);
+    if (d != null) return d;
+  }
+  return null;
 }
 
 type PadreSyncRow = {
@@ -224,6 +254,9 @@ export class ProductoSyncService {
           linea: true,
           material: true,
           sfactory_id: true,
+          peso_bruto: true,
+          ancho: true,
+          largo: true,
         },
       });
       const existentesMap = new Map(existentes.map((p) => [p.codigo, p]));
@@ -311,10 +344,10 @@ export class ProductoSyncService {
                 item_compra: toStringOrNull((producto as any).ItemDeCompra ? 'S' : (producto as any).itemCompra),
                 item_alquiler: toStringOrNull((producto as any).ItemDeAlquiler ? 'S' : (producto as any).itemAlquiler),
                 codigo_externo: toStringOrNull((producto as any).EqCodigoExterno || (producto as any).codigoExterno),
-                peso_bruto: toDecimal((producto as any).PesoBruto || (producto as any).pesoBruto),
-                ancho: toDecimal((producto as any).Ancho || (producto as any).ancho),
-                largo: toDecimal((producto as any).Largo || (producto as any).largo),
-                volumen: toDecimal((producto as any).Volumen || (producto as any).volumen),
+                peso_bruto: sfactoryDecimal(producto, 'PesoBruto', 'pesoBruto', 'peso_bruto'),
+                ancho: sfactoryDecimal(producto, 'Ancho', 'ancho'),
+                largo: sfactoryDecimal(producto, 'Largo', 'largo'),
+                volumen: sfactoryDecimal(producto, 'Volumen', 'volumen'),
                 activo: (producto as any).Activo !== false ? 'S' : 'N',
                 um: toStringOrNull((producto as any).UM || (producto as any).um),
                 um_compra: toStringOrNull((producto as any).UMCompra || (producto as any).umCompra),
@@ -382,6 +415,9 @@ export class ProductoSyncService {
                 linea: datosProductoSfactory.linea,
                 material: datosProductoSfactory.material,
                 sfactory_id: datosProductoSfactory.sfactory_id,
+                peso_bruto: datosProductoSfactory.peso_bruto,
+                ancho: datosProductoSfactory.ancho,
+                largo: datosProductoSfactory.largo,
               });
             } catch (error: any) {
               errores.push({
@@ -436,6 +472,7 @@ export class ProductoSyncService {
     empresaId: number = 1,
     options?: { codigosAfectados?: Set<string>; forceReprocess?: boolean }
   ) {
+    const pendingPreciosMinorista = new Map<number, number>();
     try {
       const codigosAfectados = options?.forceReprocess ? undefined : options?.codigosAfectados;
 
@@ -628,6 +665,7 @@ export class ProductoSyncService {
       }
 
       if (gruposArray.length === 0) {
+        await flushPrecioMinoristaFromMp(pendingPreciosMinorista);
         return {
           procesados: productosSfactory.length,
           exitosos: 0,
@@ -977,44 +1015,8 @@ export class ProductoSyncService {
                     const precioLista = Number(datosProductoWeb.precioCache);
                     const precioActual = precioListaByWebId.get(productoWeb.id);
                     if (precioActual !== precioLista) {
-                      try {
-                        const preciosDerivados = calcularTodosLosPrecios(
-                          precioLista,
-                          CUOTAS_FINANCIADO_DEFAULT
-                        );
-                        await tx.productoPrecio.upsert({
-                          where: {
-                            unique_producto_tipo: {
-                              productoWebId: productoWeb.id,
-                              tipoCliente: 'minorista',
-                            },
-                          },
-                          create: {
-                            productoWebId: productoWeb.id,
-                            tipoCliente: 'minorista',
-                            precioLista,
-                            precio: precioLista,
-                            precioTransfer: preciosDerivados.precioTransfer,
-                            precioFinanciado: preciosDerivados.precioFinanciado,
-                            cuotasFinanciado: CUOTAS_FINANCIADO_DEFAULT,
-                            precioSinImp: preciosDerivados.precioSinImp,
-                          },
-                          update: {
-                            precioLista,
-                            precio: precioLista,
-                            precioTransfer: preciosDerivados.precioTransfer,
-                            precioFinanciado: preciosDerivados.precioFinanciado,
-                            cuotasFinanciado: CUOTAS_FINANCIADO_DEFAULT,
-                            precioSinImp: preciosDerivados.precioSinImp,
-                          },
-                        });
-                        precioListaByWebId.set(productoWeb.id, precioLista);
-                      } catch (error: any) {
-                        console.warn(
-                          `[procesarProductosDesdeSfactory] Error creando ProductoPrecio para ${codigoStr}:`,
-                          error.message
-                        );
-                      }
+                      pendingPreciosMinorista.set(productoWeb.id, precioLista);
+                      precioListaByWebId.set(productoWeb.id, precioLista);
                     }
                   }
 
@@ -1063,6 +1065,8 @@ export class ProductoSyncService {
           `[procesarProductosDesdeSfactory] Padres sublínea publicados: ${publicadosSub.publicados}; colores_disponibles refrescados: ${coloresPadres.padresActualizados}`
         );
       }
+
+      await flushPrecioMinoristaFromMp(pendingPreciosMinorista);
 
       return {
         procesados: productosSfactory.length,
@@ -1237,10 +1241,10 @@ export class ProductoSyncService {
       item_compra: toStringOrNull((producto as any).ItemDeCompra ? 'S' : (producto as any).itemCompra),
       item_alquiler: toStringOrNull((producto as any).ItemDeAlquiler ? 'S' : (producto as any).itemAlquiler),
       codigo_externo: toStringOrNull((producto as any).EqCodigoExterno || (producto as any).codigoExterno),
-      peso_bruto: toDecimal((producto as any).PesoBruto || (producto as any).pesoBruto),
-      ancho: toDecimal((producto as any).Ancho || (producto as any).ancho),
-      largo: toDecimal((producto as any).Largo || (producto as any).largo),
-      volumen: toDecimal((producto as any).Volumen || (producto as any).volumen),
+      peso_bruto: sfactoryDecimal(producto, 'PesoBruto', 'pesoBruto', 'peso_bruto'),
+      ancho: sfactoryDecimal(producto, 'Ancho', 'ancho'),
+      largo: sfactoryDecimal(producto, 'Largo', 'largo'),
+      volumen: sfactoryDecimal(producto, 'Volumen', 'volumen'),
       activo: (producto as any).Activo !== false ? 'S' : 'N',
       um: toStringOrNull((producto as any).UM || (producto as any).um),
       um_compra: toStringOrNull((producto as any).UMCompra || (producto as any).umCompra),
@@ -1291,6 +1295,7 @@ export class ProductoSyncService {
     producto: SFactoryProduct,
     empresaId: number
   ) {
+    const pendingPreciosMinorista = new Map<number, number>();
     const codigo = String((producto as any).Codigo || (producto as any).codigo || '');
 
     // Obtener el producto desde productos_sfactory (ya sincronizado)
@@ -1548,47 +1553,15 @@ export class ProductoSyncService {
 
         // Si hay precio_venta, crear/actualizar ProductoPrecio automáticamente dentro de la transacción
         if (datosProductoWeb.precioCache && datosProductoWeb.precioCache > 0) {
-          try {
-            const precioLista = Number(datosProductoWeb.precioCache);
-            const preciosDerivados = calcularTodosLosPrecios(precioLista, CUOTAS_FINANCIADO_DEFAULT);
-            
-            // Crear precio para minorista (precio lista) dentro de la transacción
-            await tx.productoPrecio.upsert({
-              where: {
-                unique_producto_tipo: {
-                  productoWebId: productoWeb.id,
-                  tipoCliente: 'minorista',
-                },
-              },
-              create: {
-                productoWebId: productoWeb.id,
-                tipoCliente: 'minorista',
-                precioLista,
-                precio: precioLista,
-                precioTransfer: preciosDerivados.precioTransfer,
-                precioFinanciado: preciosDerivados.precioFinanciado,
-                cuotasFinanciado: CUOTAS_FINANCIADO_DEFAULT,
-                precioSinImp: preciosDerivados.precioSinImp,
-              },
-              update: {
-                precioLista,
-                precio: precioLista,
-                precioTransfer: preciosDerivados.precioTransfer,
-                precioFinanciado: preciosDerivados.precioFinanciado,
-                cuotasFinanciado: CUOTAS_FINANCIADO_DEFAULT,
-                precioSinImp: preciosDerivados.precioSinImp,
-              },
-            });
-          } catch (error: any) {
-            // Log error pero no fallar la sincronización
-            console.warn(`[procesarProductoIndividual] Error creando ProductoPrecio para ${codigoStr}:`, error.message);
-          }
+          pendingPreciosMinorista.set(productoWeb.id, Number(datosProductoWeb.precioCache));
         }
       }
     }, {
       timeout: TRANSACTION_TIMEOUT,
       maxWait: TRANSACTION_TIMEOUT,
     });
+
+    await flushPrecioMinoristaFromMp(pendingPreciosMinorista);
   }
 
   /**

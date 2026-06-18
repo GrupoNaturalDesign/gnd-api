@@ -17,6 +17,7 @@ const SUBRUBRO_FALLBACKS: Record<string, SubrubroShippingFallback> = {
   REMERA: { anchoCm: 35, largoCm: 45, pesoGrams: 250 },
   PANTALON: { anchoCm: 40, largoCm: 55, pesoGrams: 450 },
   CHOMBA: { anchoCm: 40, largoCm: 50, pesoGrams: 300 },
+  CAMISA: { anchoCm: 40, largoCm: 40, pesoGrams: 350 },
 };
 
 export function normalizeSubrubroKey(subrubro: string | null | undefined): string {
