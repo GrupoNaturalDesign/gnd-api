@@ -103,6 +103,23 @@ describe('SH-C-07 — CorreoAuth token cache + 401 retry', () => {
     delete process.env.CORREO_CUSTOMER_ID;
   });
 
+  it('getCustomerId usa CORREO_VALIDATE_PASSWORD_QA en validate', async () => {
+    process.env.CORREO_VALIDATE_PASSWORD_QA = 'portal-pass';
+    const newAuth = new CorreoAuth('test', mockFetch.fetch as unknown as typeof fetch);
+    mockFetch.setResponses([
+      { status: 200, json: { token: 'tok' } },
+      { status: 200, json: { customerId: 'CID-PORTAL' } },
+    ]);
+    const cid = await newAuth.getCustomerId();
+    assert.strictEqual(cid, 'CID-PORTAL');
+    const validateCall = mockFetch.getCalls()[1];
+    assert.ok(validateCall?.init);
+    const init = validateCall.init as { body?: string };
+    const body = JSON.parse(String(init.body)) as { email: string; password: string };
+    assert.strictEqual(body.password, 'portal-pass');
+    delete process.env.CORREO_VALIDATE_PASSWORD_QA;
+  });
+
   it('getCustomerId fetch fallido 406 da hint sobre CORREO_EMAIL', async () => {
     mockFetch.setResponses([
       { status: 200, json: { token: 'tok' } },

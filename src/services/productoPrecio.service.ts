@@ -1,7 +1,6 @@
 import prisma from '../lib/prisma';
-import { Prisma } from '@prisma/client';
 import { CUOTAS_FINANCIADO_DEFAULT } from '../config/precios.config';
-import { calcularPreciosDerivadosCompletos } from './precios-derivados.service';
+import { calcularPreciosDerivados } from './precios-derivados.service';
 import { empresaConfigService } from './empresa-config.service';
 
 export interface CreateProductoPrecioData {
@@ -29,17 +28,16 @@ export class ProductoPrecioService {
   }
 
   /**
-   * Crea o actualiza un precio de producto
-   * Calcula automáticamente los precios derivados (incl. cuotas vía proveedor)
+   * Crea o actualiza un precio de producto.
+   * Calcula automáticamente transferencia y sin impuestos.
    */
   async upsert(data: CreateProductoPrecioData) {
     const { precioLista, cuotasFinanciado = CUOTAS_FINANCIADO_DEFAULT, ...restData } = data;
     const empresaId = await this.resolveEmpresaId(data.productoWebId);
     const empresaConfig = await empresaConfigService.getPrecioConfig(empresaId);
 
-    const preciosDerivados = await calcularPreciosDerivadosCompletos({
+    const preciosDerivados = calcularPreciosDerivados({
       precioLista,
-      empresaId,
       empresaConfig,
       cuotasOverride: cuotasFinanciado,
     });
@@ -56,19 +54,15 @@ export class ProductoPrecioService {
         precioLista,
         precio: precioLista,
         precioTransfer: preciosDerivados.precioTransfer,
-        precioFinanciado: preciosDerivados.precioFinanciado,
         cuotasFinanciado: preciosDerivados.cuotas,
         precioSinImp: preciosDerivados.precioSinImp,
-        cuotasSnapshot: (preciosDerivados.cuotasSnapshot ?? undefined) as Prisma.InputJsonValue | undefined,
       },
       update: {
         precioLista,
         precio: precioLista,
         precioTransfer: preciosDerivados.precioTransfer,
-        precioFinanciado: preciosDerivados.precioFinanciado,
         cuotasFinanciado: preciosDerivados.cuotas,
         precioSinImp: preciosDerivados.precioSinImp,
-        cuotasSnapshot: (preciosDerivados.cuotasSnapshot ?? undefined) as Prisma.InputJsonValue | undefined,
         minimoUnidades: data.minimoUnidades,
       },
     });
@@ -91,9 +85,8 @@ export class ProductoPrecioService {
       precioActual.productoWeb.empresaId
     );
 
-    const preciosDerivados = await calcularPreciosDerivadosCompletos({
+    const preciosDerivados = calcularPreciosDerivados({
       precioLista,
-      empresaId: precioActual.productoWeb.empresaId,
       empresaConfig,
       cuotasOverride: cuotasFinanciado,
     });
@@ -105,10 +98,8 @@ export class ProductoPrecioService {
         precioLista,
         precio: precioLista,
         precioTransfer: preciosDerivados.precioTransfer,
-        precioFinanciado: preciosDerivados.precioFinanciado,
         cuotasFinanciado: preciosDerivados.cuotas,
         precioSinImp: preciosDerivados.precioSinImp,
-        cuotasSnapshot: (preciosDerivados.cuotasSnapshot ?? undefined) as Prisma.InputJsonValue | undefined,
       },
     });
   }

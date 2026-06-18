@@ -7,6 +7,7 @@ import {
   getCorreoTimeoutMs,
   loadCorreoCredentials,
   loadCorreoValidateEmail,
+  loadCorreoValidatePassword,
   type CorreoEnv,
 } from './correo.config';
 
@@ -89,7 +90,7 @@ export class CorreoAuth {
   private async fetchCustomerIdFromApi(): Promise<string> {
     /** Doc MiCorreo: /users/validate requiere Bearer; sin él la API responde 401 "Header List is null or empty". */
     const tok = await this.getValidToken();
-    const { password } = this.getCredentials();
+    const password = loadCorreoValidatePassword(this.env);
     const email = loadCorreoValidateEmail(this.env);
     const url = `${this.baseUrl}${CORREO_PATHS.usersValidate}`;
     const started = Date.now();
@@ -124,7 +125,7 @@ export class CorreoAuth {
     if (!res.ok) {
       const hint =
         res.status === 406
-          ? ' Revisá CORREO_EMAIL_QA/CORREO_EMAIL (email del portal MiCorreo, no el usuario API). Opcional: CORREO_CUSTOMER_ID.'
+          ? ' Revisá CORREO_EMAIL_QA/CORREO_EMAIL (email del portal) y CORREO_VALIDATE_PASSWORD_QA (clave del portal, no la del usuario API). Opcional: CORREO_CUSTOMER_ID.'
           : '';
       throw new Error(`users/validate ${res.status}: ${text.slice(0, 500)}${hint}`);
     }

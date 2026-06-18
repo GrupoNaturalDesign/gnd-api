@@ -52,9 +52,9 @@ export function mapPedidoToAndreaniOrdenEnvio(
 
   const telRaw = (input.recipient.phone ?? pedido.clienteTelefono ?? '').trim();
   const telDigits = telRaw.replace(/\D/g, '');
-  if (!telDigits) {
+  if (telDigits.length < 8) {
     throw new ShippingValidationError(
-      'Destinatario: falta teléfono válido (recipient.phone o pedido.clienteTelefono)'
+      'Falta telefono valido del cliente para crear envio Andreani'
     );
   }
 
@@ -133,17 +133,49 @@ function mapAddressToDestinoPostal(
 export function extractNumeroEnvioYAgrupador(
   data: AndreaniOrdenEnvioResponse
 ): { numeroEnvio: string; agrupador: string | null } {
-  const agrupador =
-    typeof data.agrupadorDeBultos === 'string' ? data.agrupadorDeBultos : null;
+  const root = data as unknown as Record<string, unknown>;
+  const agrupador = readFirstString(root, [
+    'agrupadorDeBultos',
+    'agrupador',
+    'numeroAgrupador',
+    'idAgrupador',
+  ]);
   const b0 = data.bultos?.[0];
+  const bulto = b0 as unknown as Record<string, unknown> | undefined;
   const numero =
-    typeof b0?.numeroDeEnvio === 'string' ? b0.numeroDeEnvio : null;
+    readFirstString(bulto, [
+      'numeroDeEnvio',
+      'numeroEnvio',
+      'nroEnvio',
+      'trackingNumber',
+      'id',
+    ]) ??
+    readFirstString(root, [
+      'numeroDeEnvio',
+      'numeroEnvio',
+      'nroEnvio',
+      'trackingNumber',
+      'id',
+    ]);
   if (!numero) {
     throw new ShippingValidationError(
-      'Respuesta Andreani sin numeroDeEnvio en bultos[0]; revisar contrato API'
+      'Respuesta Andreani sin numero de envio; revisar contrato API'
     );
   }
   return { numeroEnvio: numero, agrupador };
+}
+
+function readFirstString(
+  source: Record<string, unknown> | undefined,
+  keys: string[]
+): string | null {
+  if (!source) return null;
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  }
+  return null;
 }
 
 function readNumericFromTarifaObject(t: Record<string, unknown>): number {

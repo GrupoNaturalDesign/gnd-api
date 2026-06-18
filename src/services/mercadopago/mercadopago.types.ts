@@ -125,25 +125,6 @@ export interface MercadoPagoPayment {
   [key: string]: unknown;
 }
 
-export interface MercadoPagoPayerCost {
-  installments: number;
-  installment_rate: number;
-  discount_rate: number;
-  labels?: string[];
-  min_allowed_amount?: number;
-  max_allowed_amount?: number;
-  recommended_message?: string;
-  installment_amount: number;
-  total_amount: number;
-}
-
-export interface MercadoPagoInstallmentsResponse {
-  payment_method_id: string;
-  payment_type_id?: string;
-  payer_costs: MercadoPagoPayerCost[];
-  [key: string]: unknown;
-}
-
 export interface MercadoPagoPaymentSearchResponse {
   paging?: {
     total?: number;

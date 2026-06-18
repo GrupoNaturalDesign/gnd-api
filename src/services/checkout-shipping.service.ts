@@ -49,9 +49,12 @@ export function mapFormaEnvioCheckout(
     : FormaEnvio.correo_sucursal;
 }
 
+const MICORREO_EMPTY_RATES_MSG =
+  'MiCorreo no devolvió tarifas para esta ruta. Revisá CORREO_EMAIL_* y CORREO_VALIDATE_PASSWORD_* (clave del portal). En apitest, si rates viene vacío, la cuenta puede no tener cotización habilitada.';
+
 function minCorreoPrice(quotes: CorreoShippingQuote[]): number {
   if (quotes.length === 0) {
-    throw new ShippingValidationError('MiCorreo no devolvió tarifas');
+    throw new ShippingValidationError(MICORREO_EMPTY_RATES_MSG);
   }
   return Math.min(...quotes.map((q) => q.price));
 }
@@ -65,7 +68,7 @@ function pickCorreoPrice(
   correoProductType?: string
 ): number {
   if (quotes.length === 0) {
-    throw new ShippingValidationError('MiCorreo no devolvió tarifas');
+    throw new ShippingValidationError(MICORREO_EMPTY_RATES_MSG);
   }
   const key = correoProductType?.trim();
   if (!key) {

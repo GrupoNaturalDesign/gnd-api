@@ -5,7 +5,7 @@ import { crearPedidoMp, crearPedidoManual } from '../../src/services/mp-checkout
 describe('crearPedidoMp — input validation', () => {
   it('empty items throws early', async () => {
     await assert.rejects(
-      () => crearPedidoMp({ empresaId: 1, clienteNombre: 'Test', clienteEmail: 'a@b.com', items: [] }, 1),
+      () => crearPedidoMp({ empresaId: 1, clienteNombre: 'Test', clienteEmail: 'a@b.com', items: [], mpPricingMode: 'financiado' }, 1),
       { message: 'El pedido debe incluir al menos un ítem' }
     );
   });

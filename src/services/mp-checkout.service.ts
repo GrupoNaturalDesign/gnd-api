@@ -31,6 +31,14 @@ import { CuponEngineService } from './cupon-engine.service';
 import { empresaConfigService } from './empresa-config.service';
 import { sendPedidoStatusEmailAsync } from './pedido-email-notification.service';
 import { sendManualPaymentInstructionsEmailAsync } from './pedido-payment-instructions.service';
+import {
+  assertMpPricingMode,
+  buildMercadoPagoPaymentMethodsForMode,
+  unitPriceMatchesMpMode,
+  type MpPricingMode,
+} from '../utils/checkout-mp-pricing.util';
+
+export type { MpPricingMode };
 
 const cuponEngine = new CuponEngineService();
 
@@ -113,17 +121,11 @@ function logMpCheckout(event: string, fields: Record<string, unknown>): void {
   );
 }
 
-/** Alinea Checkout Pro con Empresa.cuotasFinanciado (admin /configuracion). */
+/** @deprecated Usar buildMercadoPagoPaymentMethodsForMode. */
 function buildMercadoPagoPaymentMethods(
   cuotasFinanciado: number
 ): MercadoPagoCreatePreferenceBody['payment_methods'] | undefined {
-  const n = Math.trunc(cuotasFinanciado);
-  if (!Number.isFinite(n) || n < 1) return undefined;
-  if (n === 1) return { installments: 1 };
-  return {
-    default_installments: n,
-    installments: n,
-  };
+  return buildMercadoPagoPaymentMethodsForMode('financiado', cuotasFinanciado);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -178,6 +180,34 @@ async function fetchMercadoPagoPaymentWithRetry(paymentId: string): Promise<Merc
   return null;
 }
 
+async function validateItemPricesForMpMode(
+  items: ItemInput[],
+  mpPricingMode: MpPricingMode
+): Promise<void> {
+  const ids = [...new Set(items.map((i) => i.productoWebId))];
+  const rows = await prisma.productoPrecio.findMany({
+    where: {
+      productoWebId: { in: ids },
+      tipoCliente: 'minorista',
+    },
+  });
+  const byWebId = new Map(rows.map((r) => [r.productoWebId, r]));
+
+  for (const item of items) {
+    const row = byWebId.get(item.productoWebId);
+    if (!row) {
+      throw new Error(`Precio no encontrado para productoWebId ${item.productoWebId}.`);
+    }
+    const lista = Number(row.precioLista);
+    const transfer = row.precioTransfer != null ? Number(row.precioTransfer) : null;
+    if (!unitPriceMatchesMpMode(item.precioUnitario, lista, transfer, mpPricingMode)) {
+      throw new Error(
+        `Precio unitario inválido para ${item.codigo} (modo ${mpPricingMode}).`
+      );
+    }
+  }
+}
+
 // --- Input types (checkout MP) ---
 
 export interface ItemInput {
@@ -212,6 +242,8 @@ export interface CrearPedidoMpInput {
   checkoutEnvio?: CheckoutEnvioClientPayload;
   /** Código de cupón opcional — se valida y aplica descuento al pedido. */
   cuponCodigo?: string;
+  /** transfer = precio transfer; financiado = precio lista + cuotas MP. */
+  mpPricingMode: MpPricingMode;
 }
 
 export interface CrearPedidoMpResult {
@@ -282,6 +314,9 @@ export async function crearPedidoMp(
   if (!input.items.length) {
     throw new Error('El pedido debe incluir al menos un ítem');
   }
+
+  const mpPricingMode = assertMpPricingMode(input.mpPricingMode);
+  await validateItemPricesForMpMode(input.items, mpPricingMode);
 
   const { cuponDetalle, cuponDescuentoDecimal } = await resolveCuponForPedidoCheckout(
     input.empresaId,
@@ -378,6 +413,7 @@ export async function crearPedidoMp(
       andreaniSucursalDescripcion: andreaniSucursalDescripcion ?? undefined,
       checkoutEnvioSnapshot: checkoutEnvioSnapshot ?? undefined,
       formaPago: FormaPago.mercado_pago,
+      mpPricingMode,
       observaciones: input.observaciones ?? null,
       // --- Campos de cupón ---
       cuponId: cuponIdForPedido,
@@ -469,7 +505,10 @@ export async function crearPedidoMp(
   }
 
   const precioConfig = await empresaConfigService.getPrecioConfig(input.empresaId);
-  const paymentMethods = buildMercadoPagoPaymentMethods(precioConfig.cuotasFinanciado);
+  const paymentMethods = buildMercadoPagoPaymentMethodsForMode(
+    mpPricingMode,
+    precioConfig.cuotasFinanciado
+  );
 
   const preferenceBody: MercadoPagoCreatePreferenceBody = {
     items: preferenceItems,
@@ -487,6 +526,7 @@ export async function crearPedidoMp(
     },
     auto_return: 'approved',
     ...(paymentMethods ? { payment_methods: paymentMethods } : {}),
+    metadata: { mp_pricing_mode: mpPricingMode },
   };
 
   const preference = await mercadoPagoClient.createPreference(
@@ -506,6 +546,7 @@ export async function crearPedidoMp(
     items: input.items.length,
     cupon: Boolean(cuponDetalle),
     cuotasFinanciado: precioConfig.cuotasFinanciado,
+    mpPricingMode,
   });
 
   await prisma.pedido.update({

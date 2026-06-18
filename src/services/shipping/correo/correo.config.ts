@@ -84,6 +84,25 @@ export function loadCorreoCredentials(env: CorreoEnv): {
 }
 
 /**
+ * Clave del portal MiCorreo para POST /users/validate (suele ser distinta a la del usuario API).
+ * Prioridad: CORREO_VALIDATE_PASSWORD_QA/PROD → CORREO_VALIDATE_PASSWORD → password API.
+ */
+export function loadCorreoValidatePassword(env: CorreoEnv): string {
+  const isProd = env === 'prod';
+  const explicit = isProd
+    ? firstNonEmptyCorreo(
+        process.env.CORREO_VALIDATE_PASSWORD_PROD,
+        process.env.CORREO_VALIDATE_PASSWORD
+      )
+    : firstNonEmptyCorreo(
+        process.env.CORREO_VALIDATE_PASSWORD_QA,
+        process.env.CORREO_VALIDATE_PASSWORD
+      );
+  if (explicit) return explicit;
+  return loadCorreoCredentials(env).password;
+}
+
+/**
  * Email para POST /users/validate (MiCorreo exige el mail del portal; el usuario API suele no ser email).
  * Prioridad: CORREO_EMAIL_QA / CORREO_EMAIL_PROD → CORREO_EMAIL → username si contiene @.
  */

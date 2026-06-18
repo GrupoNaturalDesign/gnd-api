@@ -1,6 +1,9 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
-import { mapPedidoToAndreaniOrdenEnvio } from '../../../src/services/shipping/andreani/andreani.mapper';
+import {
+  extractNumeroEnvioYAgrupador,
+  mapPedidoToAndreaniOrdenEnvio,
+} from '../../../src/services/shipping/andreani/andreani.mapper';
 import { ShippingValidationError } from '../../../src/services/shipping/shipping.errors';
 import { Prisma } from '@prisma/client';
 
@@ -80,13 +83,23 @@ describe('SH-A-02 — mapPedidoToAndreaniOrdenEnvio', () => {
     );
   });
 
-  it('lanza si falta teléfono en recipient y pedido', () => {
+  it('lanza si falta telefono valido en recipient y pedido', () => {
     const input = buildInput('homeDelivery');
     input.recipient.phone = '';
     const pedido = buildPedido('  ');
     assert.throws(
       () => mapPedidoToAndreaniOrdenEnvio(input, pedido),
-      /falta teléfono/
+      /Falta telefono valido/
+    );
+  });
+
+  it('lanza si el telefono tiene menos de 8 digitos', () => {
+    const input = buildInput('homeDelivery');
+    input.recipient.phone = '351';
+    const pedido = buildPedido('');
+    assert.throws(
+      () => mapPedidoToAndreaniOrdenEnvio(input, pedido),
+      /Falta telefono valido/
     );
   });
 
@@ -151,6 +164,39 @@ describe('SH-A-02 — mapPedidoToAndreaniOrdenEnvio', () => {
   it('idPedido格式 WEB-{id}', () => {
     const result = mapPedidoToAndreaniOrdenEnvio(buildInput('homeDelivery'), buildPedido());
     assert.strictEqual(result.idPedido, 'WEB-999');
+  });
+});
+
+describe('SH-A-03 - extractNumeroEnvioYAgrupador', () => {
+  it('extrae numero y agrupador desde respuesta oficial con bultos[0].numeroDeEnvio', () => {
+    const result = extractNumeroEnvioYAgrupador({
+      agrupadorDeBultos: 'AGR-1',
+      bultos: [{ numeroDeEnvio: '360000102000579' }],
+    });
+
+    assert.deepStrictEqual(result, {
+      numeroEnvio: '360000102000579',
+      agrupador: 'AGR-1',
+    });
+  });
+
+  it('acepta variantes seguras de numero y agrupador', () => {
+    const result = extractNumeroEnvioYAgrupador({
+      agrupador: 'AGR-2',
+      bultos: [{ trackingNumber: 'TN-2' }],
+    } as unknown as Parameters<typeof extractNumeroEnvioYAgrupador>[0]);
+
+    assert.deepStrictEqual(result, {
+      numeroEnvio: 'TN-2',
+      agrupador: 'AGR-2',
+    });
+  });
+
+  it('falla si Andreani no devuelve numero de envio', () => {
+    assert.throws(
+      () => extractNumeroEnvioYAgrupador({ agrupadorDeBultos: 'AGR-3', bultos: [{}] }),
+      /sin numero de envio/
+    );
   });
 });
 

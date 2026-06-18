@@ -4,7 +4,14 @@ import type { FirebaseAuthRequest } from '../middleware/firebase-auth.middleware
 import prisma from '../lib/prisma';
 import { getCheckoutEmpresaIdFromEnv } from '../lib/checkout-empresa';
 import type { ApiResponse } from '../types';
-import { crearPedidoMp, crearPedidoManual, getCheckoutMpPaymentStatus, type CrearPedidoMpInput, type CrearPedidoManualInput } from '../services/mp-checkout.service';
+import { assertMpPricingMode } from '../utils/checkout-mp-pricing.util';
+import {
+  crearPedidoMp,
+  crearPedidoManual,
+  getCheckoutMpPaymentStatus,
+  type CrearPedidoMpInput,
+  type CrearPedidoManualInput,
+} from '../services/mp-checkout.service';
 import type { CheckoutEnvioClientPayload } from '../services/checkout-shipping.service';
 import {
   ShippingConfigError,
@@ -251,6 +258,18 @@ export class CheckoutController {
         checkoutEnvio = parsed;
       }
 
+      let mpPricingMode;
+      try {
+        mpPricingMode = assertMpPricingMode(body.mpPricingMode);
+      } catch {
+        res.status(400).json({
+          success: false,
+          error: 'mpPricingMode inválido',
+          message: 'Se requiere mpPricingMode: "transfer" o "financiado".',
+        });
+        return;
+      }
+
       const input: CrearPedidoMpInput = {
         empresaId,
         clienteNombre,
@@ -265,6 +284,7 @@ export class CheckoutController {
         checkoutEnvio,
         cuponCodigo:
           typeof body.cuponCodigo === 'string' ? body.cuponCodigo.trim() || undefined : undefined,
+        mpPricingMode,
       };
 
       const data = await crearPedidoMp(input, usuario.id);
@@ -465,7 +485,6 @@ export class CheckoutController {
           descuentoTransferencia: config.descuentoTransferencia,
           iva: config.iva,
           cuotasFinanciado: config.cuotasFinanciado,
-          installmentProvider: config.installmentProvider,
         },
       });
     } catch (error: unknown) {
@@ -473,42 +492,6 @@ export class CheckoutController {
       res.status(500).json({
         success: false,
         error: 'Error al obtener configuración de precios',
-        message,
-      });
-    }
-  }
-
-  /** GET /api/checkout/cuotas?amount=&cuotas= — cotización pública de cuotas. */
-  async getCuotasQuotePublic(req: Request, res: Response): Promise<void> {
-    try {
-      const empresaId = getCheckoutEmpresaIdFromEnv();
-      const amount = Number(req.query.amount);
-      const cuotasParam = req.query.cuotas;
-      const cuotasOverride =
-        cuotasParam != null && String(cuotasParam).length > 0
-          ? Number(cuotasParam)
-          : undefined;
-
-      if (!Number.isFinite(amount) || amount <= 0) {
-        res.status(400).json({
-          success: false,
-          error: 'Parámetro amount inválido',
-        });
-        return;
-      }
-
-      const cuotas = await empresaConfigService.quoteCuotasForAmount(
-        empresaId,
-        amount,
-        cuotasOverride
-      );
-
-      res.json({ success: true, data: cuotas });
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      res.status(500).json({
-        success: false,
-        error: 'Error al cotizar cuotas',
         message,
       });
     }

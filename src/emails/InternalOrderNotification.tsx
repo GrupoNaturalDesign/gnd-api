@@ -32,6 +32,17 @@ export function InternalOrderNotification(props: InternalOrderNotificationProps)
             <strong>Entrega:</strong> {props.shippingSummary}
           </Text>
         ) : null}
+        {props.trackingNumber ? (
+          <Text style={text}>
+            <strong>Seguimiento:</strong> {props.trackingNumber}
+            {props.trackingUrl ? (
+              <>
+                <br />
+                <strong>Link:</strong> {props.trackingUrl}
+              </>
+            ) : null}
+          </Text>
+        ) : null}
         {props.paymentSummary ? (
           <Text style={text}>
             <strong>Pago:</strong> {props.paymentSummary}

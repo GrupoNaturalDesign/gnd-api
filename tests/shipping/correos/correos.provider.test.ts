@@ -102,6 +102,8 @@ describe('SH-C-09 — CorreoProvider errores HTTP', () => {
     process.env.CORREO_USERNAME_QA = 'user';
     process.env.CORREO_PASSWORD_QA = 'pass';
     process.env.CORREO_EMAIL_QA = 'test@test.com';
+    process.env.CORREO_ORIGIN_CP = '5000';
+    process.env.CORREO_ORIGIN_PROVINCE_CODE = 'X';
     process.env.CORREO_CUSTOMER_ID = '';
   });
   afterEach(() => {
@@ -109,6 +111,8 @@ describe('SH-C-09 — CorreoProvider errores HTTP', () => {
     delete process.env.CORREO_USERNAME_QA;
     delete process.env.CORREO_PASSWORD_QA;
     delete process.env.CORREO_EMAIL_QA;
+    delete process.env.CORREO_ORIGIN_CP;
+    delete process.env.CORREO_ORIGIN_PROVINCE_CODE;
     delete process.env.CORREO_CUSTOMER_ID;
     resetGlobalFetch();
   });
@@ -241,6 +245,38 @@ describe('SH-C-09 — CorreoProvider errores HTTP', () => {
 
     assert.strictEqual(result[0]!.price, 1234);
     assert.strictEqual(calls, 3);
+  });
+
+  it('createOrder devuelve tracking real desde shipping/import', async () => {
+    process.env.CORREO_CUSTOMER_ID = 'CID';
+    mockFetch.setResponses([
+      { status: 200, json: { token: 'tok' } },
+      { status: 200, json: { shippingId: 'COR-123' } },
+    ]);
+
+    const p = makeProvider();
+    const result = await p.createOrder(buildOrderInput());
+
+    assert.strictEqual(result.provider, 'correo');
+    assert.strictEqual(result.trackingNumber, 'COR-123');
+  });
+
+  it('createOrder falla si shipping/import no devuelve tracking real', async () => {
+    process.env.CORREO_CUSTOMER_ID = 'CID';
+    mockFetch.setResponses([
+      { status: 200, json: { token: 'tok' } },
+      { status: 200, json: { imported: true } },
+    ]);
+
+    const p = makeProvider();
+
+    await assert.rejects(
+      p.createOrder(buildOrderInput()),
+      (e: unknown) =>
+        e instanceof ShippingHttpError &&
+        e.status === 502 &&
+        e.message.includes('no devolvio numero de seguimiento')
+    );
   });
 });
 

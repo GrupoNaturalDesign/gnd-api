@@ -155,8 +155,24 @@ export class CorreoProvider implements ShippingProvider {
     }
     const customerId = await this.auth.getCustomerId();
     const body = buildRatesRequestBody(customerId, input);
-    const { data } = await this.requestJson('POST', CORREO_PATHS.rates, body);
-    return mapRatesResponse(data);
+    const { status, data } = await this.requestJson('POST', CORREO_PATHS.rates, body);
+    const quotes = mapRatesResponse(data);
+    if (quotes.length === 0) {
+      const suffix =
+        customerId.length <= 4 ? '****' : `…${customerId.slice(-4)}`;
+      shippingLogger.warn('MiCorreo rates vacío', {
+        httpStatus: status,
+        customerIdSuffix: suffix,
+        postalCodeOrigin: input.postalCodeOrigin,
+        postalCodeDestination: input.postalCodeDestination,
+        deliveredType: input.deliveredType ?? null,
+        responsePreview:
+          data != null && typeof data === 'object'
+            ? JSON.stringify(data).slice(0, 600)
+            : String(data).slice(0, 600),
+      });
+    }
+    return quotes;
   }
 
   async validateCredentials(): Promise<void> {
@@ -200,10 +216,21 @@ export class CorreoProvider implements ShippingProvider {
     const customerId = await this.auth.getCustomerId();
     const body = mapCreateOrderToMicorreoImport(input, customerId, this.correoSenderData);
     const { data } = await this.requestJson('POST', CORREO_PATHS.shippingImport, body);
-    const trackingNumber = extractTrackingNumberFromImportResponse(data) ?? String(input.pedidoId);
+    const trackingNumber = extractTrackingNumberFromImportResponse(data);
+    if (!trackingNumber) {
+      shippingLogger.error('MiCorreo orden importada sin trackingNumber', {
+        pedidoId: input.pedidoId,
+        response: data,
+      });
+      throw new ShippingHttpError(
+        'MiCorreo importo la orden pero no devolvio numero de seguimiento',
+        502,
+        data
+      );
+    }
     shippingLogger.info('MiCorreo orden importada', {
       pedidoId: input.pedidoId,
-      trackingResolved: trackingNumber !== String(input.pedidoId),
+      trackingResolved: true,
     });
     return { trackingNumber, provider: 'correo' };
   }

@@ -549,6 +549,8 @@ model Pedido {
   mercadoPagoPaymentId        String?             @unique(map: "mercado_pago_payment_id_unique") @map("mercado_pago_payment_id") @db.VarChar(255)
   mercadoPagoStatus           String?             @map("mercado_pago_status") @db.VarChar(50)
   mpPreferenceId              String?             @map("mp_preference_id") @db.VarChar(255)
+  /** MP checkout: transfer (precio transfer) | financiado (precio lista + cuotas). */
+  mpPricingMode               String?             @map("mp_pricing_mode") @db.VarChar(20)
   formaEnvio                  FormaEnvio?         @map("forma_envio")
   andreaniSucursalId          String?             @map("andreani_sucursal_id") @db.VarChar(100)
   andreaniSucursalDescripcion String?             @map("andreani_sucursal_descripcion") @db.VarChar(255)

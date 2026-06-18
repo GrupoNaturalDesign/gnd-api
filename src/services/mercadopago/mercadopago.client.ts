@@ -3,7 +3,6 @@ import { mercadoPagoConfig } from './mercadopago.config';
 import { MercadoPagoApiError } from './mercadopago.errors';
 import type {
   MercadoPagoCreatePreferenceBody,
-  MercadoPagoInstallmentsResponse,
   MercadoPagoPayment,
   MercadoPagoPaymentSearchResponse,
   MercadoPagoPreferenceResponse,
@@ -136,25 +135,6 @@ export class MercadoPagoClient {
   /** Valida que el token y la API respondan sin crear efectos secundarios. */
   async ping(): Promise<void> {
     await this.request<{ results: unknown[] }>('GET', '/v1/payments/search?limit=1');
-  }
-
-  /** GET /v1/payment_methods/installments */
-  async getInstallments(params: {
-    amount: number;
-    paymentMethodId: string;
-    bin?: string;
-  }): Promise<MercadoPagoInstallmentsResponse> {
-    const q = new URLSearchParams({
-      amount: String(params.amount),
-      payment_method_id: params.paymentMethodId,
-    });
-    if (params.bin?.trim()) {
-      q.set('bin', params.bin.trim());
-    }
-    return this.request<MercadoPagoInstallmentsResponse>(
-      'GET',
-      `/v1/payment_methods/installments?${q.toString()}`
-    );
   }
 
   /** GET /v1/payments/search?external_reference=... */

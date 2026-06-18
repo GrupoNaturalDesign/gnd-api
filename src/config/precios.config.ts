@@ -1,7 +1,7 @@
 /**
  * Configuración de cálculos de precios
  * Fuente de verdad para todos los cálculos de precios derivados
- * 
+ *
  * Valores por defecto (se usan si no se pasa config personalizada)
  */
 
@@ -17,12 +17,17 @@ export const PRECIOS_DEFAULTS = {
  */
 export const CUOTAS_FINANCIADO_DEFAULT = PRECIOS_DEFAULTS.CUOTAS_FINANCIADO;
 
-// Tipos exportados para usar en otros lugares
 export type PrecioConfig = {
   descuentoTransferencia: number;
   iva: number;
   cuotasFinanciado: number;
 };
+
+export interface PreciosDerivadosBase {
+  precioTransfer: number;
+  precioSinImp: number;
+  cuotas: number;
+}
 
 /**
  * Calcula el precio de transferencia a partir del precio lista
@@ -47,30 +52,12 @@ export function calcularPrecioSinImp(
 }
 
 /**
- * Calcula el precio financiado (dividido en cuotas)
- * Precio Financiado = Precio Lista ÷ Número de Cuotas
- */
-export function calcularPrecioFinanciado(
-  precioLista: number,
-  cuotas: number = PRECIOS_DEFAULTS.CUOTAS_FINANCIADO
-): number {
-  return precioLista / cuotas;
-}
-
-/**
- * Calcula todos los precios derivados a partir del precio lista
- * @param precioLista - Precio base
- * @param config - `PrecioConfig` (descuento, iva, cuotas) o un `number` con cuotas (compat). Si no se pasa, usa defaults.
+ * Calcula precios derivados a partir del precio lista (transfer + sin imp + cuotas count).
  */
 export function calcularTodosLosPrecios(
   precioLista: number,
   config?: PrecioConfig | number
-): {
-  precioTransfer: number;
-  precioFinanciado: number;
-  precioSinImp: number;
-  cuotas: number;
-} {
+): PreciosDerivadosBase {
   const cfgObj = typeof config === 'object' && config !== null ? config : undefined;
   const cuotasOverride = typeof config === 'number' ? config : cfgObj?.cuotasFinanciado;
 
@@ -79,12 +66,10 @@ export function calcularTodosLosPrecios(
   const cuotas = cuotasOverride ?? PRECIOS_DEFAULTS.CUOTAS_FINANCIADO;
 
   const precioTransfer = calcularPrecioTransfer(precioLista, descuento);
-  const precioFinanciado = calcularPrecioFinanciado(precioLista, cuotas);
   const precioSinImp = calcularPrecioSinImp(precioTransfer, iva);
 
   return {
     precioTransfer: Number(precioTransfer.toFixed(2)),
-    precioFinanciado: Number(precioFinanciado.toFixed(2)),
     precioSinImp: Number(precioSinImp.toFixed(2)),
     cuotas,
   };
@@ -92,31 +77,25 @@ export function calcularTodosLosPrecios(
 
 /**
  * Calcula precios derivados usando override del producto o config de empresa
- * @param precioLista - Precio base
- * @param productoOverride - Override del producto (puede ser null)
- * @param empresaConfig - Config de la empresa (fallback)
  */
 export function calcularPreciosConJerarquia(
   precioLista: number,
-  productoOverride: { descuentoTransferencia: number | null; iva: number | null; cuotasFinanciadoOverride: number | null } | null,
+  productoOverride: {
+    descuentoTransferencia: number | null;
+    iva: number | null;
+    cuotasFinanciadoOverride: number | null;
+  } | null,
   empresaConfig: PrecioConfig
-): {
-  precioTransfer: number;
-  precioFinanciado: number;
-  precioSinImp: number;
-  cuotas: number;
-} {
+): PreciosDerivadosBase {
   const descuento = productoOverride?.descuentoTransferencia ?? empresaConfig.descuentoTransferencia;
   const iva = productoOverride?.iva ?? empresaConfig.iva;
   const cuotas = productoOverride?.cuotasFinanciadoOverride ?? empresaConfig.cuotasFinanciado;
 
   const precioTransfer = calcularPrecioTransfer(precioLista, descuento);
-  const precioFinanciado = calcularPrecioFinanciado(precioLista, cuotas);
   const precioSinImp = calcularPrecioSinImp(precioTransfer, iva);
 
   return {
     precioTransfer: Number(precioTransfer.toFixed(2)),
-    precioFinanciado: Number(precioFinanciado.toFixed(2)),
     precioSinImp: Number(precioSinImp.toFixed(2)),
     cuotas,
   };

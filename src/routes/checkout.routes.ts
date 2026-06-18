@@ -39,10 +39,6 @@ router.get('/config-precios', (req, res) => {
   void checkoutController.getPrecioConfigPublic(req, res);
 });
 
-router.get('/cuotas', (req, res) => {
-  void checkoutController.getCuotasQuotePublic(req, res);
-});
-
 router.get('/datos-bancarios', (req, res) => {
   void checkoutController.getDatosBancariosPublic(req, res);
 });

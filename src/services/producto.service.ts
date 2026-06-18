@@ -1014,10 +1014,7 @@ export class ProductoService {
             select: {
               precioLista: true,
               precioTransfer: true,
-              precioFinanciado: true,
               precioSinImp: true,
-              cuotasFinanciado: true,
-              cuotasSnapshot: true,
             },
           },
         },
@@ -1062,9 +1059,6 @@ export class ProductoService {
         let precioLista: number | null = null;
         let precioTransfer: number | null = null;
         let precioSinImp: number | null = null;
-        let precioFinanciado: number | null = null;
-        let cuotasFinanciado: number | null = null;
-        let cuotasSnapshot: unknown = null;
 
         if (preciosProductoPrecio.length > 0) {
           const precioMinPrecio = Math.min(...preciosProductoPrecio.map((p: any): number => Number(p.precioLista)));
@@ -1073,27 +1067,19 @@ export class ProductoService {
           if (precioObj) {
             precioLista = Number(precioObj.precioLista);
             precioTransfer = precioObj.precioTransfer ? Number(precioObj.precioTransfer) : null;
-            precioFinanciado = precioObj.precioFinanciado ? Number(precioObj.precioFinanciado) : null;
             precioSinImp = precioObj.precioSinImp ? Number(precioObj.precioSinImp) : null;
-            cuotasFinanciado = precioObj.cuotasFinanciado ?? null;
-            cuotasSnapshot = precioObj.cuotasSnapshot ?? null;
           }
         } else if (preciosCache.length > 0) {
           precioLista = Math.min(...preciosCache);
           const derivados = calcularTodosLosPrecios(precioLista, CUOTAS_FINANCIADO_DEFAULT);
           precioTransfer = derivados.precioTransfer;
-          precioFinanciado = derivados.precioFinanciado;
           precioSinImp = derivados.precioSinImp;
-          cuotasFinanciado = derivados.cuotas;
         }
 
         const precioPublico = buildPrecioPublico({
           precioLista,
           precioTransfer,
           precioSinImp,
-          cuotasSnapshot,
-          precioFinanciado,
-          cuotasFinanciado,
         });
 
         const precioMin = preciosCache.length > 0 ? Math.min(...preciosCache) : precioLista;
@@ -1228,9 +1214,7 @@ export class ProductoService {
           imagenPrincipal,
           precioLista: precioPublico.precioLista,
           precioTransfer: precioPublico.precioTransfer,
-          precio3Cuotas: precioPublico.precio3Cuotas,
           precioSinImp: precioPublico.precioSinImp,
-          cuotas: precioPublico.cuotas,
           variantes,
           colores: colores as string[],
           talles: talles as string[],
