@@ -109,7 +109,6 @@ function extractTrackingNumberFromImportResponse(data: unknown): string | null {
     o.trackingNumber,
     o.numeroDeEnvio,
     o.numero_envio,
-    o.id,
   ];
   for (const c of candidates) {
     if (typeof c === 'string' && c.trim()) return c.trim();

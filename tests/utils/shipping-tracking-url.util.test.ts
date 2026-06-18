@@ -10,11 +10,17 @@ describe('buildShippingTrackingUrl', () => {
     assert.ok(url?.includes('360000102000579'));
   });
 
-  it('correo usa URL pública por defecto', () => {
+  it('correo usa portal MiCorreo por defecto (sin id en query)', () => {
     delete process.env.CORREO_TRACKING_URL;
     const url = buildShippingTrackingUrl('correo', 'PAQ123456');
-    assert.ok(url?.includes('correoargentino.com.ar'));
-    assert.ok(url?.includes('PAQ123456'));
+    assert.strictEqual(url, 'https://www.correoargentino.com.ar/MiCorreo');
+  });
+
+  it('correo respeta template custom por env con placeholder', () => {
+    process.env.CORREO_TRACKING_URL = 'https://track.example/{trackingNumber}';
+    const url = buildShippingTrackingUrl('correo', 'PAQ123456');
+    assert.strictEqual(url, 'https://track.example/PAQ123456');
+    delete process.env.CORREO_TRACKING_URL;
   });
 
   it('respeta template custom por env', () => {

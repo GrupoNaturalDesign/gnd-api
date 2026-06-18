@@ -341,15 +341,20 @@ export class ShippingController {
         });
         return;
       }
-      const data = await shippingService.trackShipment(
+      const results = await shippingService.trackShipment(
         empresaId,
         provider,
         list,
         pedidoId
       );
+      const primaryTn = list[0] ?? '';
+      const trackingUrl =
+        buildShippingTrackingUrl(provider, primaryTn) ??
+        pedido.trackingUrl?.trim() ??
+        undefined;
       const response: ApiResponse = {
         success: true,
-        data,
+        data: { results, trackingUrl },
         message: 'Tracking',
       };
       res.json(response);
