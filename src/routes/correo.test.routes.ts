@@ -6,6 +6,7 @@ import { firebaseAuthMiddleware } from '../middleware/firebase-auth.middleware';
 import { requireAdmin } from '../middleware/require-admin.middleware';
 import { resolveCorreoEnv } from '../services/shipping/correo/correo.config';
 import { CorreoProvider, getCorreoEnvLabel } from '../services/shipping/correo/correo.provider';
+import { correoAccountService } from '../services/shipping/correo/correo-account.service';
 import type { CreateShippingOrderInput } from '../services/shipping/shipping.types';
 import {
   ShippingHttpError,
@@ -67,16 +68,22 @@ const importDryRunBodySchema = z.object({
   senderData: z.any().optional(),
 });
 
-function makeProvider(senderData: Prisma.JsonValue | null): CorreoProvider {
+async function makeProvider(
+  senderData: Prisma.JsonValue | null,
+  empresaId = 0
+): Promise<CorreoProvider> {
+  const config = await correoAccountService.getOrCreateEnvioConfig(empresaId);
+  const merged = senderData ?? config.correoSenderData;
   return new CorreoProvider(
-    senderData,
+    { ...config, correoSenderData: merged },
     resolveCorreoEnv(),
     globalThis.fetch.bind(globalThis)
   );
 }
 
-router.get('/ping', async (_req: FirebaseAuthRequest, res: Response): Promise<void> => {
-  const p = makeProvider(null);
+router.get('/ping', async (req: FirebaseAuthRequest, res: Response): Promise<void> => {
+  const empresaId = req.empresaId ?? 0;
+  const p = await makeProvider(null, empresaId);
   try {
     await p.validateCredentials();
     const customerIdSuffix = await p.getCustomerIdSuffixForLogs();
@@ -101,7 +108,8 @@ router.post('/quote', async (req: FirebaseAuthRequest, res: Response): Promise<v
     return;
   }
   const b = parsed.data;
-  const p = makeProvider(null);
+  const empresaId = req.empresaId ?? 0;
+  const p = await makeProvider(null, empresaId);
   try {
     const quotes = await p.getQuote({
       postalCodeOrigin: b.cpOrigen.trim(),
@@ -126,7 +134,7 @@ router.get('/agencies', async (req: FirebaseAuthRequest, res: Response): Promise
     res.status(400).json({ success: false, error: 'Query provinceCode requerido' });
     return;
   }
-  const p = makeProvider(null);
+  const p = await makeProvider(null, req.empresaId ?? 0);
   try {
     const list = await p.getAgencies({
       stateId: provinceCode.trim(),
@@ -164,7 +172,7 @@ router.post('/import-dry-run', async (req: FirebaseAuthRequest, res: Response): 
   };
   const senderJson: Prisma.JsonValue | null =
     b.senderData != null ? (b.senderData as Prisma.JsonValue) : null;
-  const p = makeProvider(senderJson);
+  const p = await makeProvider(senderJson, b.empresaId ?? req.empresaId ?? 0);
   try {
     const data = await p.importDryRun(input);
     res.json({ success: true, data });
@@ -179,7 +187,7 @@ router.get('/tracking', async (req: FirebaseAuthRequest, res: Response): Promise
     res.status(400).json({ success: false, error: 'Query shippingId requerido' });
     return;
   }
-  const p = makeProvider(null);
+  const p = await makeProvider(null, req.empresaId ?? 0);
   try {
     const data = await p.getTracking([shippingId.trim()]);
     res.json({ success: true, data });

@@ -67,9 +67,17 @@ export interface CorreoSenderJson {
   name: string;
   email?: string;
   phone?: string;
+  cellPhone?: string;
   streetName?: string;
   streetNumber?: string;
   city?: string;
+  floor?: string;
+  apartment?: string;
+}
+
+export interface CorreoOriginConfig {
+  postalCode: string;
+  provinceCode: string;
 }
 
 export interface MicorreoDimensions {

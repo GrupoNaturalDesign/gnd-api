@@ -9,8 +9,11 @@ import {
   mapCorreoTrackingResponseToResults,
   mapCorreoAgenciesResponse,
   filterAgenciesByQuery,
+  buildRatesRequestBody,
 } from '../../../src/services/shipping/correo/correo.mapper';
 import { getProvinceCode } from '../../../src/services/shipping/correo/correo.types';
+
+const testOrigin = { postalCode: '5000', provinceCode: 'X' };
 
 describe('SH-C-02 — getProvinceCode', () => {
   it('resuelve nombre completo "Córdoba"', () => {
@@ -115,14 +118,9 @@ describe('SH-C-03 — parseCorreoSenderData', () => {
 });
 
 describe('SH-C-04 — mapCreateOrderToMicorreoImport', () => {
-  beforeEach(() => {
-    process.env.CORREO_ORIGIN_CP = '5000';
-    process.env.CORREO_ORIGIN_PROVINCE_CODE = 'X';
-  });
-
   it('domicilio tiene senderAddress, sin agencyId', () => {
     const input = buildOrderInput({ deliveryType: 'homeDelivery' });
-    const result = mapCreateOrderToMicorreoImport(input, 'CUST123', { name: 'Sender' });
+    const result = mapCreateOrderToMicorreoImport(input, 'CUST123', { name: 'Sender' }, testOrigin);
     assert.strictEqual(result.shipping.deliveryType, 'D');
     assert.ok(result.shipping.address);
     assert.strictEqual((result.shipping as Record<string, unknown>).agency, undefined);
@@ -130,7 +128,7 @@ describe('SH-C-04 — mapCreateOrderToMicorreoImport', () => {
 
   it('sucursal tiene agencyId, sin senderAddress', () => {
     const input = buildOrderInput({ deliveryType: 'agency', agencyId: 'SUC-001' });
-    const result = mapCreateOrderToMicorreoImport(input, 'CUST123', { name: 'Sender' });
+    const result = mapCreateOrderToMicorreoImport(input, 'CUST123', { name: 'Sender' }, testOrigin);
     assert.strictEqual(result.shipping.deliveryType, 'S');
     assert.strictEqual((result.shipping as Record<string, unknown>).address, undefined);
     assert.strictEqual((result.shipping as Record<string, unknown>).agency, 'SUC-001');
@@ -139,7 +137,7 @@ describe('SH-C-04 — mapCreateOrderToMicorreoImport', () => {
   it('domicilio sin address lanza', () => {
     const input = buildOrderInput({ deliveryType: 'homeDelivery', omitAddress: true });
     assert.throws(
-      () => mapCreateOrderToMicorreoImport(input, 'CUST123', { name: 'Sender' }),
+      () => mapCreateOrderToMicorreoImport(input, 'CUST123', { name: 'Sender' }, testOrigin),
       /address es obligatorio/
     );
   });
@@ -147,21 +145,21 @@ describe('SH-C-04 — mapCreateOrderToMicorreoImport', () => {
   it('sucursal sin agencyId lanza', () => {
     const input = buildOrderInput({ deliveryType: 'agency', omitAgencyId: true });
     assert.throws(
-      () => mapCreateOrderToMicorreoImport(input, 'CUST123', { name: 'Sender' }),
+      () => mapCreateOrderToMicorreoImport(input, 'CUST123', { name: 'Sender' }, testOrigin),
       /agencyId es obligatorio/
     );
   });
 
   it('extOrderId override funciona', () => {
     const input = buildOrderInput({ deliveryType: 'homeDelivery' });
-    const result = mapCreateOrderToMicorreoImport(input, 'CUST123', { name: 'Sender' }, { extOrderId: 'TEST-999' });
+    const result = mapCreateOrderToMicorreoImport(input, 'CUST123', { name: 'Sender' }, testOrigin, { extOrderId: 'TEST-999' });
     assert.strictEqual(result.extOrderId, 'TEST-999');
   });
 
   it('senderData null lanza', () => {
     const input = buildOrderInput({ deliveryType: 'homeDelivery' });
     assert.throws(
-      () => mapCreateOrderToMicorreoImport(input, 'CUST123', null),
+      () => mapCreateOrderToMicorreoImport(input, 'CUST123', null, testOrigin),
       /correoSenderData debe ser un objeto JSON/
     );
   });
@@ -169,7 +167,7 @@ describe('SH-C-04 — mapCreateOrderToMicorreoImport', () => {
   it('senderData sin name lanza', () => {
     const input = buildOrderInput({ deliveryType: 'homeDelivery' });
     assert.throws(
-      () => mapCreateOrderToMicorreoImport(input, 'CUST123', { email: 'a@b.com' } as unknown as import('@prisma/client').Prisma.JsonValue),
+      () => mapCreateOrderToMicorreoImport(input, 'CUST123', { email: 'a@b.com' } as unknown as import('@prisma/client').Prisma.JsonValue, testOrigin),
       /correoSenderData.name es obligatorio/
     );
   });

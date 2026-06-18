@@ -31,7 +31,7 @@ describe('checkout-mp-pricing.util', () => {
     assert.deepStrictEqual(pm, {
       default_installments: 6,
       installments: 6,
-      excluded_payment_types: [{ id: 'account_money' }, { id: 'bank_transfer' }],
+      excluded_payment_types: [{ id: 'bank_transfer' }],
     });
   });
 

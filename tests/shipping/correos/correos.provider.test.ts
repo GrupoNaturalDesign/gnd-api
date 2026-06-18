@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert';
+import type { EmpresaEnvioConfig } from '@prisma/client';
 import { CorreoProvider } from '../../../src/services/shipping/correo/correo.provider';
 import {
   ShippingValidationError,
@@ -10,8 +11,40 @@ import type { CorreoQuoteInput } from '../../../src/services/shipping/correo/cor
 import type { CreateShippingOrderInput } from '../../../src/services/shipping/shipping.types';
 import { MockFetch, getMockFetch, resetGlobalFetch } from '../../helpers/mock-fetch';
 
-function makeProvider(env: 'test' | 'prod' = 'test'): CorreoProvider {
-  return new CorreoProvider({ name: 'Test Sender' }, env, getMockFetch().fetch as unknown as typeof fetch);
+function makeEnvioConfig(overrides: Partial<EmpresaEnvioConfig> = {}): EmpresaEnvioConfig {
+  return {
+    id: 1,
+    empresaId: 1,
+    providerDefault: 'correo',
+    correoApiKey: null,
+    correoAgreement: null,
+    correoServiceType: null,
+    correoSenderData: { name: 'Test Sender' },
+    correoAccountEmail: 'test@test.com',
+    correoAccountPasswordEnc: 'pass',
+    correoCustomerId: 'CID',
+    correoAccountStatus: 'active',
+    correoAccountValidatedAt: new Date(),
+    correoAccountLastError: null,
+    correoOriginCp: '5000',
+    correoOriginProvinceCode: 'X',
+    correoEnv: 'test',
+    andreaniEnv: 'test',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  };
+}
+
+function makeProvider(
+  env: 'test' | 'prod' = 'test',
+  configOverrides?: Partial<EmpresaEnvioConfig>
+): CorreoProvider {
+  return new CorreoProvider(
+    makeEnvioConfig(configOverrides),
+    env,
+    getMockFetch().fetch as unknown as typeof fetch
+  );
 }
 
 function buildOrderInput(): CreateShippingOrderInput {
@@ -79,17 +112,6 @@ describe('SH-C-08 — CorreoProvider con CORREO_MOCK=true', () => {
     assert.deepStrictEqual(result[0]!.events, []);
     assert.deepStrictEqual(result[1]!.events, []);
   });
-
-  it('importDryRun devuelve mock con dry-run', async () => {
-    const p = makeProvider();
-    const result = await p.importDryRun(buildOrderInput());
-    assert.strictEqual((result as Record<string, unknown>)['mock'], true);
-  });
-
-  it('validateCredentials pasa con MOCK', async () => {
-    const p = makeProvider();
-    await p.validateCredentials();
-  });
 });
 
 describe('SH-C-09 — CorreoProvider errores HTTP', () => {
@@ -101,19 +123,11 @@ describe('SH-C-09 — CorreoProvider errores HTTP', () => {
     delete process.env.CORREO_MOCK;
     process.env.CORREO_USERNAME_QA = 'user';
     process.env.CORREO_PASSWORD_QA = 'pass';
-    process.env.CORREO_EMAIL_QA = 'test@test.com';
-    process.env.CORREO_ORIGIN_CP = '5000';
-    process.env.CORREO_ORIGIN_PROVINCE_CODE = 'X';
-    process.env.CORREO_CUSTOMER_ID = '';
   });
   afterEach(() => {
     delete process.env.CORREO_MOCK;
     delete process.env.CORREO_USERNAME_QA;
     delete process.env.CORREO_PASSWORD_QA;
-    delete process.env.CORREO_EMAIL_QA;
-    delete process.env.CORREO_ORIGIN_CP;
-    delete process.env.CORREO_ORIGIN_PROVINCE_CODE;
-    delete process.env.CORREO_CUSTOMER_ID;
     resetGlobalFetch();
   });
 
@@ -124,7 +138,7 @@ describe('SH-C-09 — CorreoProvider errores HTTP', () => {
       { status: 200, json: { customerId: 'CID' } },
       { status: 401 },
     ]);
-    const p = makeProvider();
+    const p = makeProvider('test', { correoAccountStatus: 'pending', correoCustomerId: null });
     await assert.rejects(p.validateCredentials(), ShippingValidationError);
   });
 
@@ -135,7 +149,7 @@ describe('SH-C-09 — CorreoProvider errores HTTP', () => {
       { status: 200, json: { customerId: 'CID' } },
       { status: 400, json: { message: 'Bad request' } },
     ]);
-    const p = makeProvider();
+    const p = makeProvider('test', { correoAccountStatus: 'pending', correoCustomerId: null });
     await assert.rejects(p.validateCredentials(), ShippingValidationError);
   });
 
@@ -146,7 +160,7 @@ describe('SH-C-09 — CorreoProvider errores HTTP', () => {
       { status: 200, json: { customerId: 'CID' } },
       { status: 500, json: { error: 'Server error' } },
     ]);
-    const p = makeProvider();
+    const p = makeProvider('test', { correoAccountStatus: 'pending', correoCustomerId: null });
     await assert.rejects(p.validateCredentials(), ShippingValidationError);
   });
 
@@ -157,14 +171,13 @@ describe('SH-C-09 — CorreoProvider errores HTTP', () => {
       { status: 200, json: { customerId: 'CID' } },
       { status: 503, json: { message: 'Service unavailable' } },
     ]);
-    const p = makeProvider();
+    const p = makeProvider('test', { correoAccountStatus: 'pending', correoCustomerId: null });
     await assert.rejects(p.validateCredentials(), ShippingValidationError);
   });
 
   it('getQuote con 401 reintenta una vez y lanza ShippingHttpError al fallar de nuevo', async () => {
     mockFetch.setResponses([
       { status: 200, json: { token: 'tok' } },
-      { status: 200, json: { customerId: 'CID' } },
       { status: 401 },
       { status: 200, json: { token: 'tok2' } },
       { status: 401 },
@@ -180,13 +193,12 @@ describe('SH-C-09 — CorreoProvider errores HTTP', () => {
   });
 
   it('getQuote con fetch failed lanza ShippingHttpError 502', async () => {
-    process.env.CORREO_CUSTOMER_ID = 'CID';
     const fetchFailed = Object.assign(new TypeError('fetch failed'), {
       cause: Object.assign(new Error('connect ETIMEDOUT'), { code: 'ETIMEDOUT' }),
     });
     let calls = 0;
     const p = new CorreoProvider(
-      { name: 'Test Sender' },
+      makeEnvioConfig(),
       'test',
       (async () => {
         calls += 1;
@@ -215,11 +227,10 @@ describe('SH-C-09 — CorreoProvider errores HTTP', () => {
   });
 
   it('getQuote reintenta una vez si /rates falla por fetch failed', async () => {
-    process.env.CORREO_CUSTOMER_ID = 'CID';
     const fetchFailed = new TypeError('fetch failed');
     let calls = 0;
     const p = new CorreoProvider(
-      { name: 'Test Sender' },
+      makeEnvioConfig(),
       'test',
       (async () => {
         calls += 1;
@@ -248,7 +259,6 @@ describe('SH-C-09 — CorreoProvider errores HTTP', () => {
   });
 
   it('createOrder devuelve tracking real desde shipping/import', async () => {
-    process.env.CORREO_CUSTOMER_ID = 'CID';
     mockFetch.setResponses([
       { status: 200, json: { token: 'tok' } },
       { status: 200, json: { shippingId: 'COR-123' } },
@@ -262,7 +272,6 @@ describe('SH-C-09 — CorreoProvider errores HTTP', () => {
   });
 
   it('createOrder falla si shipping/import no devuelve tracking real', async () => {
-    process.env.CORREO_CUSTOMER_ID = 'CID';
     mockFetch.setResponses([
       { status: 200, json: { token: 'tok' } },
       { status: 200, json: { imported: true } },

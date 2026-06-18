@@ -27,6 +27,8 @@ import {
 } from './andreani/andreani.config';
 import { getIntegrationsMode } from '../../lib/integrations-mode';
 import { mapEmpresaCorreoEnv } from './correo/correo.config';
+import { correoAccountService } from './correo/correo-account.service';
+import { normalizeMicorreoPostalCode, resolveCorreoOriginFromConfig } from './correo/correo-postal.util';
 import {
   ShippingConfigError,
   ShippingHttpError,
@@ -68,17 +70,31 @@ export class ShippingService {
 
   private getCorreoProvider(config: EmpresaEnvioConfig): CorreoProvider {
     const env = this.resolveShippingEnvFromIntegrations();
-    const key = `${config.empresaId}::${env}`;
+    const cidSuffix = config.correoCustomerId?.slice(-4) ?? 'none';
+    const key = `${config.empresaId}::${env}::${cidSuffix}`;
     let p = this.correoProviders.get(key);
     if (!p) {
       p = new CorreoProvider(
-        config.correoSenderData,
+        config,
         mapEmpresaCorreoEnv(env),
         globalThis.fetch.bind(globalThis)
       );
       this.correoProviders.set(key, p);
     }
     return p;
+  }
+
+  /** Invalida cache de providers Correo (p. ej. tras sync admin). */
+  invalidateCorreoProviderCache(empresaId?: number): void {
+    if (empresaId == null) {
+      this.correoProviders.clear();
+      return;
+    }
+    for (const key of this.correoProviders.keys()) {
+      if (key.startsWith(`${empresaId}::`)) {
+        this.correoProviders.delete(key);
+      }
+    }
   }
 
   private getAndreaniProvider(config: EmpresaEnvioConfig): AndreaniProvider {
@@ -106,24 +122,7 @@ export class ShippingService {
   }
 
   private async getOrCreateEnvioConfig(empresaId: number): Promise<EmpresaEnvioConfig> {
-    const existing = await prisma.empresaEnvioConfig.findUnique({
-      where: { empresaId },
-    });
-    if (existing) return existing;
-    const defProvider = parseProviderDefault(
-      process.env.SHIPPING_DEFAULT_PROVIDER ?? 'correo'
-    );
-    const integrationsEnv = getIntegrationsMode();
-    const correoEnv = integrationsEnv;
-    const andreaniEnv = integrationsEnv;
-    return prisma.empresaEnvioConfig.create({
-      data: {
-        empresaId,
-        providerDefault: defProvider,
-        correoEnv,
-        andreaniEnv,
-      },
-    });
+    return correoAccountService.getOrCreateEnvioConfig(empresaId);
   }
 
   private async logBefore(
@@ -449,17 +448,14 @@ export class ShippingService {
     deliveryType: ShippingDeliveryType;
     parcel: ShippingParcel;
   }): Promise<CorreoShippingQuote[]> {
-    const origin = process.env.CORREO_ORIGIN_CP?.trim();
-    if (!origin) {
-      throw new ShippingValidationError('Configure CORREO_ORIGIN_CP');
-    }
     const config = await this.getOrCreateEnvioConfig(params.empresaId);
+    const origin = resolveCorreoOriginFromConfig(config);
     const p = this.getCorreoProvider(config);
     const par = params.parcel;
     const deliveredType = params.deliveryType === 'agency' ? 'S' : 'D';
     return p.getQuote({
-      postalCodeOrigin: origin,
-      postalCodeDestination: params.cpDestino.trim(),
+      postalCodeOrigin: origin.postalCode,
+      postalCodeDestination: normalizeMicorreoPostalCode(params.cpDestino.trim()),
       dimensions: {
         weight: par.weightGrams,
         height: par.height,

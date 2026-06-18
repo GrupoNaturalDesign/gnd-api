@@ -1,6 +1,10 @@
-import type { Prisma } from '@prisma/client';
+import type { EmpresaEnvioConfig } from '@prisma/client';
 import { shippingLogger } from '../../../lib/shipping-logger';
-import { CorreoAuth } from './correo.auth';
+import { CorreoAuth, type CorreoAccountCredentials } from './correo.auth';
+import {
+  correoAccountService,
+  MICORREO_NOT_CONFIGURED_MSG,
+} from './correo-account.service';
 import {
   CORREO_PATHS,
   type CorreoEnv,
@@ -35,6 +39,7 @@ import {
   mapCreateOrderToMicorreoImport,
   mapRatesResponse,
 } from './correo.mapper';
+import { normalizeMicorreoPostalCode, resolveCorreoOriginFromConfig } from './correo-postal.util';
 import type { FetchFn, FetchRequestInit, FetchResponse } from '../../../types/fetch.types';
 
 function parseJsonUnknown(text: string): unknown {
@@ -56,7 +61,7 @@ function messageFromBody(body: unknown): string {
 
 function mapStatusToError(status: number, body: unknown): Error {
   const msg = messageFromBody(body);
-  if (status === 400 || status === 402) {
+  if (status === 400 || status === 402 || status === 406) {
     return new ShippingValidationError(msg);
   }
   return new ShippingHttpError(msg, status, body);
@@ -120,14 +125,62 @@ function extractTrackingNumberFromImportResponse(data: unknown): string | null {
 export class CorreoProvider implements ShippingProvider {
   readonly providerName: ShippingProviderName = 'correo';
 
-  private readonly auth: CorreoAuth;
+  private auth: CorreoAuth | null = null;
 
   constructor(
-    private readonly correoSenderData: Prisma.JsonValue | null,
+    private readonly envioConfig: EmpresaEnvioConfig,
     private readonly correoEnv: CorreoEnv,
     private readonly fetchImpl: FetchFn
-  ) {
-    this.auth = new CorreoAuth(correoEnv, fetchImpl);
+  ) {}
+
+  private get empresaId(): number {
+    return this.envioConfig.empresaId;
+  }
+
+  private async resolveCustomerId(): Promise<string> {
+    const cached = this.envioConfig.correoCustomerId?.trim();
+    const status = this.envioConfig.correoAccountStatus?.trim();
+    if (cached && status === 'active') {
+      return cached;
+    }
+    const creds = correoAccountService.resolveAccountCredentials(this.envioConfig);
+    if (creds?.email && creds.password) {
+      const auth = new CorreoAuth({
+        env: this.correoEnv,
+        fetchImpl: this.fetchImpl,
+        account: { email: creds.email, password: creds.password },
+      });
+      const id = await auth.getCustomerId();
+      await correoAccountService
+        .persistValidatedCustomerId(this.empresaId, id)
+        .catch(() => undefined);
+      return id;
+    }
+    return correoAccountService.ensureMicorreoCustomerId(this.empresaId);
+  }
+
+  private async buildAuth(): Promise<CorreoAuth> {
+    const customerId = await this.resolveCustomerId();
+    const creds = correoAccountService.resolveAccountCredentials(this.envioConfig);
+    if (!creds) {
+      throw new ShippingValidationError(MICORREO_NOT_CONFIGURED_MSG);
+    }
+    const account: CorreoAccountCredentials = {
+      email: creds.email,
+      password: creds.password,
+      customerId,
+    };
+    this.auth = new CorreoAuth({
+      env: this.correoEnv,
+      fetchImpl: this.fetchImpl,
+      account,
+    });
+    return this.auth;
+  }
+
+  private async getAuth(): Promise<CorreoAuth> {
+    if (this.auth) return this.auth;
+    return this.buildAuth();
   }
 
   private timeoutSignal(): AbortSignal {
@@ -138,9 +191,6 @@ export class CorreoProvider implements ShippingProvider {
     return c.signal;
   }
 
-  /**
-   * Cotización MiCorreo (no forma parte de `ShippingProvider`; usada por rutas de test y herramientas).
-   */
   async getQuote(input: CorreoQuoteInput): Promise<CorreoShippingQuote[]> {
     if (isCorreoMock()) {
       return [
@@ -152,8 +202,14 @@ export class CorreoProvider implements ShippingProvider {
         },
       ];
     }
-    const customerId = await this.auth.getCustomerId();
-    const body = buildRatesRequestBody(customerId, input);
+    const auth = await this.getAuth();
+    const customerId = await auth.getCustomerId();
+    const normalizedInput: CorreoQuoteInput = {
+      ...input,
+      postalCodeOrigin: normalizeMicorreoPostalCode(input.postalCodeOrigin),
+      postalCodeDestination: normalizeMicorreoPostalCode(input.postalCodeDestination),
+    };
+    const body = buildRatesRequestBody(customerId, normalizedInput);
     const { status, data } = await this.requestJson('POST', CORREO_PATHS.rates, body);
     const quotes = mapRatesResponse(data);
     if (quotes.length === 0) {
@@ -162,8 +218,8 @@ export class CorreoProvider implements ShippingProvider {
       shippingLogger.warn('MiCorreo rates vacío', {
         httpStatus: status,
         customerIdSuffix: suffix,
-        postalCodeOrigin: input.postalCodeOrigin,
-        postalCodeDestination: input.postalCodeDestination,
+        postalCodeOrigin: normalizedInput.postalCodeOrigin,
+        postalCodeDestination: normalizedInput.postalCodeDestination,
         deliveredType: input.deliveredType ?? null,
         responsePreview:
           data != null && typeof data === 'object'
@@ -177,32 +233,37 @@ export class CorreoProvider implements ShippingProvider {
   async validateCredentials(): Promise<void> {
     if (isCorreoMock()) return;
     try {
-      await this.auth.validateCredentials();
+      this.auth = null;
+      const auth = await this.getAuth();
+      await auth.validateCredentials();
     } catch (e: unknown) {
-      if (e instanceof ShippingHttpError) throw e;
+      if (e instanceof ShippingHttpError || e instanceof ShippingValidationError) throw e;
       const msg = e instanceof Error ? e.message : String(e);
       throw new ShippingValidationError(`Credenciales MiCorreo inválidas: ${msg}`);
     }
   }
 
-  /**
-   * POST /shipping/import con extOrderId TEST-{timestamp} (QA / verificación de mapeo).
-   */
   async importDryRun(input: CreateShippingOrderInput): Promise<unknown> {
     if (isCorreoMock()) {
       return { createdAt: new Date().toISOString(), mock: true };
     }
-    const customerId = await this.auth.getCustomerId();
-    const body = mapCreateOrderToMicorreoImport(input, customerId, this.correoSenderData, {
-      extOrderId: `TEST-${Date.now()}`,
-    });
+    const auth = await this.getAuth();
+    const customerId = await auth.getCustomerId();
+    const origin = resolveCorreoOriginFromConfig(this.envioConfig);
+    const body = mapCreateOrderToMicorreoImport(
+      input,
+      customerId,
+      this.envioConfig.correoSenderData,
+      origin,
+      { extOrderId: `TEST-${Date.now()}` }
+    );
     const { data } = await this.requestJson('POST', CORREO_PATHS.shippingImport, body);
     return data;
   }
 
-  /** Últimos 4 caracteres del customerId (logs / ping). */
   async getCustomerIdSuffixForLogs(): Promise<string> {
-    const id = await this.auth.getCustomerId();
+    const auth = await this.getAuth();
+    const id = await auth.getCustomerId();
     return id.length <= 4 ? '****' : `…${id.slice(-4)}`;
   }
 
@@ -212,8 +273,15 @@ export class CorreoProvider implements ShippingProvider {
       shippingLogger.info('MiCorreo createOrder mock', { pedidoId: input.pedidoId });
       return { trackingNumber: tn, provider: 'correo' };
     }
-    const customerId = await this.auth.getCustomerId();
-    const body = mapCreateOrderToMicorreoImport(input, customerId, this.correoSenderData);
+    const auth = await this.getAuth();
+    const customerId = await auth.getCustomerId();
+    const origin = resolveCorreoOriginFromConfig(this.envioConfig);
+    const body = mapCreateOrderToMicorreoImport(
+      input,
+      customerId,
+      this.envioConfig.correoSenderData,
+      origin
+    );
     const { data } = await this.requestJson('POST', CORREO_PATHS.shippingImport, body);
     const trackingNumber = extractTrackingNumberFromImportResponse(data);
     if (!trackingNumber) {
@@ -282,7 +350,8 @@ export class CorreoProvider implements ShippingProvider {
     if (isCorreoMock()) {
       return [];
     }
-    const customerId = await this.auth.getCustomerId();
+    const auth = await this.getAuth();
+    const customerId = await auth.getCustomerId();
     let provinceCode = '';
     if (filters.stateId != null && filters.stateId !== '') {
       const s = filters.stateId.trim();
@@ -321,7 +390,8 @@ export class CorreoProvider implements ShippingProvider {
       : `${baseUrl}${pathWithQuery.startsWith('/') ? '' : '/'}${pathWithQuery}`;
 
     const doFetch = async (): Promise<FetchResponse> => {
-      const token = await this.auth.getValidToken();
+      const auth = await this.getAuth();
+      const token = await auth.getValidToken();
       const headers: Record<string, string> = {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
@@ -379,8 +449,12 @@ export class CorreoProvider implements ShippingProvider {
     let text = await res.text();
     let data = parseJsonUnknown(text);
 
-    if (res.status === 401) {
-      this.auth.invalidateToken();
+    if (res.status === 401 || res.status === 406) {
+      this.auth?.invalidateSession();
+      this.auth = null;
+      if (res.status === 406) {
+        await correoAccountService.syncMicorreoAccount(this.empresaId).catch(() => undefined);
+      }
       res = await doFetch();
       text = await res.text();
       data = parseJsonUnknown(text);

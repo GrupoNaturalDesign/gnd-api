@@ -11,6 +11,7 @@ import type {
 import { ShippingValidationError } from '../shipping.errors';
 import type {
   CorreoAgencyRaw,
+  CorreoOriginConfig,
   CorreoQuoteInput,
   CorreoSenderJson,
   CorreoShippingQuote,
@@ -21,6 +22,7 @@ import type {
   MicorreoPostalAddress,
 } from './correo.types';
 import { getProvinceCode } from './correo.types';
+import { normalizeMicorreoPostalCode } from './correo-postal.util';
 
 const PROVIDER: ShippingProviderName = 'correo';
 
@@ -47,33 +49,19 @@ export function parseCorreoSenderData(json: Prisma.JsonValue | null): CorreoSend
     name,
     email: typeof o.email === 'string' ? o.email : undefined,
     phone: typeof o.phone === 'string' ? o.phone : undefined,
+    cellPhone: typeof o.cellPhone === 'string' ? o.cellPhone : undefined,
     streetName: typeof o.streetName === 'string' ? o.streetName : undefined,
     streetNumber: typeof o.streetNumber === 'string' ? o.streetNumber : undefined,
     city: typeof o.city === 'string' ? o.city : undefined,
+    floor: typeof o.floor === 'string' ? o.floor : undefined,
+    apartment: typeof o.apartment === 'string' ? o.apartment : undefined,
   };
 }
 
-function envOriginPostalCode(): string {
-  const v = process.env.CORREO_ORIGIN_CP?.trim();
-  if (!v) {
-    throw new ShippingValidationError('Configure CORREO_ORIGIN_CP');
-  }
-  return v;
-}
-
-function envOriginProvinceCode(): string {
-  const v = process.env.CORREO_ORIGIN_PROVINCE_CODE?.trim().toUpperCase();
-  if (!v || v.length !== 1 || !/[A-Z]/.test(v)) {
-    throw new ShippingValidationError(
-      'Configure CORREO_ORIGIN_PROVINCE_CODE con una letra A–Z'
-    );
-  }
-  return v;
-}
-
-function buildSenderParty(sender: CorreoSenderJson): MicorreoImportBody['sender'] {
-  const postalCode = envOriginPostalCode();
-  const provinceCode = envOriginProvinceCode();
+function buildSenderParty(
+  sender: CorreoSenderJson,
+  origin: CorreoOriginConfig
+): MicorreoImportBody['sender'] {
   const streetName = sender.streetName?.trim() || '—';
   const streetNumber = sender.streetNumber?.trim() || '0';
   const city = sender.city?.trim() || 'Origen';
@@ -84,9 +72,11 @@ function buildSenderParty(sender: CorreoSenderJson): MicorreoImportBody['sender'
     originAddress: {
       streetName,
       streetNumber,
+      floor: sender.floor?.trim() || undefined,
+      department: sender.apartment?.trim() || undefined,
       city,
-      provinceCode,
-      postalCode,
+      provinceCode: origin.provinceCode,
+      postalCode: origin.postalCode,
     },
   };
 }
@@ -123,6 +113,7 @@ export function mapCreateOrderToMicorreoImport(
   input: CreateShippingOrderInput,
   customerId: string,
   senderData: Prisma.JsonValue | null,
+  origin: CorreoOriginConfig,
   options?: { extOrderId?: string }
 ): MicorreoImportBody {
   const extOrderId = options?.extOrderId ?? String(input.pedidoId);
@@ -133,7 +124,7 @@ export function mapCreateOrderToMicorreoImport(
     throw new ShippingValidationError('agencyId es obligatorio para retiro en sucursal');
   }
 
-  const sender = buildSenderParty(parseCorreoSenderData(senderData));
+  const sender = buildSenderParty(parseCorreoSenderData(senderData), origin);
   const dims: MicorreoDimensions = {
     weight: intWeightGrams(input.parcel.weightGrams),
     height: intDim(input.parcel.height),
@@ -526,8 +517,8 @@ export function buildRatesRequestBody(
 ): Record<string, unknown> {
   const body: Record<string, unknown> = {
     customerId,
-    postalCodeOrigin: input.postalCodeOrigin.trim(),
-    postalCodeDestination: input.postalCodeDestination.trim(),
+    postalCodeOrigin: normalizeMicorreoPostalCode(input.postalCodeOrigin),
+    postalCodeDestination: normalizeMicorreoPostalCode(input.postalCodeDestination),
     dimensions: {
       weight: intWeightGrams(input.dimensions.weight),
       height: intDim(input.dimensions.height),

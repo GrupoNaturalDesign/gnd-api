@@ -74,18 +74,26 @@ model AdminNotification {
 
 /// Credenciales y defaults de envío por empresa (Correo / Andreani).
 model EmpresaEnvioConfig {
-  id                Int      @id @default(autoincrement()) @map("id") @db.UnsignedInt
-  empresaId         Int      @unique(map: "empresa_envio_config_empresa_id") @map("empresa_id") @db.UnsignedInt
-  providerDefault   String   @map("provider_default") @db.VarChar(20)
-  correoApiKey      String?  @map("correo_api_key") @db.Text
-  correoAgreement   String?  @map("correo_agreement") @db.VarChar(255)
-  correoServiceType String?  @map("correo_service_type") @db.VarChar(100)
-  correoSenderData  Json?    @map("correo_sender_data")
-  correoEnv         String   @default("test") @map("correo_env") @db.VarChar(10)
-  andreaniEnv       String   @default("test") @map("andreani_env") @db.VarChar(10)
-  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp(0)
-  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
-  empresa           Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "empresa_envio_config_empresa_fk")
+  id                         Int       @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  empresaId                  Int       @unique(map: "empresa_envio_config_empresa_id") @map("empresa_id") @db.UnsignedInt
+  providerDefault            String    @map("provider_default") @db.VarChar(20)
+  correoApiKey               String?   @map("correo_api_key") @db.Text
+  correoAgreement            String?   @map("correo_agreement") @db.VarChar(255)
+  correoServiceType          String?   @map("correo_service_type") @db.VarChar(100)
+  correoSenderData           Json?     @map("correo_sender_data")
+  correoAccountEmail         String?   @map("correo_account_email") @db.VarChar(255)
+  correoAccountPasswordEnc   String?   @map("correo_account_password_enc") @db.Text
+  correoCustomerId           String?   @map("correo_customer_id") @db.VarChar(50)
+  correoAccountStatus        String    @default("not_configured") @map("correo_account_status") @db.VarChar(20)
+  correoAccountValidatedAt   DateTime? @map("correo_account_validated_at") @db.Timestamp(0)
+  correoAccountLastError     String?   @map("correo_account_last_error") @db.Text
+  correoOriginCp             String?   @map("correo_origin_cp") @db.VarChar(10)
+  correoOriginProvinceCode   String?   @map("correo_origin_province_code") @db.Char(1)
+  correoEnv                  String    @default("test") @map("correo_env") @db.VarChar(10)
+  andreaniEnv                String    @default("test") @map("andreani_env") @db.VarChar(10)
+  createdAt                  DateTime  @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt                  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
+  empresa                    Empresa   @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "empresa_envio_config_empresa_fk")
 
   @@map("empresa_envio_config")
 }

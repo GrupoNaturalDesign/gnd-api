@@ -34,13 +34,13 @@ export function buildMercadoPagoPaymentMethodsForMode(
   if (n === 1) {
     return {
       installments: 1,
-      excluded_payment_types: [{ id: 'account_money' }, { id: 'bank_transfer' }],
+      excluded_payment_types: [{ id: 'bank_transfer' }],
     };
   }
   return {
     default_installments: n,
     installments: n,
-    excluded_payment_types: [{ id: 'account_money' }, { id: 'bank_transfer' }],
+    excluded_payment_types: [{ id: 'bank_transfer' }],
   };
 }
 

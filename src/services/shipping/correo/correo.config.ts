@@ -13,6 +13,7 @@ const MICORREO_BASE: Record<CorreoEnv, string> = {
 
 export const CORREO_PATHS = {
   token: '/token',
+  usersRegister: '/register',
   usersValidate: '/users/validate',
   rates: '/rates',
   shippingImport: '/shipping/import',

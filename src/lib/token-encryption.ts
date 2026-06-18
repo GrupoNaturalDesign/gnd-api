@@ -1,10 +1,12 @@
 /**
- * Cifrado de tokens en reposo (AES-256-GCM).
- * Usado para sfactoryToken en BD: si la BD se filtra, los tokens no son útiles sin la clave.
+ * Cifrado de secretos en reposo (AES-256-GCM).
+ * Usado para sfactoryToken y claves MiCorreo en BD.
  *
- * Variable de entorno: SFACTORY_TOKEN_ENCRYPTION_KEY
- * - Debe ser una cadena en base64 de exactamente 32 bytes (44 caracteres en base64).
- * - Generar con: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+ * Claves (32 bytes base64):
+ * - INTEGRATIONS_SECRETS_ENCRYPTION_KEY (preferida para integraciones)
+ * - SFACTORY_TOKEN_ENCRYPTION_KEY (legacy S-Factory; fallback)
+ *
+ * Generar: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
  */
 
 import crypto from 'crypto';
@@ -14,8 +16,7 @@ const IV_LENGTH = 12;
 const AUTH_TAG_LENGTH = 16;
 const KEY_LENGTH = 32;
 
-function getKey(): Buffer | null {
-  const raw = process.env.SFACTORY_TOKEN_ENCRYPTION_KEY;
+function parseKeyFromEnv(raw: string | undefined): Buffer | null {
   if (!raw || raw.length < 32) return null;
   try {
     const key = Buffer.from(raw, 'base64');
@@ -25,14 +26,25 @@ function getKey(): Buffer | null {
   }
 }
 
-/**
- * Cifra un token en texto plano. Retorna una cadena base64(IV + authTag + ciphertext).
- * Si SFACTORY_TOKEN_ENCRYPTION_KEY no está configurada, devuelve el texto plano (compatibilidad).
- */
-export function encryptToken(plaintext: string): string {
-  if (!plaintext) return plaintext;
-  const key = getKey();
-  if (!key) return plaintext;
+function getIntegrationsKey(): Buffer | null {
+  return parseKeyFromEnv(process.env.INTEGRATIONS_SECRETS_ENCRYPTION_KEY);
+}
+
+function getSfactoryKey(): Buffer | null {
+  return parseKeyFromEnv(process.env.SFACTORY_TOKEN_ENCRYPTION_KEY);
+}
+
+/** Clave efectiva: integraciones primero, luego S-Factory. */
+function getSecretKey(): Buffer | null {
+  return getIntegrationsKey() ?? getSfactoryKey();
+}
+
+/** @deprecated use getSecretKey */
+function getKey(): Buffer | null {
+  return getSfactoryKey();
+}
+
+function encryptWithKey(plaintext: string, key: Buffer): string {
   const iv = crypto.randomBytes(IV_LENGTH);
   const cipher = crypto.createCipheriv(ALGORITHM, key, iv, { authTagLength: AUTH_TAG_LENGTH });
   const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
@@ -40,14 +52,8 @@ export function encryptToken(plaintext: string): string {
   return Buffer.concat([iv, authTag, encrypted]).toString('base64');
 }
 
-/**
- * Descifra un token guardado. Si el valor no es base64 válido o el descifrado falla, retorna null.
- * Si la clave no está configurada, devuelve el valor tal cual (token en texto plano).
- */
-export function decryptToken(encrypted: string): string | null {
+function decryptWithKey(encrypted: string, key: Buffer): string | null {
   if (!encrypted || typeof encrypted !== 'string') return null;
-  const key = getKey();
-  if (!key) return encrypted;
   const raw = encrypted.trim();
   if (raw.length < IV_LENGTH + AUTH_TAG_LENGTH + 1) return null;
   let buffer: Buffer;
@@ -70,8 +76,43 @@ export function decryptToken(encrypted: string): string | null {
 }
 
 /**
- * Indica si el cifrado está configurado (clave presente y válida).
+ * Cifra un secreto. Si no hay clave configurada, devuelve texto plano (compatibilidad dev).
  */
+export function encryptSecret(plaintext: string): string {
+  if (!plaintext) return plaintext;
+  const key = getSecretKey();
+  if (!key) return plaintext;
+  return encryptWithKey(plaintext, key);
+}
+
+/**
+ * Descifra un secreto guardado. Sin clave, devuelve el valor tal cual (legacy plaintext).
+ */
+export function decryptSecret(encrypted: string): string | null {
+  if (!encrypted || typeof encrypted !== 'string') return null;
+  const key = getSecretKey();
+  if (!key) return encrypted;
+  return decryptWithKey(encrypted, key);
+}
+
+export function encryptToken(plaintext: string): string {
+  if (!plaintext) return plaintext;
+  const key = getKey();
+  if (!key) return plaintext;
+  return encryptWithKey(plaintext, key);
+}
+
+export function decryptToken(encrypted: string): string | null {
+  if (!encrypted || typeof encrypted !== 'string') return null;
+  const key = getKey();
+  if (!key) return encrypted;
+  return decryptWithKey(encrypted, key);
+}
+
 export function isEncryptionConfigured(): boolean {
-  return getKey() !== null;
+  return getSecretKey() !== null;
+}
+
+export function isIntegrationsEncryptionConfigured(): boolean {
+  return getIntegrationsKey() !== null;
 }

@@ -3,11 +3,8 @@ import type { FetchFn } from '../../../types/fetch.types';
 import {
   CORREO_PATHS,
   getCorreoBaseUrlForEnv,
-  getCorreoCustomerIdOverride,
   getCorreoTimeoutMs,
   loadCorreoCredentials,
-  loadCorreoValidateEmail,
-  loadCorreoValidatePassword,
   type CorreoEnv,
 } from './correo.config';
 
@@ -33,21 +30,39 @@ function redactCustomerId(id: string): string {
   return `…${id.slice(-4)}`;
 }
 
+export interface CorreoAccountCredentials {
+  email: string;
+  password: string;
+  customerId?: string | null;
+}
+
+export interface CorreoAuthOptions {
+  env: CorreoEnv;
+  fetchImpl: FetchFn;
+  account: CorreoAccountCredentials;
+  onCustomerIdResolved?: (customerId: string) => void | Promise<void>;
+}
+
 /**
- * Token JWT vía POST /token (Basic) y customerId vía POST /users/validate.
- * Cache por instancia; sin loguear tokens ni customerId completo.
+ * Token JWT vía POST /token (integrador env) y customerId vía POST /users/validate (cuenta empresa).
  */
 export class CorreoAuth {
   private token: string | null = null;
-  /** epoch ms - 60s margen */
   private tokenValidUntilMs = 0;
-  private customerId: string | null = null;
+  private customerId: string | null;
   private customerIdInFlight: Promise<string> | null = null;
 
-  constructor(
-    private readonly env: CorreoEnv,
-    private readonly fetchImpl: FetchFn
-  ) {}
+  constructor(private readonly options: CorreoAuthOptions) {
+    this.customerId = options.account.customerId?.trim() || null;
+  }
+
+  private get env(): CorreoEnv {
+    return this.options.env;
+  }
+
+  private get fetchImpl(): FetchFn {
+    return this.options.fetchImpl;
+  }
 
   private get baseUrl(): string {
     return getCorreoBaseUrlForEnv(this.env);
@@ -69,15 +84,11 @@ export class CorreoAuth {
     return c.signal;
   }
 
+  setCustomerId(customerId: string | null): void {
+    this.customerId = customerId?.trim() || null;
+  }
+
   async getCustomerId(): Promise<string> {
-    const override = getCorreoCustomerIdOverride();
-    if (override) {
-      this.customerId = override;
-      shippingLogger.info('MiCorreo customerId desde CORREO_CUSTOMER_ID', {
-        customerIdSuffix: redactCustomerId(override),
-      });
-      return override;
-    }
     if (this.customerId != null) return this.customerId;
     if (!this.customerIdInFlight) {
       this.customerIdInFlight = this.fetchCustomerIdFromApi().finally(() => {
@@ -88,10 +99,8 @@ export class CorreoAuth {
   }
 
   private async fetchCustomerIdFromApi(): Promise<string> {
-    /** Doc MiCorreo: /users/validate requiere Bearer; sin él la API responde 401 "Header List is null or empty". */
     const tok = await this.getValidToken();
-    const password = loadCorreoValidatePassword(this.env);
-    const email = loadCorreoValidateEmail(this.env);
+    const { email, password } = this.options.account;
     const url = `${this.baseUrl}${CORREO_PATHS.usersValidate}`;
     const started = Date.now();
     shippingLogger.info('MiCorreo request start', {
@@ -125,7 +134,7 @@ export class CorreoAuth {
     if (!res.ok) {
       const hint =
         res.status === 406
-          ? ' Revisá CORREO_EMAIL_QA/CORREO_EMAIL (email del portal) y CORREO_VALIDATE_PASSWORD_QA (clave del portal, no la del usuario API). Opcional: CORREO_CUSTOMER_ID.'
+          ? ' Revisá la cuenta MiCorreo en Admin → Configuración → Envíos.'
           : '';
       throw new Error(`users/validate ${res.status}: ${text.slice(0, 500)}${hint}`);
     }
@@ -143,6 +152,7 @@ export class CorreoAuth {
     shippingLogger.info('MiCorreo customerId cacheado', {
       customerIdSuffix: redactCustomerId(cid),
     });
+    await this.options.onCustomerIdResolved?.(cid);
     return cid;
   }
 
@@ -216,17 +226,28 @@ export class CorreoAuth {
     await this.getCustomerId();
   }
 
-  /** Fuerza renovación del JWT (p. ej. tras 401 en un request autenticado). */
   invalidateToken(): void {
     this.token = null;
     this.tokenValidUntilMs = 0;
-    this.customerId = null;
     this.customerIdInFlight = null;
   }
 
   invalidateSession(): void {
     this.invalidateToken();
     this.customerId = null;
+  }
+
+  invalidateCustomerId(): void {
+    this.customerId = null;
     this.customerIdInFlight = null;
   }
+}
+
+/** Constructor legacy para tests y health checks sin BD. */
+export function createCorreoAuthFromEnv(
+  env: CorreoEnv,
+  fetchImpl: FetchFn,
+  account: CorreoAccountCredentials
+): CorreoAuth {
+  return new CorreoAuth({ env, fetchImpl, account });
 }

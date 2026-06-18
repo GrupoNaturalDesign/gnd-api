@@ -12,9 +12,11 @@ import {
 import {
   resolveCorreoEnv,
   isCorreoMock,
+  mapEmpresaCorreoEnv,
 } from '../services/shipping/correo/correo.config';
 import { getIntegrationsMode, getIntegrationsModeLabel } from '../lib/integrations-mode';
 import type { FirebaseAuthRequest } from '../middleware/firebase-auth.middleware';
+import { correoAccountService } from '../services/shipping/correo/correo-account.service';
 
 interface IntegrationStatus {
   configured: boolean;
@@ -58,16 +60,32 @@ function checkMercadoPago(): Promise<IntegrationStatus> {
   });
 }
 
-function checkCorreo(): Promise<IntegrationStatus> {
+function checkCorreo(empresaId: number | undefined): Promise<IntegrationStatus> {
   return doCheck('MiCorreo', async () => {
     if (isCorreoMock()) {
       return mockStatus('mock', 'Modo mock activo (CORREO_MOCK=true). No se chequea conexión real.');
     }
+    if (empresaId == null) {
+      return misconfiguredStatus(
+        'Usuario admin sin empresa asignada. Configurá MiCorreo en Admin → Envíos.'
+      );
+    }
     const env = resolveCorreoEnv();
-    const modeLabel = resolveCorreoEnv();
-    const provider = new CorreoProvider(null, env, globalThis.fetch.bind(globalThis));
+    const config = await correoAccountService.getOrCreateEnvioConfig(empresaId);
+    const creds = correoAccountService.resolveAccountCredentials(config);
+    if (!creds) {
+      return misconfiguredStatus(
+        'Cuenta MiCorreo no configurada. Completá email y contraseña en Admin → Configuración → Envíos.'
+      );
+    }
+    const provider = new CorreoProvider(
+      config,
+      mapEmpresaCorreoEnv(env),
+      globalThis.fetch.bind(globalThis)
+    );
     await provider.validateCredentials();
-    return okStatus(modeLabel, 'Credenciales validadas correctamente contra la API');
+    const suffix = await provider.getCustomerIdSuffixForLogs();
+    return okStatus(env, `Cuenta vinculada (${suffix}) y API responde correctamente`);
   });
 }
 
@@ -104,12 +122,13 @@ async function doCheck(
 }
 
 export async function getIntegrationsStatus(
-  _req: FirebaseAuthRequest,
+  req: FirebaseAuthRequest,
   res: Response,
 ): Promise<void> {
+  const empresaId = req.empresaId;
   const [mp, correo, andreani] = await Promise.all([
     checkMercadoPago(),
-    checkCorreo(),
+    checkCorreo(empresaId),
     checkAndreani(),
   ]);
 

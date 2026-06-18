@@ -13,7 +13,8 @@ export type AdminNotificationType =
   | 'pedido.sync_recovered'
   | 'pedido.cancelled'
   | 'pedido.expired'
-  | 'stock.critical';
+  | 'stock.critical'
+  | 'micorreo.sync_failed';
 
 export interface CreateAdminNotificationInput {
   empresaId: number;

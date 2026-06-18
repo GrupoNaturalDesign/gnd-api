@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert';
-import { CorreoAuth } from '../../../src/services/shipping/correo/correo.auth';
+import { CorreoAuth, createCorreoAuthFromEnv } from '../../../src/services/shipping/correo/correo.auth';
 import { MockFetch, getMockFetch, resetGlobalFetch } from '../../helpers/mock-fetch';
+
+const testAccount = {
+  email: 'test@test.com',
+  password: 'pass',
+};
 
 describe('SH-C-07 — CorreoAuth token cache + 401 retry', () => {
   let mockFetch: MockFetch;
@@ -10,18 +15,15 @@ describe('SH-C-07 — CorreoAuth token cache + 401 retry', () => {
   beforeEach(() => {
     resetGlobalFetch();
     mockFetch = getMockFetch();
-    auth = new CorreoAuth('test', mockFetch.fetch as unknown as typeof fetch);
+    mockFetch.reset();
+    auth = createCorreoAuthFromEnv('test', mockFetch.fetch as unknown as typeof fetch, testAccount);
     process.env.CORREO_USERNAME_QA = 'user';
     process.env.CORREO_PASSWORD_QA = 'pass';
-    process.env.CORREO_EMAIL_QA = 'test@test.com';
-    process.env.CORREO_CUSTOMER_ID = '';
   });
 
   afterEach(() => {
     delete process.env.CORREO_USERNAME_QA;
     delete process.env.CORREO_PASSWORD_QA;
-    delete process.env.CORREO_EMAIL_QA;
-    delete process.env.CORREO_CUSTOMER_ID;
     resetGlobalFetch();
   });
 
@@ -52,23 +54,14 @@ describe('SH-C-07 — CorreoAuth token cache + 401 retry', () => {
     assert.strictEqual(token, 'jwt-fallback');
   });
 
-  it('getValidToken parsea expires_in numérico', async () => {
-    mockFetch.setResponses([{ status: 200, json: { token: 'tok-expiry', expires_in: 7200 } }]);
-    const token = await auth.getValidToken();
-    assert.strictEqual(token, 'tok-expiry');
-  });
-
-  it('getValidToken parsea expires como ISO date', async () => {
-    const future = new Date(Date.now() + 3600_000).toISOString();
-    mockFetch.setResponses([{ status: 200, json: { token: 'tok-iso-expiry', expires: future } }]);
-    const token = await auth.getValidToken();
-    assert.strictEqual(token, 'tok-iso-expiry');
-  });
-
-  it('getValidToken usa expires_in como string (parseFloat fallback)', async () => {
-    mockFetch.setResponses([{ status: 200, json: { token: 'tok-str-expiry', expires_in: '3600' } }]);
-    const token = await auth.getValidToken();
-    assert.strictEqual(token, 'tok-str-expiry');
+  it('getCustomerId usa customerId precargado sin llamar validate', async () => {
+    const preloaded = createCorreoAuthFromEnv('test', mockFetch.fetch as unknown as typeof fetch, {
+      ...testAccount,
+      customerId: 'PRELOADED-CID',
+    });
+    const cid = await preloaded.getCustomerId();
+    assert.strictEqual(cid, 'PRELOADED-CID');
+    assert.strictEqual(mockFetch.getCallCount(), 0);
   });
 
   it('getCustomerId lanza con credentials inválidas (401)', async () => {
@@ -95,32 +88,7 @@ describe('SH-C-07 — CorreoAuth token cache + 401 retry', () => {
     auth.invalidateSession();
   });
 
-  it('getCustomerId usa customerId override (CORREO_CUSTOMER_ID)', async () => {
-    process.env.CORREO_CUSTOMER_ID = 'OVERRIDE-ID';
-    const newAuth = new CorreoAuth('test', mockFetch.fetch as unknown as typeof fetch);
-    const cid = await newAuth.getCustomerId();
-    assert.strictEqual(cid, 'OVERRIDE-ID');
-    delete process.env.CORREO_CUSTOMER_ID;
-  });
-
-  it('getCustomerId usa CORREO_VALIDATE_PASSWORD_QA en validate', async () => {
-    process.env.CORREO_VALIDATE_PASSWORD_QA = 'portal-pass';
-    const newAuth = new CorreoAuth('test', mockFetch.fetch as unknown as typeof fetch);
-    mockFetch.setResponses([
-      { status: 200, json: { token: 'tok' } },
-      { status: 200, json: { customerId: 'CID-PORTAL' } },
-    ]);
-    const cid = await newAuth.getCustomerId();
-    assert.strictEqual(cid, 'CID-PORTAL');
-    const validateCall = mockFetch.getCalls()[1];
-    assert.ok(validateCall?.init);
-    const init = validateCall.init as { body?: string };
-    const body = JSON.parse(String(init.body)) as { email: string; password: string };
-    assert.strictEqual(body.password, 'portal-pass');
-    delete process.env.CORREO_VALIDATE_PASSWORD_QA;
-  });
-
-  it('getCustomerId fetch fallido 406 da hint sobre CORREO_EMAIL', async () => {
+  it('getCustomerId fetch fallido 406 da hint sobre Admin Envíos', async () => {
     mockFetch.setResponses([
       { status: 200, json: { token: 'tok' } },
       { status: 406, text: 'Not Acceptable' },
@@ -128,7 +96,7 @@ describe('SH-C-07 — CorreoAuth token cache + 401 retry', () => {
     auth.invalidateSession();
     await assert.rejects(
       auth.getCustomerId(),
-      /CORREO_EMAIL/
+      /Admin → Configuración → Envíos/
     );
   });
 

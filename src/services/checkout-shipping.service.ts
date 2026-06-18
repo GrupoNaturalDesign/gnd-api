@@ -50,7 +50,7 @@ export function mapFormaEnvioCheckout(
 }
 
 const MICORREO_EMPTY_RATES_MSG =
-  'MiCorreo no devolvió tarifas para esta ruta. Revisá CORREO_EMAIL_* y CORREO_VALIDATE_PASSWORD_* (clave del portal). En apitest, si rates viene vacío, la cuenta puede no tener cotización habilitada.';
+  'MiCorreo no devolvió tarifas para esta ruta. Revisá la configuración en Admin → Envíos y que la cuenta esté vinculada.';
 
 function minCorreoPrice(quotes: CorreoShippingQuote[]): number {
   if (quotes.length === 0) {

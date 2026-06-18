@@ -5,6 +5,12 @@ import { empresaMiddleware } from '../middleware/empresa.middleware';
 import { empresaConfigService } from '../services/empresa-config.service';
 import { empresaDatosBancariosService } from '../services/empresa-datos-bancarios.service';
 import { datosBancariosBodySchema } from '../validation/datos-bancarios.validation';
+import {
+  getEnvioConfig,
+  patchEnvioConfig,
+  registerMicorreoAccount,
+  syncMicorreoAccount,
+} from '../controllers/empresa-envio-config.controller';
 
 const router = Router();
 
@@ -89,6 +95,26 @@ router.patch('/datos-bancarios', async (req, res) => {
     const message = error instanceof Error ? error.message : 'Error al guardar datos bancarios';
     res.status(500).json({ success: false, error: message });
   }
+});
+
+// GET /api/admin/empresa/envio-config
+router.get('/envio-config', (req, res) => {
+  void getEnvioConfig(req as import('../middleware/firebase-auth.middleware').FirebaseAuthRequest, res);
+});
+
+// PATCH /api/admin/empresa/envio-config
+router.patch('/envio-config', (req, res) => {
+  void patchEnvioConfig(req as import('../middleware/firebase-auth.middleware').FirebaseAuthRequest, res);
+});
+
+// POST /api/admin/empresa/envio-config/micorreo/sync
+router.post('/envio-config/micorreo/sync', (req, res) => {
+  void syncMicorreoAccount(req as import('../middleware/firebase-auth.middleware').FirebaseAuthRequest, res);
+});
+
+// POST /api/admin/empresa/envio-config/micorreo/register
+router.post('/envio-config/micorreo/register', (req, res) => {
+  void registerMicorreoAccount(req as import('../middleware/firebase-auth.middleware').FirebaseAuthRequest, res);
 });
 
 export default router;
