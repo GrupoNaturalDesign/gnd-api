@@ -30,9 +30,8 @@ export function buildMercadoPagoPaymentMethodsForMode(
     };
   }
 
-  const n = Math.max(1, Math.trunc(cuotasFinanciado));
+  void cuotasFinanciado;
   return {
-    installments: n,
     excluded_payment_types: [{ id: 'bank_transfer' }],
   };
 }
