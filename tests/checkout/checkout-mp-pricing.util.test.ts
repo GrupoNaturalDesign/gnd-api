@@ -26,9 +26,10 @@ describe('checkout-mp-pricing.util', () => {
     });
   });
 
-  it('buildMercadoPagoPaymentMethodsForMode — financiado solo excluye bank_transfer', () => {
+  it('buildMercadoPagoPaymentMethodsForMode — financiado limita cuotas y excluye bank_transfer', () => {
     const pm = buildMercadoPagoPaymentMethodsForMode('financiado', 6);
     assert.deepStrictEqual(pm, {
+      installments: 6,
       excluded_payment_types: [{ id: 'bank_transfer' }],
     });
   });
