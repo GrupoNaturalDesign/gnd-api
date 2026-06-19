@@ -10,6 +10,14 @@ import { shippingService } from '../../../src/services/shipping/shipping.service
 import { mapPedidoToAndreaniOrdenEnvio } from '../../../src/services/shipping/andreani/andreani.mapper';
 import { MOCK_TRACKING } from '../../../src/services/shipping/andreani/andreani.mock';
 import { getMockFetch } from '../../helpers/mock-fetch';
+import * as pedidoEmailNotification from '../../../src/services/pedido-email-notification.service';
+
+type PedidoEmailNotificationMutable = {
+  sendPedidoStatusEmailAsync: typeof pedidoEmailNotification.sendPedidoStatusEmailAsync;
+  sendPedidoStatusEmail: typeof pedidoEmailNotification.sendPedidoStatusEmail;
+};
+
+const pedidoEmailMutable = pedidoEmailNotification as unknown as PedidoEmailNotificationMutable;
 import {
   createGoldenPathState,
   installGoldenPathPrismaStub,
@@ -39,6 +47,19 @@ function resetShippingProviderCaches(): void {
 
 function ensureFetchMock(): void {
   getMockFetch();
+}
+
+const origSendPedidoStatusEmailAsync = pedidoEmailMutable.sendPedidoStatusEmailAsync;
+const origSendPedidoStatusEmail = pedidoEmailMutable.sendPedidoStatusEmail;
+
+function stubPedidoEmails(): void {
+  pedidoEmailMutable.sendPedidoStatusEmailAsync = () => {};
+  pedidoEmailMutable.sendPedidoStatusEmail = async () => {};
+}
+
+function restorePedidoEmails(): void {
+  pedidoEmailMutable.sendPedidoStatusEmailAsync = origSendPedidoStatusEmailAsync;
+  pedidoEmailMutable.sendPedidoStatusEmail = origSendPedidoStatusEmail;
 }
 
 function setAndreaniEnvForMapper(): void {
@@ -90,6 +111,10 @@ function clearAndreaniEnvForMapper(): void {
 describe('checkout-shipping-finalize — golden path (prod-aligned)', () => {
   let prismaStub: { restore: () => void } | null = null;
 
+  beforeEach(() => {
+    stubPedidoEmails();
+  });
+
   afterEach(() => {
     prismaStub?.restore();
     prismaStub = null;
@@ -99,6 +124,7 @@ describe('checkout-shipping-finalize — golden path (prod-aligned)', () => {
     delete process.env.CORREO_USERNAME_QA;
     delete process.env.CORREO_PASSWORD_QA;
     delete process.env.SHIPPING_ALTO_POR_PRENDA_CM;
+    restorePedidoEmails();
   });
 
   describe('buildCreateShippingOrderInputFromPedido', () => {
@@ -333,6 +359,10 @@ describe('checkout-shipping-finalize — golden path (prod-aligned)', () => {
 describe('checkout-shipping-finalize — shippingService.createOrder golden', () => {
   let prismaStub: { restore: () => void } | null = null;
 
+  beforeEach(() => {
+    stubPedidoEmails();
+  });
+
   afterEach(() => {
     prismaStub?.restore();
     prismaStub = null;
@@ -340,6 +370,7 @@ describe('checkout-shipping-finalize — shippingService.createOrder golden', ()
     clearAndreaniEnvForMapper();
     delete process.env.ANDREANI_MOCK;
     delete process.env.SHIPPING_ALTO_POR_PRENDA_CM;
+    restorePedidoEmails();
   });
 
   it('ShippingService.createOrder persiste tracking Andreani (mismo entry que admin reintento)', async () => {
