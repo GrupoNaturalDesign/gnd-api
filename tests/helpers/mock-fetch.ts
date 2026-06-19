@@ -63,7 +63,7 @@ export function setGlobalMockFetch(mock: MockFetch): void {
 export function getMockFetch(): MockFetch {
   if (!mockFetchInstance) {
     mockFetchInstance = new MockFetch();
-    (globalThis as Record<string, unknown>).fetch = mockFetchInstance.fetch;
   }
+  (globalThis as Record<string, unknown>).fetch = mockFetchInstance.fetch;
   return mockFetchInstance;
 }

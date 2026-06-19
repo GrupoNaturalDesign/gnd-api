@@ -1,3 +1,4 @@
+import { isIntegrationsLive } from '../lib/integrations-mode';
 import {
   CONSUMER_EMAIL_DOMAIN_ERROR,
   CONSUMER_EMAIL_DOMAINS,
@@ -16,7 +17,9 @@ export {
   validateConsumerEmail,
 };
 
+/** Bypass solo en test; en `INTEGRATIONS_ENV=production` siempre se exige proveedor habitual. */
 export function skipConsumerEmailDomainCheck(): boolean {
+  if (isIntegrationsLive()) return false;
   return process.env.ALLOW_ANY_EMAIL_DOMAIN === 'true';
 }
 
