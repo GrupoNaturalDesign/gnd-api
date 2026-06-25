@@ -16,6 +16,7 @@ import {
   type ManualPaymentInstructionsEmailProps,
 } from '../../emails/ManualPaymentInstructionsEmail';
 import { unsubscribeService } from './unsubscribe.service';
+import { empresaTiendaConfigService } from '../../services/empresa-tienda-config.service';
 import type {
   ContactEmailPayload,
   EmailSendResult,
@@ -39,8 +40,16 @@ function getFromMarketing(): string | undefined {
   return process.env.RESEND_FROM_MARKETING;
 }
 
-function getInternalTo(): string | undefined {
+function getInternalToEnv(): string | undefined {
   return process.env.RESEND_INTERNAL_TO;
+}
+
+async function resolveInternalTo(empresaId?: number): Promise<string | undefined> {
+  if (empresaId != null) {
+    const fromDb = await empresaTiendaConfigService.resolveEmailPedidosInterno(empresaId);
+    if (fromDb) return fromDb;
+  }
+  return getInternalToEnv();
 }
 
 function getContactInternalTo(): string {
@@ -613,13 +622,13 @@ export const emailService = {
   async sendInternalOrderNotification(order: OrderEmailPayload): Promise<EmailSendResult> {
     const resend = getResend();
     const from = getFromTransactional();
-    const internalTo = getInternalTo();
+    const internalTo = await resolveInternalTo(order.empresaId);
     if (!resend || !from || !internalTo) {
       await logEmail({
         type: 'internal',
         to: internalTo ?? '—',
         status: 'failed',
-        error: 'Falta configuración Resend o RESEND_INTERNAL_TO.',
+        error: 'Falta configuración Resend o email interno de pedidos.',
         metadata: { orderId: order.orderId ?? null },
       });
       return { success: false, error: 'Configuración incompleta.' };

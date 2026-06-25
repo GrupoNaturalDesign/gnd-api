@@ -75,6 +75,8 @@
 
 **Sprint 5 (E2E + CI):** Playwright `client/e2e/` (**10** E2E), `playwright.config.ts`, `.github/workflows/client-tests.yml`. Unit: **100** tests Vitest.
 
+**Sprint checkout tienda (factura, config, 48h):** API — `empresa-tienda-config.service.test.ts`, `checkout/checkout-manual-expires.test.ts`, `checkout/checkout-address.util.test.ts`; actualizados `pedido-email-notification`, `pedido-entrega.util`. Client — `shippingAddress.test.ts`, `checkoutPaymentCopy.test.ts`, `checkoutMp.buildEnvio.test.ts`; actualizados `checkoutStep2.validation`, `OrderSummarySection`. QA manual: [`docs/checkout-tienda-factura-qa.md`](../../docs/checkout-tienda-factura-qa.md).
+
 ### Fuera del pipeline automático
 
 | Artefacto | Ubicación | Uso |

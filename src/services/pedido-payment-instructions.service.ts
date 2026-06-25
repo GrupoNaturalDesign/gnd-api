@@ -7,6 +7,11 @@ import {
   empresaDatosBancariosService,
   type DatosBancariosPublic,
 } from './empresa-datos-bancarios.service';
+import {
+  empresaTiendaConfigService,
+  getDefaultWhatsappPhone,
+} from './empresa-tienda-config.service';
+import { buildManualPaymentNextSteps } from '../lib/manual-payment-copy';
 import type { ManualPaymentInstructionsEmailProps } from '../emails/ManualPaymentInstructionsEmail';
 
 function formaPagoToManual(
@@ -49,22 +54,39 @@ export async function buildManualPaymentInstructionsPayload(
     bank = await empresaDatosBancariosService.getDatosBancariosPublic(pedido.empresaId);
   }
 
-  const instrucciones =
-    bank?.instrucciones ??
-    (formaPago === 'efectivo'
-      ? 'Te contactaremos para coordinar el pago en efectivo o el retiro.'
-      : null);
+  const tienda = await empresaTiendaConfigService.getTiendaConfigPublic(pedido.empresaId);
+  const externalOrderId = `WEB-${pedido.id}`;
+  const nextSteps = buildManualPaymentNextSteps(
+    formaPago,
+    tienda,
+    externalOrderId,
+    getDefaultWhatsappPhone(),
+    formaPago !== 'transferencia' || bank != null
+  );
+
+  const facturacion =
+    pedido.necesitaFactura &&
+    pedido.facturaTipo &&
+    pedido.facturaCuit &&
+    pedido.facturaRazonSocial
+      ? {
+          tipo: pedido.facturaTipo as 'A' | 'C',
+          cuit: pedido.facturaCuit,
+          razonSocial: pedido.facturaRazonSocial,
+        }
+      : undefined;
 
   return {
     customerEmail: pedido.clienteEmail.trim(),
     customerName: pedido.clienteNombre,
     orderId: pedido.id,
-    externalOrderId: `WEB-${pedido.id}`,
+    externalOrderId,
     formaPago,
     totalFormatted: formatArs(totalNeto >= 0 ? totalNeto : Number(pedido.total)),
     expiresAtFormatted: formatExpiresAt(pedido.expiresAt),
     bank,
-    instrucciones,
+    nextSteps,
+    facturacion,
     items: pedido.items.map((it) => {
       const espec = [it.talle, it.color].filter(Boolean).join(' / ');
       return {
@@ -102,7 +124,6 @@ export interface InstruccionesPagoResponse {
   customerEmail: string;
   customerName: string;
   bank: DatosBancariosPublic | null;
-  instrucciones: string | null;
   bankConfigured: boolean;
 }
 
@@ -120,7 +141,6 @@ export async function getInstruccionesPagoForPedido(
   if (!formaPago) return null;
 
   const empresaId = pedido.empresaId ?? getCheckoutEmpresaIdFromEnv();
-  const bankRecord = await empresaDatosBancariosService.getDatosBancarios(empresaId);
   const bank =
     formaPago === 'transferencia'
       ? await empresaDatosBancariosService.getDatosBancariosPublic(empresaId)
@@ -128,13 +148,6 @@ export async function getInstruccionesPagoForPedido(
 
   const descuento = Number(pedido.descuento);
   const totalNeto = Number(pedido.total) - descuento;
-
-  const instrucciones =
-    bank?.instrucciones ??
-    bankRecord?.instrucciones ??
-    (formaPago === 'efectivo'
-      ? 'Te contactaremos para coordinar el pago en efectivo o el retiro.'
-      : null);
 
   return {
     pedidoId: pedido.id,
@@ -145,7 +158,6 @@ export async function getInstruccionesPagoForPedido(
     customerEmail: pedido.clienteEmail,
     customerName: pedido.clienteNombre,
     bank,
-    instrucciones,
     bankConfigured: formaPago !== 'transferencia' || bank != null,
   };
 }

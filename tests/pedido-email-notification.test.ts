@@ -145,4 +145,21 @@ describe('buildOrderEmailPayloadFromPedido', () => {
 
     assert.ok(payload.statusUiOverrides?.lead?.includes('retiraste'));
   });
+
+  it('incluye bloque facturacion cuando el pedido la requiere', () => {
+    const payload = buildOrderEmailPayloadFromPedido(
+      makePedido({
+        necesitaFactura: true,
+        facturaTipo: 'A',
+        facturaCuit: '30-12345678-9',
+        facturaRazonSocial: 'ACME SA',
+      }),
+      OrderStatus.PENDING
+    );
+
+    assert.ok(payload.facturacion);
+    assert.strictEqual(payload.facturacion?.tipo, 'A');
+    assert.strictEqual(payload.facturacion?.cuit, '30-12345678-9');
+    assert.strictEqual(payload.facturacion?.razonSocial, 'ACME SA');
+  });
 });

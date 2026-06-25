@@ -43,6 +43,10 @@ router.get('/datos-bancarios', (req, res) => {
   void checkoutController.getDatosBancariosPublic(req, res);
 });
 
+router.get('/config-tienda', (req, res) => {
+  void checkoutController.getTiendaConfigPublic(req, res);
+});
+
 router.get('/pedido/:pedidoId/instrucciones-pago', firebaseAuthMiddleware, (req, res) => {
   void checkoutController.getInstruccionesPago(req, res);
 });

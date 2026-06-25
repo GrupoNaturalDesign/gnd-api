@@ -48,6 +48,12 @@ export function InternalOrderNotification(props: InternalOrderNotificationProps)
             <strong>Pago:</strong> {props.paymentSummary}
           </Text>
         ) : null}
+        {props.facturacion ? (
+          <Text style={text}>
+            <strong>Factura {props.facturacion.tipo}:</strong> CUIT {props.facturacion.cuit} —{' '}
+            {props.facturacion.razonSocial}
+          </Text>
+        ) : null}
         {props.notes ? (
           <Text style={text}>
             <strong>Notas:</strong> {props.notes}

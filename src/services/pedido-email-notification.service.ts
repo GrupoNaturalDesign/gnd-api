@@ -8,6 +8,8 @@ import {
   resolvePedidoEntregaFromPedido,
 } from '../utils/pedido-entrega.util';
 import { resolvePedidoShippingTracking } from '../utils/pedido-shipping-tracking.util';
+import { empresaTiendaConfigService } from './empresa-tienda-config.service';
+import { buildStorePickupConfirmInstructions } from '../lib/store-pickup.config';
 
 function formaPagoLabel(forma: FormaPago | null | undefined): string | undefined {
   if (!forma) return undefined;
@@ -87,6 +89,7 @@ export function buildOrderEmailPayloadFromPedido(
 
   return {
     orderId: pedido.id,
+    empresaId: pedido.empresaId,
     customerName: pedido.clienteNombre,
     customerEmail: pedido.clienteEmail,
     customerPhone: pedido.clienteTelefono ?? undefined,
@@ -114,6 +117,18 @@ export function buildOrderEmailPayloadFromPedido(
     statusUiOverrides,
     ...(trackingNumber ? { trackingNumber } : {}),
     ...(trackingUrl ? { trackingUrl } : {}),
+    ...(pedido.necesitaFactura &&
+    pedido.facturaTipo &&
+    pedido.facturaCuit &&
+    pedido.facturaRazonSocial
+      ? {
+          facturacion: {
+            tipo: pedido.facturaTipo as 'A' | 'C',
+            cuit: pedido.facturaCuit,
+            razonSocial: pedido.facturaRazonSocial,
+          },
+        }
+      : {}),
   };
 }
 
@@ -123,7 +138,7 @@ export function isPedidoCheckoutEcommerce(pedido: { usuarioId: number | null }):
 }
 
 /**
- * Envía email de estado al cliente (y copia interna en confirmación/cancelación).
+ * Envía email de estado al cliente (y copia interna al crear pedido ecommerce o cancelar).
  * No lanza: errores solo en log.
  */
 export async function sendPedidoStatusEmail(
@@ -148,6 +163,15 @@ export async function sendPedidoStatusEmail(
   const payload = buildOrderEmailPayloadFromPedido(pedido, status, {
     ...options,
   });
+  const entrega = resolvePedidoEntregaFromPedido(pedido);
+  if (entrega.tipo === 'retiro_tienda') {
+    const tienda = await empresaTiendaConfigService.getTiendaConfigPublic(pedido.empresaId);
+    const orderRef = `WEB-${pedido.id}`;
+    payload.deliveryInstructions = buildStorePickupConfirmInstructions(
+      orderRef,
+      tienda.retiroDireccion
+    );
+  }
   payload.source = options?.source ?? 'automatic';
   try {
     const result = await emailService.sendOrderStatusEmail(payload);
@@ -157,7 +181,11 @@ export async function sendPedidoStatusEmail(
         result.error
       );
     }
-    if (options?.sendInternal !== false && (status === OrderStatus.CONFIRMED || status === OrderStatus.CANCELLED)) {
+    const ecommerce = isPedidoCheckoutEcommerce(pedido);
+    const shouldSendInternal =
+      options?.sendInternal !== false &&
+      ((status === OrderStatus.PENDING && ecommerce) || status === OrderStatus.CANCELLED);
+    if (shouldSendInternal) {
       void emailService.sendInternalOrderNotification(payload);
     }
   } catch (e) {

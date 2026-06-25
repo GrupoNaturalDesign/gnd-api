@@ -45,6 +45,7 @@ model Empresa {
   usuarios             Usuario[]
   envioConfig          EmpresaEnvioConfig?
   datosBancarios       EmpresaDatosBancarios?
+  tiendaConfig         EmpresaTiendaConfig?
   cupones              Cupon[]
   adminNotifications   AdminNotification[]
 
@@ -116,6 +117,25 @@ model EmpresaDatosBancarios {
   empresa       Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "empresa_datos_bancarios_empresa_fk")
 
   @@map("empresa_datos_bancarios")
+}
+
+/// Contacto, WhatsApp, retiro en tienda y notificaciones internas (checkout).
+model EmpresaTiendaConfig {
+  id                         Int      @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  empresaId                  Int      @unique(map: "empresa_tienda_config_empresa_id") @map("empresa_id") @db.UnsignedInt
+  emailPedidosInterno        String?  @map("email_pedidos_interno") @db.VarChar(255)
+  whatsappTelefono           String?  @map("whatsapp_telefono") @db.VarChar(50)
+  whatsappMensajeDefault     String?  @map("whatsapp_mensaje_default") @db.Text
+  retiroDireccion            String?  @map("retiro_direccion") @db.Text
+  retiroHorarios             String?  @map("retiro_horarios") @db.Text
+  retiroDemora               String?  @map("retiro_demora") @db.VarChar(255)
+  retiroNotas                String?  @map("retiro_notas") @db.Text
+  pagoManualInstruccionesExtra String? @map("pago_manual_instrucciones_extra") @db.Text
+  createdAt                  DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt                  DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamp(0)
+  empresa                    Empresa  @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "empresa_tienda_config_empresa_fk")
+
+  @@map("empresa_tienda_config")
 }
 
 model Role {
@@ -568,6 +588,10 @@ model Pedido {
   trackingUrl                 String?             @map("tracking_url") @db.VarChar(500)
   cantidadPrendas             Int?                @map("cantidad_prendas") @db.UnsignedInt
   observaciones               String?             @map("observaciones") @db.Text
+  necesitaFactura             Boolean             @default(false) @map("necesita_factura")
+  facturaTipo                 String?             @map("factura_tipo") @db.VarChar(1)
+  facturaCuit                 String?             @map("factura_cuit") @db.VarChar(20)
+  facturaRazonSocial          String?             @map("factura_razon_social") @db.VarChar(255)
   metodoContacto              MetodoContacto?     @map("metodo_contacto")
   mensajeWhatsapp             String?             @map("mensaje_whatsapp") @db.Text
   fechaPedido                 DateTime            @default(now()) @map("fecha_pedido") @db.Timestamp(0)

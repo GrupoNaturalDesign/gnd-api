@@ -37,10 +37,27 @@ import {
   unitPriceMatchesMpMode,
   type MpPricingMode,
 } from '../utils/checkout-mp-pricing.util';
+import {
+  buildClienteDireccionFromAddress,
+  normalizeFacturaFields,
+  type CheckoutFacturaInput,
+  type CheckoutStructuredAddress,
+} from '../utils/checkout-address.util';
 
 export type { MpPricingMode };
 
 const cuponEngine = new CuponEngineService();
+
+function resolveClienteDireccionPersist(input: {
+  clienteDireccion?: string;
+  checkoutEnvio?: CheckoutEnvioClientPayload;
+}): string | null {
+  const addr = input.checkoutEnvio?.address;
+  if (addr) {
+    return buildClienteDireccionFromAddress(addr as CheckoutStructuredAddress);
+  }
+  return input.clienteDireccion?.trim() || null;
+}
 
 type CheckoutItemForCupon = {
   productoWebId: number;
@@ -230,7 +247,7 @@ function mapOrderItemsForShippingParcel(items: ItemInput[]): CheckoutShippingIte
   }));
 }
 
-export interface CrearPedidoMpInput {
+export interface CrearPedidoMpInput extends CheckoutFacturaInput {
   empresaId: number;
   clienteNombre: string;
   clienteEmail: string;
@@ -256,7 +273,7 @@ export interface CrearPedidoMpResult {
   totalCobro?: number;
 }
 
-export interface CrearPedidoManualInput {
+export interface CrearPedidoManualInput extends CheckoutFacturaInput {
   empresaId: number;
   clienteNombre: string;
   clienteEmail: string;
@@ -350,7 +367,7 @@ export async function crearPedidoMp(
   let entregaCp: string | null = null;
   let andreaniSucursalId: string | null = null;
   let andreaniSucursalDescripcion: string | null = null;
-  let clienteDireccionPersist = input.clienteDireccion?.trim() || null;
+  let clienteDireccionPersist = resolveClienteDireccionPersist(input);
 
   if (input.checkoutEnvio) {
     const v = await validateCheckoutEnvioForMp(
@@ -367,20 +384,14 @@ export async function crearPedidoMp(
       andreaniSucursalId = input.checkoutEnvio.agencyId?.trim() || null;
       andreaniSucursalDescripcion = input.checkoutEnvio.agencyLabel?.trim() || null;
     }
-    const addr = input.checkoutEnvio.address;
-    if (addr) {
-      const parts = [
-        addr.streetName,
-        addr.streetNumber,
-        addr.floor,
-        addr.department,
-        addr.city,
-        addr.state,
-        addr.zipCode,
-      ].filter((x) => x != null && String(x).trim() !== '');
-      clienteDireccionPersist = parts.join(', ');
+    if (input.checkoutEnvio.address) {
+      clienteDireccionPersist = buildClienteDireccionFromAddress(
+        input.checkoutEnvio.address as CheckoutStructuredAddress
+      );
     }
   }
+
+  const factura = normalizeFacturaFields(input);
 
   // Total sin descuento (el descuento está en el campo 'descuento' del pedido)
   const total = subtotalPedido.add(costoEnvio);
@@ -415,6 +426,7 @@ export async function crearPedidoMp(
       formaPago: FormaPago.mercado_pago,
       mpPricingMode,
       observaciones: input.observaciones ?? null,
+      ...factura,
       // --- Campos de cupón ---
       cuponId: cuponIdForPedido,
       cuponCodigoSnapshot,
@@ -1169,7 +1181,7 @@ export async function crearPedidoManual(
   let entregaCp: string | null = null;
   let andreaniSucursalId: string | null = null;
   let andreaniSucursalDescripcion: string | null = null;
-  let clienteDireccionPersist = input.clienteDireccion?.trim() || null;
+  let clienteDireccionPersist = resolveClienteDireccionPersist(input);
 
   if (input.checkoutEnvio) {
     const v = await validateCheckoutEnvioForMp(
@@ -1186,20 +1198,14 @@ export async function crearPedidoManual(
       andreaniSucursalId = input.checkoutEnvio.agencyId?.trim() || null;
       andreaniSucursalDescripcion = input.checkoutEnvio.agencyLabel?.trim() || null;
     }
-    const addr = input.checkoutEnvio.address;
-    if (addr) {
-      const parts = [
-        addr.streetName,
-        addr.streetNumber,
-        addr.floor,
-        addr.department,
-        addr.city,
-        addr.state,
-        addr.zipCode,
-      ].filter((x) => x != null && String(x).trim() !== '');
-      clienteDireccionPersist = parts.join(', ');
+    if (input.checkoutEnvio.address) {
+      clienteDireccionPersist = buildClienteDireccionFromAddress(
+        input.checkoutEnvio.address as CheckoutStructuredAddress
+      );
     }
   }
+
+  const factura = normalizeFacturaFields(input);
 
   const total = subtotalPedido.add(costoEnvio);
   const formaPagoValue = input.formaPago === 'efectivo' ? FormaPago.efectivo : FormaPago.transferencia;
@@ -1220,7 +1226,7 @@ export async function crearPedidoManual(
       clienteNombre: input.clienteNombre,
       clienteEmail: input.clienteEmail,
       clienteTelefono: input.clienteTelefono ?? null,
-      clienteDireccion: input.clienteDireccion?.trim() ?? null,
+      clienteDireccion: clienteDireccionPersist,
       subtotal: subtotalPedido,
       descuento,
       iva,
@@ -1233,6 +1239,7 @@ export async function crearPedidoManual(
       checkoutEnvioSnapshot: checkoutEnvioSnapshot ?? undefined,
       formaPago: formaPagoValue,
       observaciones: input.observaciones ?? null,
+      ...factura,
       expiresAt: computeExpiresAtPedidoManual(),
       // --- Campos de cupón ---
       cuponId: cuponIdForPedido,

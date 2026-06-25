@@ -71,6 +71,12 @@ export interface OrderEmailPayload {
   /** Personaliza título, lead o colores del banner sin cambiar el enum `status`. */
   statusUiOverrides?: OrderStatusUiOverrides;
   source?: 'automatic' | 'admin_manual' | 'public_compat';
+  empresaId?: number;
+  facturacion?: {
+    tipo: 'A' | 'C';
+    cuit: string;
+    razonSocial: string;
+  };
 }
 
 export interface ContactEmailPayload {

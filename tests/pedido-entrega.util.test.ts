@@ -75,6 +75,29 @@ describe('pedido-entrega.util', () => {
     );
   });
 
+  it('envío domicilio con piso y barrio en summary', () => {
+    const info = resolvePedidoEntrega({
+      formaEnvio: null,
+      costoEnvio: 1500,
+      checkoutEnvioSnapshot: {
+        provider: 'andreani',
+        deliveryType: 'homeDelivery',
+        cpDestino: '5000',
+        address: {
+          streetName: 'Av. Colón',
+          streetNumber: '100',
+          city: 'Córdoba',
+          zipCode: '5000',
+          floor: '2',
+          barrio: 'Centro',
+        },
+      },
+    });
+
+    assert.ok(info.shippingSummary.includes('Piso 2'));
+    assert.ok(info.shippingSummary.includes('Barrio Centro'));
+  });
+
   it('resolvePedidoEntregaFromPedido usa sfactoryExternalOrderId', () => {
     const info = resolvePedidoEntregaFromPedido({
       id: 47,

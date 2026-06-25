@@ -19,10 +19,14 @@ export function buildStorePickupReadyInstructions(orderRef: string): string {
   ].join(' ');
 }
 
-export function buildStorePickupConfirmInstructions(orderRef: string): string {
+export function buildStorePickupConfirmInstructions(
+  orderRef: string,
+  address?: string
+): string {
+  const dir = address?.trim() || getStorePickupAddress();
   return [
     `Pedido ${orderRef}.`,
-    `Retiro en tienda: ${getStorePickupAddress()}`,
+    `Retiro en tienda: ${dir}`,
     'Te avisaremos por email cuando esté listo para retirar.',
     'Presentá DNI y el número de pedido al retirar.',
   ].join(' ');

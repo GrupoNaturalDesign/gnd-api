@@ -36,6 +36,8 @@ export interface CheckoutEnvioSnapshot {
     zipCode?: string;
     floor?: string;
     department?: string;
+    barrio?: string;
+    loteManzana?: string;
   };
 }
 
@@ -90,7 +92,16 @@ function labelFromSnapshot(snap: CheckoutEnvioSnapshot): { label: string; detall
     const addr = snap.address;
     const street = addr?.streetName ?? addr?.street;
     const parts = addr
-      ? [street, addr.streetNumber, addr.city ?? addr.state, addr.zipCode].filter(Boolean)
+      ? [
+          street,
+          addr.streetNumber,
+          addr.floor ? `Piso ${addr.floor}` : null,
+          addr.department ? `Depto ${addr.department}` : null,
+          addr.barrio ? `Barrio ${addr.barrio}` : null,
+          addr.loteManzana ? `Lote/Mz ${addr.loteManzana}` : null,
+          addr.city ?? addr.state,
+          addr.zipCode,
+        ].filter(Boolean)
       : [];
     const dir = parts.length ? parts.join(', ') : null;
     return {

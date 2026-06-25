@@ -20,91 +20,36 @@ import {
 } from '../services/shipping/shipping.errors';
 import { empresaDatosBancariosService } from '../services/empresa-datos-bancarios.service';
 import { empresaConfigService } from '../services/empresa-config.service';
+import { empresaTiendaConfigService } from '../services/empresa-tienda-config.service';
 import { getInstruccionesPagoForPedido } from '../services/pedido-payment-instructions.service';
+import {
+  normalizeFacturaFields,
+  type CheckoutFacturaInput,
+} from '../utils/checkout-address.util';
 
-function parseParcelForCheckout(raw: unknown): CheckoutEnvioClientPayload['parcel'] | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const p = raw as Record<string, unknown>;
-  const weightGrams = Number(p.weightGrams);
-  const height = Number(p.height);
-  const width = Number(p.width);
-  const depth = Number(p.depth);
-  const declaredValue = Number(p.declaredValue);
+function parseFacturaFromBody(body: Partial<CheckoutFacturaInput>):
+  | ReturnType<typeof normalizeFacturaFields>
+  | { error: string } {
+  const factura = normalizeFacturaFields({
+    necesitaFactura: body.necesitaFactura === true,
+    facturaTipo:
+      body.facturaTipo === 'A' || body.facturaTipo === 'C' ? body.facturaTipo : null,
+    facturaCuit: typeof body.facturaCuit === 'string' ? body.facturaCuit : null,
+    facturaRazonSocial:
+      typeof body.facturaRazonSocial === 'string' ? body.facturaRazonSocial : null,
+  });
   if (
-    !Number.isFinite(weightGrams) ||
-    weightGrams <= 0 ||
-    !Number.isFinite(height) ||
-    height <= 0 ||
-    !Number.isFinite(width) ||
-    width <= 0 ||
-    !Number.isFinite(depth) ||
-    depth <= 0 ||
-    !Number.isFinite(declaredValue) ||
-    declaredValue < 0
+    factura.necesitaFactura &&
+    (!factura.facturaTipo || !factura.facturaCuit || !factura.facturaRazonSocial)
   ) {
-    return null;
+    return {
+      error: 'Si necesitás factura, indicá tipo A o C, CUIT y razón social.',
+    };
   }
-  return { weightGrams, height, width, depth, declaredValue };
+  return factura;
 }
 
-function parseAddressForCheckout(raw: unknown): CheckoutEnvioClientPayload['address'] | undefined {
-  if (!raw || typeof raw !== 'object') return undefined;
-  const a = raw as Record<string, unknown>;
-  const streetName = typeof a.streetName === 'string' ? a.streetName.trim() : '';
-  const streetNumber = typeof a.streetNumber === 'string' ? a.streetNumber.trim() : '';
-  const city = typeof a.city === 'string' ? a.city.trim() : '';
-  const state = typeof a.state === 'string' ? a.state.trim() : '';
-  const zipCode = typeof a.zipCode === 'string' ? a.zipCode.trim() : '';
-  if (!streetName || !city || !state || !zipCode) return undefined;
-  const floor = typeof a.floor === 'string' ? a.floor.trim() : undefined;
-  const department = typeof a.department === 'string' ? a.department.trim() : undefined;
-  return {
-    streetName,
-    streetNumber: streetNumber || 's/n',
-    city,
-    state,
-    zipCode,
-    ...(floor ? { floor } : {}),
-    ...(department ? { department } : {}),
-  };
-}
-
-/** Body opcional `checkoutEnvio` al iniciar MP; validación exhaustiva en servidor. */
-function parseCheckoutEnvio(raw: unknown): CheckoutEnvioClientPayload | null {
-  if (raw == null) return null;
-  if (typeof raw !== 'object') return null;
-  const o = raw as Record<string, unknown>;
-  const provider = o.provider;
-  const deliveryType = o.deliveryType;
-  if (provider !== 'correo' && provider !== 'andreani') return null;
-  if (deliveryType !== 'homeDelivery' && deliveryType !== 'agency') return null;
-  const cpDestino = typeof o.cpDestino === 'string' ? o.cpDestino.trim() : '';
-  if (cpDestino.length < 2) return null;
-  const clientQuotedAmount = Number(o.clientQuotedAmount);
-  if (!Number.isFinite(clientQuotedAmount) || clientQuotedAmount < 0) return null;
-  const agencyId = typeof o.agencyId === 'string' ? o.agencyId.trim() : undefined;
-  const agencyLabel = typeof o.agencyLabel === 'string' ? o.agencyLabel.trim() : undefined;
-  const correoProductTypeRaw = o.correoProductType;
-  const correoProductType =
-    typeof correoProductTypeRaw === 'string' && correoProductTypeRaw.trim()
-      ? correoProductTypeRaw.trim()
-      : undefined;
-  if (deliveryType === 'agency' && !agencyId) return null;
-  const address = parseAddressForCheckout(o.address);
-  if (deliveryType === 'homeDelivery' && !address) return null;
-  const parcel = parseParcelForCheckout(o.parcel) ?? undefined;
-  return {
-    provider,
-    deliveryType,
-    cpDestino,
-    clientQuotedAmount,
-    ...(parcel ? { parcel } : {}),
-    ...(correoProductType ? { correoProductType } : {}),
-    ...(agencyId ? { agencyId } : {}),
-    ...(agencyLabel ? { agencyLabel } : {}),
-    ...(address ? { address } : {}),
-  };
-}
+import { parseCheckoutEnvio } from '../utils/checkout-envio-parse.util';
 
 export class CheckoutController {
   /** GET /api/checkout/resultado — back_urls de Mercado Pago (público). */
@@ -270,6 +215,16 @@ export class CheckoutController {
         return;
       }
 
+      const facturaParsed = parseFacturaFromBody(body);
+      if ('error' in facturaParsed) {
+        res.status(400).json({
+          success: false,
+          error: 'Facturación inválida',
+          message: facturaParsed.error,
+        });
+        return;
+      }
+
       const input: CrearPedidoMpInput = {
         empresaId,
         clienteNombre,
@@ -285,6 +240,7 @@ export class CheckoutController {
         cuponCodigo:
           typeof body.cuponCodigo === 'string' ? body.cuponCodigo.trim() || undefined : undefined,
         mpPricingMode,
+        ...facturaParsed,
       };
 
       const data = await crearPedidoMp(input, usuario.id);
@@ -431,6 +387,16 @@ export class CheckoutController {
         checkoutEnvio = parsed;
       }
 
+      const facturaParsed = parseFacturaFromBody(body);
+      if ('error' in facturaParsed) {
+        res.status(400).json({
+          success: false,
+          error: 'Facturación inválida',
+          message: facturaParsed.error,
+        });
+        return;
+      }
+
       const input: CrearPedidoManualInput = {
         empresaId,
         clienteNombre,
@@ -449,6 +415,7 @@ export class CheckoutController {
         andreaniSucursalDescripcion: checkoutEnvio?.agencyLabel,
         cuponCodigo:
           typeof body.cuponCodigo === 'string' ? body.cuponCodigo.trim() || undefined : undefined,
+        ...facturaParsed,
       };
 
       const data = await crearPedidoManual(input, usuario.id);
@@ -508,6 +475,22 @@ export class CheckoutController {
       res.status(500).json({
         success: false,
         error: 'Error al obtener datos bancarios',
+        message,
+      });
+    }
+  }
+
+  /** GET /api/checkout/config-tienda — contacto, WhatsApp, retiro y copy de pago manual. */
+  async getTiendaConfigPublic(_req: Request, res: Response): Promise<void> {
+    try {
+      const empresaId = getCheckoutEmpresaIdFromEnv();
+      const data = await empresaTiendaConfigService.getTiendaConfigPublic(empresaId);
+      res.json({ success: true, data });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(500).json({
+        success: false,
+        error: 'Error al obtener configuración de tienda',
         message,
       });
     }

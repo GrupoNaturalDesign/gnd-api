@@ -4,7 +4,9 @@ import { requireAdmin } from '../middleware/require-admin.middleware';
 import { empresaMiddleware } from '../middleware/empresa.middleware';
 import { empresaConfigService } from '../services/empresa-config.service';
 import { empresaDatosBancariosService } from '../services/empresa-datos-bancarios.service';
+import { empresaTiendaConfigService } from '../services/empresa-tienda-config.service';
 import { datosBancariosBodySchema } from '../validation/datos-bancarios.validation';
+import { tiendaConfigBodySchema } from '../validation/tienda-config.validation';
 import {
   getEnvioConfig,
   patchEnvioConfig,
@@ -93,6 +95,39 @@ router.patch('/datos-bancarios', async (req, res) => {
     res.json({ success: true, data, message: 'Datos bancarios actualizados' });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error al guardar datos bancarios';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// GET /api/admin/empresa/tienda-config
+router.get('/tienda-config', async (req, res) => {
+  try {
+    const empresaId = (req as { empresaId?: number }).empresaId;
+    const data = await empresaTiendaConfigService.getTiendaConfig(empresaId!);
+    res.json({ success: true, data });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Error al obtener configuración de tienda';
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// PATCH /api/admin/empresa/tienda-config
+router.patch('/tienda-config', async (req, res) => {
+  try {
+    const empresaId = (req as { empresaId?: number }).empresaId;
+    const parsed = tiendaConfigBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        success: false,
+        error: 'Validación fallida',
+        details: parsed.error.flatten(),
+      });
+      return;
+    }
+    const data = await empresaTiendaConfigService.upsertTiendaConfig(empresaId!, parsed.data);
+    res.json({ success: true, data, message: 'Configuración de tienda actualizada' });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Error al guardar configuración de tienda';
     res.status(500).json({ success: false, error: message });
   }
 });

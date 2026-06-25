@@ -12,7 +12,7 @@ let _client: PrismaClient | null = null;
 
 function getTestAdapter(): PrismaMariaDb {
   if (!_adapter) {
-    _adapter = new PrismaMariaDb(getMariaPoolConfig());
+    _adapter = new PrismaMariaDb(getMariaPoolConfig() as ConstructorParameters<typeof PrismaMariaDb>[0]);
   }
   return _adapter;
 }

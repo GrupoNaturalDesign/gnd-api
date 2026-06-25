@@ -57,21 +57,28 @@ function formatDateOnly(d: Date): string {
 
 const cuponEngine = new CuponEngineService();
 
-function addDays(d: Date, days: number): Date {
-  const x = new Date(d);
-  x.setUTCDate(x.getUTCDate() + days);
-  return x;
+function addHours(d: Date, hours: number): Date {
+  return new Date(d.getTime() + hours * 60 * 60 * 1000);
 }
 
-/** Días de gracia para acreditar transferencia/efectivo (checkout web). Env: `CHECKOUT_MANUAL_EXPIRES_DAYS` (default 10). */
+function addDays(d: Date, days: number): Date {
+  return new Date(d.getTime() + days * 24 * 60 * 60 * 1000);
+}
+
+/** Horas de gracia para acreditar transferencia/efectivo (checkout web). Env: `CHECKOUT_MANUAL_EXPIRES_HOURS` (default 48). */
+export function getCheckoutManualExpiresHours(): number {
+  const n = envInt('CHECKOUT_MANUAL_EXPIRES_HOURS', 48);
+  return Math.min(Math.max(n, 1), 720);
+}
+
+/** @deprecated Usar getCheckoutManualExpiresHours */
 export function getCheckoutManualExpiresDays(): number {
-  const n = envInt('CHECKOUT_MANUAL_EXPIRES_DAYS', 10);
-  return Math.min(Math.max(n, 1), 90);
+  return Math.ceil(getCheckoutManualExpiresHours() / 24);
 }
 
 /** Fecha límite de pago para pedidos manuales del ecommerce. */
 export function computeExpiresAtPedidoManual(fechaPedido: Date = new Date()): Date {
-  return addDays(fechaPedido, getCheckoutManualExpiresDays());
+  return addHours(fechaPedido, getCheckoutManualExpiresHours());
 }
 
 function pedidoNotificationPayload(pedido: {
@@ -1054,7 +1061,7 @@ export async function reintentarFallidosSfactory(): Promise<void> {
 /** Job: cerrar pedidos ecommerce sin pago (transferencia/efectivo/MP) tras `expiresAt`. */
 export async function procesarPedidosVencidos(): Promise<void> {
   const now = new Date();
-  const manualDays = getCheckoutManualExpiresDays();
+  const manualHours = getCheckoutManualExpiresHours();
   const mpTimeoutMs = mercadoPagoConfig.getCheckoutMpPendingTimeoutMinutes() * 60 * 1000;
   const mpFallbackCutoff = new Date(now.getTime() - mpTimeoutMs);
 
@@ -1095,7 +1102,7 @@ export async function procesarPedidosVencidos(): Promise<void> {
         const motivoPago =
           pedido.estadoInterno === EstadoPedido.pendiente_pago
             ? 'No se acreditó el pago con Mercado Pago dentro del plazo.'
-            : `No se acreditó el pago (transferencia/efectivo) dentro de ${manualDays} días.`;
+            : `No se acreditó el pago (transferencia/efectivo) dentro de ${manualHours} horas.`;
 
         await prisma.$transaction(async (tx) => {
           await devolverStockPedidoItems(tx, pedido.id);

@@ -1,122 +1,99 @@
-import { describe, it, mock, beforeEach } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { parseCheckoutEnvio } from '../../../src/lib/parse-checkout-envio';
-import { parseParcelForCheckout } from '../../../src/lib/parse-checkout-parcel';
+import {
+  parseCheckoutEnvio,
+  parseParcelForCheckout,
+} from '../../src/utils/checkout-envio-parse.util';
 
-describe('Checkout Integration Tests (CH-01 to CH-07)', () => {
-  describe('CH-01: parseCheckoutEnvio retiro → sin formaEnvio', () => {
-    it('retiro en tienda retorna undefined para formaEnvio', () => {
-      const input = {
-        tipo: 'retiro' as const,
-      };
-      const result = parseCheckoutEnvio(input);
-      assert.strictEqual(result.formaEnvio, undefined);
-    });
+const baseParcel = {
+  weightGrams: 500,
+  height: 10,
+  width: 20,
+  depth: 30,
+  declaredValue: 1000,
+};
 
-    it('retiro no requiere CP', () => {
-      const input = {
-        tipo: 'retiro' as const,
-      };
-      const result = parseCheckoutEnvio(input);
-      assert.ok(result.ok);
+const baseAddress = {
+  streetName: 'Av. Colón',
+  streetNumber: '100',
+  city: 'Córdoba',
+  state: 'Córdoba',
+  zipCode: '5000',
+};
+
+describe('parseCheckoutEnvio', () => {
+  it('andreani domicilio con address y parcel válidos', () => {
+    const result = parseCheckoutEnvio({
+      provider: 'andreani',
+      deliveryType: 'homeDelivery',
+      cpDestino: '5000',
+      clientQuotedAmount: 1500,
+      address: baseAddress,
+      parcel: baseParcel,
     });
+    assert.ok(result);
+    assert.strictEqual(result!.provider, 'andreani');
+    assert.strictEqual(result!.address?.streetNumber, '100');
   });
 
-  describe('CH-02: parseCheckoutEnvio correo domicilio', () => {
-    it('correo domicilio con CP válido', () => {
-      const input = {
-        tipo: 'envio',
-        carrier: 'correo',
-        deliveryType: 'homeDelivery' as const,
-        direccion: {
-          calle: 'Calle Falsa',
-          numero: '123',
-          ciudad: 'Córdoba',
-          provincia: 'Cordoba',
-          codigoPostal: '5000',
-        },
-      };
-      const result = parseCheckoutEnvio(input);
-      assert.strictEqual(result.ok, true);
-      assert.strictEqual(result.formaEnvio, 'correo_domicilio');
-    });
-
-    it('correo domicilio sin CP lanza', () => {
-      const input = {
-        tipo: 'envio',
-        carrier: 'correo',
-        deliveryType: 'homeDelivery' as const,
-        direccion: {
-          calle: 'Calle Falsa',
-          numero: '123',
-          ciudad: 'Córdoba',
-          provincia: 'Cordoba',
-          codigoPostal: '',
-        },
-      };
-      const result = parseCheckoutEnvio(input);
-      assert.strictEqual(result.ok, false);
-    });
+  it('andreani domicilio sin address retorna null', () => {
+    assert.strictEqual(
+      parseCheckoutEnvio({
+        provider: 'andreani',
+        deliveryType: 'homeDelivery',
+        cpDestino: '5000',
+        clientQuotedAmount: 1500,
+      }),
+      null
+    );
   });
 
-  describe('CH-03: parseCheckoutEnvio andreani sucursal', () => {
-    it('andreani sucursal con agencyId', () => {
-      const input = {
-        tipo: 'envio',
-        carrier: 'andreani',
-        deliveryType: 'agency' as const,
-        agencyId: 'sucursal-123',
-      };
-      const result = parseCheckoutEnvio(input);
-      assert.strictEqual(result.ok, true);
-      assert.strictEqual(result.formaEnvio, 'andreani_sucursal');
-      assert.strictEqual(result.direccion?.sucursalId, 'sucursal-123');
+  it('andreani sucursal requiere agencyId', () => {
+    assert.strictEqual(
+      parseCheckoutEnvio({
+        provider: 'andreani',
+        deliveryType: 'agency',
+        cpDestino: '5000',
+        clientQuotedAmount: 800,
+      }),
+      null
+    );
+    const ok = parseCheckoutEnvio({
+      provider: 'andreani',
+      deliveryType: 'agency',
+      cpDestino: '5000',
+      clientQuotedAmount: 800,
+      agencyId: 'suc-1',
     });
-
-    it('andreani sucursal sin agencyId lanza', () => {
-      const input = {
-        tipo: 'envio',
-        carrier: 'andreani',
-        deliveryType: 'agency' as const,
-      };
-      const result = parseCheckoutEnvio(input);
-      assert.strictEqual(result.ok, false);
-    });
+    assert.strictEqual(ok?.agencyId, 'suc-1');
   });
 
-  describe('CH-04: parseParcelForCheckout', () => {
-    it('parsea peso y dimensiones correctas', () => {
-      const input = {
-        weightGrams: 500,
-        lengthCm: 30,
-        widthCm: 20,
-        heightCm: 10,
-      };
-      const result = parseParcelForCheckout(input);
-      assert.strictEqual(result.ok, true);
-      assert.strictEqual(result.parcel.weightGrams, 500);
-    });
+  it('rechaza provider inválido', () => {
+    assert.strictEqual(
+      parseCheckoutEnvio({
+        provider: 'otro',
+        deliveryType: 'homeDelivery',
+        cpDestino: '5000',
+        clientQuotedAmount: 100,
+        address: baseAddress,
+      }),
+      null
+    );
+  });
+});
 
-    it('peso 0 lanza error', () => {
-      const input = {
-        weightGrams: 0,
-        lengthCm: 30,
-        widthCm: 20,
-        heightCm: 10,
-      };
-      const result = parseParcelForCheckout(input);
-      assert.strictEqual(result.ok, false);
-    });
+describe('parseParcelForCheckout', () => {
+  it('parsea peso y dimensiones correctas', () => {
+    const result = parseParcelForCheckout(baseParcel);
+    assert.ok(result);
+    assert.strictEqual(result!.weightGrams, 500);
+  });
 
-    it('peso negativo lanza error', () => {
-      const input = {
-        weightGrams: -100,
-        lengthCm: 30,
-        widthCm: 20,
-        heightCm: 10,
-      };
-      const result = parseParcelForCheckout(input);
-      assert.strictEqual(result.ok, false);
-    });
+  it('peso 0 retorna null', () => {
+    assert.strictEqual(parseParcelForCheckout({ ...baseParcel, weightGrams: 0 }), null);
+  });
+
+  it('peso negativo retorna null', () => {
+    assert.strictEqual(parseParcelForCheckout({ ...baseParcel, weightGrams: -1 }), null);
   });
 });
