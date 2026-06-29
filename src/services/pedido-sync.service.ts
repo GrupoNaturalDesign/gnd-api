@@ -17,6 +17,7 @@ import {
 } from './sfactory/sfactory-orden-pedido.service';
 import { SFACTORY_PE_ESTADO } from './sfactory/sfactory-orden-pedido.config';
 import { stockPreciosSyncService } from './sync/stock-precios-sync.service';
+import { syncStockPedidoItemsAsync } from './sync/pedido-stock-sync.util';
 import { adminNotificationService } from './admin-notification.service';
 import {
   computeExpiresAtPedidoManual,
@@ -406,6 +407,7 @@ export class PedidoSyncService {
     sendPedidoStatusEmailAsync(pedidoId, OrderStatus.CANCELLED, {
       notes: updated.observaciones ?? undefined,
     });
+    syncStockPedidoItemsAsync(pedidoId);
     return updated;
   }
 
@@ -485,6 +487,7 @@ export class PedidoSyncService {
           notes: updated.observaciones ?? undefined,
         });
       }
+      syncStockPedidoItemsAsync(pedidoId);
       return updated;
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);

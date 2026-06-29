@@ -43,6 +43,10 @@ import {
   parseSfactoryOrdenId,
   parseSfactoryTotal,
 } from '../utils/sfactory-pedido-response.util';
+import {
+  debeReservarStockLocal,
+  syncStockPedidoItemsAsync,
+} from './sync/pedido-stock-sync.util';
 
 function envInt(name: string, fallback: number): number {
   const v = process.env[name];
@@ -365,6 +369,8 @@ export async function registrarCotizacionSfactoryParaPedido(
     },
   });
 
+  syncStockPedidoItemsAsync(pedidoId);
+
   return {
     sfactoryOrdenId: ordenId,
     sfactoryEstado: est,
@@ -464,6 +470,8 @@ async function finalizarPedidoConfirmadoEnSfactory(input: {
   await finalizeShippingAfterPaymentApproved(pedidoId);
   await sendPedidoStatusEmail(pedidoId, OrderStatus.CONFIRMED);
 
+  syncStockPedidoItemsAsync(pedidoId);
+
   return { ok: true, pedidoId, message: 'Pedido confirmado en SFactory' };
 }
 
@@ -512,6 +520,10 @@ export async function procesarPedidoConfirmado(pedidoId: number): Promise<Proces
   }
 
   const esReintentoAprobacionErp = puedeReintentarAprobacionErp(pedidoBase);
+  const reservarStockLocal = debeReservarStockLocal({
+    esReintentoAprobacionErp,
+    sfactoryOrdenIdAlInicio: pedidoBase.sfactoryOrdenId,
+  });
 
   const estadosEntradaValidos: EstadoPedido[] = [
     EstadoPedido.pendiente_confirmacion,
@@ -531,7 +543,7 @@ export async function procesarPedidoConfirmado(pedidoId: number): Promise<Proces
   });
   if (!pedidoStockCheck) throw new Error('Pedido no encontrado');
 
-  if (!esReintentoAprobacionErp) {
+  if (reservarStockLocal) {
     for (const line of pedidoStockCheck.items) {
       if (line.productoWebId == null) {
         throw new Error(`Línea ${line.id} sin productoWebId; no se puede reservar stock.`);
@@ -921,6 +933,8 @@ export async function rechazarPedido(pedidoId: number, motivo?: string) {
   sendPedidoStatusEmailAsync(pedidoId, OrderStatus.CANCELLED, {
     notes: updated.observaciones ?? undefined,
   });
+
+  syncStockPedidoItemsAsync(pedidoId);
 
   return updated;
 }

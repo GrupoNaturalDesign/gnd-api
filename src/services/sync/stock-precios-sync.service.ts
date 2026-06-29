@@ -66,7 +66,183 @@ async function runPool<T>(
   }
 }
 
+type VarianteStockRow = {
+  id: number;
+  sfactoryCodigo: string;
+  stockCache: Prisma.Decimal | null;
+  precioCache: Prisma.Decimal | null;
+};
+
+interface BatchSyncAccum {
+  variantesActualizadas: number;
+  variantesOmitidas: number;
+  preciosActualizados: number;
+  lotes: number;
+  llamadasApi: number;
+  codigosOmitidos: string[];
+};
+
+function emptyStockPreciosResult(warehouseId: number): StockPreciosSyncResult {
+  return {
+    warehouseId,
+    codigosConsultados: 0,
+    variantesActualizadas: 0,
+    variantesOmitidas: 0,
+    preciosActualizados: 0,
+    lotes: 0,
+    llamadasApi: 0,
+    codigosOmitidos: [],
+    variantesDesactivadas: 0,
+    variantesActivadas: 0,
+    padresDespublicados: 0,
+  };
+}
+
 export class StockPreciosSyncService {
+  private async syncVariantesStockFromSfactory(
+    wid: number,
+    codigos: string[],
+    varianteByCodigo: Map<string, VarianteStockRow>,
+    acc: BatchSyncAccum,
+    inventarioPorCodigo?: Map<string, InventarioDepositoRow>
+  ): Promise<void> {
+    for (let i = 0; i < codigos.length; i += BATCH_CODES) {
+      const chunk = codigos.slice(i, i + BATCH_CODES);
+      acc.lotes++;
+
+      const { rows, apiCalls: calls } = await fetchStockRowsResilient(
+        wid,
+        chunk,
+        acc.codigosOmitidos
+      );
+      acc.llamadasApi += calls;
+      for (const row of rows) {
+        const inv = inventarioDesdeStockRow(row);
+        if (inventarioPorCodigo) {
+          inventarioPorCodigo.set(row.item_code, inv);
+        }
+      }
+
+      const tareas = rows
+        .map((row) => {
+          const variante = varianteByCodigo.get(row.item_code);
+          if (variante == null) return null;
+          return { row, variante };
+        })
+        .filter(
+          (x): x is { row: StockRow; variante: VarianteStockRow } => x != null
+        );
+
+      await runPool(tareas, getDbWriteConcurrency(), async ({ row, variante }) => {
+        const stock = Number(row.stock ?? 0);
+        const saleRaw = row.sale_price != null ? Number(row.sale_price) : null;
+        const saleOk =
+          saleRaw != null && !Number.isNaN(saleRaw) && saleRaw > 0
+            ? saleRaw
+            : null;
+
+        const decision = shouldUpdateStockPrecio(
+          { stockCache: variante.stockCache, precioCache: variante.precioCache },
+          { stock, saleOk }
+        );
+        if (decision.skip) {
+          acc.variantesOmitidas++;
+          return;
+        }
+
+        const updateData: Prisma.ProductoWebUpdateInput = {
+          ultimaSyncSfactory: new Date(),
+        };
+        if (decision.updateStock) {
+          updateData.stockCache = new Prisma.Decimal(stock);
+        }
+        if (decision.updatePrecio && saleOk != null) {
+          updateData.precioCache = new Prisma.Decimal(saleOk);
+        }
+
+        await prisma.productoWeb.update({
+          where: { id: variante.id },
+          data: updateData,
+        });
+
+        if (decision.updatePrecio && saleOk != null) {
+          await productoPrecioService.upsert({
+            productoWebId: variante.id,
+            tipoCliente: 'minorista',
+            precioLista: saleOk,
+          });
+          acc.preciosActualizados++;
+        }
+
+        acc.variantesActualizadas++;
+      });
+    }
+  }
+
+  /**
+   * Actualiza stock/precio solo para los códigos indicados (p. ej. ítems de un pedido).
+   * No ejecuta purge masivo de activoSfactory.
+   */
+  async syncStockPreciosPorCodigos(
+    empresaId: number,
+    codigosInput: string[],
+    warehouseId?: number
+  ): Promise<StockPreciosSyncResult> {
+    const wid = warehouseId ?? getEcommerceWarehouseId();
+    const codigos = [...new Set(codigosInput.map((c) => c.trim()).filter(Boolean))];
+    if (codigos.length === 0) {
+      return emptyStockPreciosResult(wid);
+    }
+
+    const variantes = await prisma.productoWeb.findMany({
+      where: {
+        empresaId,
+        sfactoryCodigo: { in: codigos },
+      },
+      select: {
+        id: true,
+        sfactoryCodigo: true,
+        stockCache: true,
+        precioCache: true,
+      },
+    });
+
+    const varianteByCodigo = new Map(variantes.map((v) => [v.sfactoryCodigo, v]));
+    const acc: BatchSyncAccum = {
+      variantesActualizadas: 0,
+      variantesOmitidas: 0,
+      preciosActualizados: 0,
+      lotes: 0,
+      llamadasApi: 0,
+      codigosOmitidos: [],
+    };
+
+    await this.syncVariantesStockFromSfactory(wid, codigos, varianteByCodigo, acc);
+
+    if (acc.variantesActualizadas === 0 && codigos.length > 0) {
+      console.warn(
+        '[StockPreciosSync] sync parcial: 0 variantes actualizadas para',
+        codigos.length,
+        'código(s). Depósito:',
+        wid
+      );
+    }
+
+    return {
+      warehouseId: wid,
+      codigosConsultados: codigos.length,
+      variantesActualizadas: acc.variantesActualizadas,
+      variantesOmitidas: acc.variantesOmitidas,
+      preciosActualizados: acc.preciosActualizados,
+      lotes: acc.lotes,
+      llamadasApi: acc.llamadasApi,
+      codigosOmitidos: acc.codigosOmitidos,
+      variantesDesactivadas: 0,
+      variantesActivadas: 0,
+      padresDespublicados: 0,
+    };
+  }
+
   /**
    * Actualiza stock (y precio minorista si sale_price > 0) desde el depósito ecommerce
    * para variantes de rubros WORKWEAR + OFFICE.
@@ -108,85 +284,35 @@ export class StockPreciosSyncService {
     const codigos = variantes.map((v) => v.sfactoryCodigo).filter(Boolean);
     const varianteByCodigo = new Map(variantes.map((v) => [v.sfactoryCodigo, v]));
 
-    let variantesActualizadas = 0;
-    let variantesOmitidas = 0;
-    let preciosActualizados = 0;
-    let lotes = 0;
-    let llamadasApi = 0;
-    const codigosOmitidos: string[] = [];
+    const acc: BatchSyncAccum = {
+      variantesActualizadas: 0,
+      variantesOmitidas: 0,
+      preciosActualizados: 0,
+      lotes: 0,
+      llamadasApi: 0,
+      codigosOmitidos: [],
+    };
     const inventarioPorCodigo = new Map<string, InventarioDepositoRow>();
     for (const c of codigos) {
       inventarioPorCodigo.set(c, { stock: 0, salePrice: null });
     }
 
-    for (let i = 0; i < codigos.length; i += BATCH_CODES) {
-      const chunk = codigos.slice(i, i + BATCH_CODES);
-      lotes++;
+    await this.syncVariantesStockFromSfactory(
+      wid,
+      codigos,
+      varianteByCodigo,
+      acc,
+      inventarioPorCodigo
+    );
 
-      const { rows, apiCalls: calls } = await fetchStockRowsResilient(
-        wid,
-        chunk,
-        codigosOmitidos
-      );
-      llamadasApi += calls;
-      for (const row of rows) {
-        inventarioPorCodigo.set(row.item_code, inventarioDesdeStockRow(row));
-      }
-
-      const tareas = rows
-        .map((row) => {
-          const variante = varianteByCodigo.get(row.item_code);
-          if (variante == null) return null;
-          return { row, variante };
-        })
-        .filter(
-          (x): x is { row: StockRow; variante: (typeof variantes)[number] } => x != null
-        );
-
-      await runPool(tareas, getDbWriteConcurrency(), async ({ row, variante }) => {
-        const stock = Number(row.stock ?? 0);
-        const saleRaw = row.sale_price != null ? Number(row.sale_price) : null;
-        const saleOk =
-          saleRaw != null && !Number.isNaN(saleRaw) && saleRaw > 0
-            ? saleRaw
-            : null;
-
-        const decision = shouldUpdateStockPrecio(
-          { stockCache: variante.stockCache, precioCache: variante.precioCache },
-          { stock, saleOk }
-        );
-        if (decision.skip) {
-          variantesOmitidas++;
-          return;
-        }
-
-        const updateData: Prisma.ProductoWebUpdateInput = {
-          ultimaSyncSfactory: new Date(),
-        };
-        if (decision.updateStock) {
-          updateData.stockCache = new Prisma.Decimal(stock);
-        }
-        if (decision.updatePrecio && saleOk != null) {
-          updateData.precioCache = new Prisma.Decimal(saleOk);
-        }
-
-        await prisma.productoWeb.update({
-          where: { id: variante.id },
-          data: updateData,
-        });
-
-        if (decision.updatePrecio && saleOk != null) {
-          await productoPrecioService.upsert({
-            productoWebId: variante.id,
-            tipoCliente: 'minorista',
-            precioLista: saleOk,
-          });
-          preciosActualizados++;
-        }
-
-        variantesActualizadas++;
-      });
-    }
+    const {
+      variantesActualizadas,
+      variantesOmitidas,
+      preciosActualizados,
+      lotes,
+      llamadasApi,
+      codigosOmitidos,
+    } = acc;
 
     if (variantesActualizadas === 0 && codigos.length > 0) {
       console.warn(
