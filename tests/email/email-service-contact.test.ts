@@ -70,7 +70,7 @@ describe('emailService.sendContactConfirmation', () => {
   test('envía email al cliente y al equipo de ventas, retorna success', async () => {
     process.env.RESEND_API_KEY = 're_test';
     process.env.RESEND_FROM_TRANSACTIONAL = 'GND <pedidos@test.com>';
-    process.env.RESEND_CONTACT_INTERNAL_TO = 'ventas@test.com';
+    process.env.RESEND_INTERNAL_TO = 'ventas@test.com';
 
     const { emailService } = await import('../../../lib/email/email.service');
 
@@ -92,7 +92,7 @@ describe('emailService.sendContactConfirmation', () => {
   test('loggea sent para ambos envíos', async () => {
     process.env.RESEND_API_KEY = 're_test';
     process.env.RESEND_FROM_TRANSACTIONAL = 'GND <pedidos@test.com>';
-    process.env.RESEND_CONTACT_INTERNAL_TO = 'ventas@test.com';
+    process.env.RESEND_INTERNAL_TO = 'ventas@test.com';
 
     const { emailService } = await import('../../../lib/email/email.service');
 
@@ -110,7 +110,7 @@ describe('emailService.sendContactConfirmation', () => {
   test('si falla email al cliente, no envía al equipo y retorna error', async () => {
     process.env.RESEND_API_KEY = 're_test';
     process.env.RESEND_FROM_TRANSACTIONAL = 'GND <pedidos@test.com>';
-    process.env.RESEND_CONTACT_INTERNAL_TO = 'ventas@test.com';
+    process.env.RESEND_INTERNAL_TO = 'ventas@test.com';
     customerError = { statusCode: 500, message: 'Server error' };
 
     const { emailService } = await import('../../../lib/email/email.service');
@@ -129,7 +129,7 @@ describe('emailService.sendContactConfirmation', () => {
   test('si falla email al equipo, retorna error pero el cliente sí se envió', async () => {
     process.env.RESEND_API_KEY = 're_test';
     process.env.RESEND_FROM_TRANSACTIONAL = 'GND <pedidos@test.com>';
-    process.env.RESEND_CONTACT_INTERNAL_TO = 'ventas@test.com';
+    process.env.RESEND_INTERNAL_TO = 'ventas@test.com';
     teamError = { statusCode: 500, message: 'Internal error' };
 
     const { emailService } = await import('../../../lib/email/email.service');
@@ -163,10 +163,10 @@ describe('emailService.sendContactConfirmation', () => {
     assert.strictEqual(sendCallCount, 0);
   });
 
-  test('usa RESEND_CONTACT_INTERNAL_TO como destinatario del equipo', async () => {
+  test('usa RESEND_INTERNAL_TO como destinatario del equipo', async () => {
     process.env.RESEND_API_KEY = 're_test';
     process.env.RESEND_FROM_TRANSACTIONAL = 'GND <pedidos@test.com>';
-    process.env.RESEND_CONTACT_INTERNAL_TO = 'atencion@empresa.com';
+    process.env.RESEND_INTERNAL_TO = 'atencion@empresa.com';
 
     const { emailService } = await import('../../../lib/email/email.service');
 

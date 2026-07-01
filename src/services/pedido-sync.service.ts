@@ -492,6 +492,49 @@ export class PedidoSyncService {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       await crearLogSfactory(pedidoId, PedidoSfactoryAccion.editar, editPayload, false, undefined, msg);
+      const esImpago =
+        (pedido.estadoInterno === EstadoPedido.pendiente_pago ||
+          pedido.estadoInterno === EstadoPedido.pendiente_confirmacion) &&
+        !(
+          pedido.formaPago === FormaPago.mercado_pago &&
+          pedido.mercadoPagoStatus === 'approved' &&
+          pedido.mercadoPagoPaymentId != null
+        );
+      if (esImpago) {
+        await prisma.$transaction(async (tx) => {
+          await devolverStockSiReservado(tx, pedidoId);
+          await tx.pedido.update({
+            where: { id: pedidoId },
+            data: {
+              estadoInterno: EstadoPedido.cancelado,
+              syncStatus: PedidoSyncStatus.error,
+              syncError: msg,
+              observaciones: motivo
+                ? `${pedido.observaciones ?? ''}\n[Cancelación admin] ${motivo}`.trim()
+                : pedido.observaciones,
+            },
+          });
+        });
+        const updated = await this.detalle(empresaId, pedidoId);
+        if (updated) {
+          await this.notifyCancelled(empresaId, updated, pedido.estadoInterno);
+          await adminNotificationService.notifyPedido({
+            empresaId,
+            type: 'pedido.sync_failed',
+            pedidoId,
+            severity: AdminNotificationSeverity.error,
+            title: `Pedido #${pedidoId}: no se pudo cancelar PE SFactory`,
+            message: msg,
+            payload: pedidoNotificationPayload(updated, { error: msg }),
+            dedupe: false,
+          });
+          sendPedidoStatusEmailAsync(pedidoId, OrderStatus.CANCELLED, {
+            notes: updated.observaciones ?? undefined,
+          });
+        }
+        syncStockPedidoItemsAsync(pedidoId);
+        return updated;
+      }
       await prisma.pedido.update({
         where: { id: pedidoId },
         data: { syncStatus: PedidoSyncStatus.error, syncError: msg },

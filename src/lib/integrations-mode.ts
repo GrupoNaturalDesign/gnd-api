@@ -137,6 +137,12 @@ function assertMercadoPagoCredentials(mode: IntegrationsMode): void {
         'INTEGRATIONS_ENV=production requiere MERCADOPAGO_ACCESS_TOKEN_PROD o MERCADOPAGO_ACCESS_TOKEN.'
       );
     }
+    const collectorId = trimEnv('MERCADOPAGO_COLLECTOR_ID');
+    if (!collectorId || !/^\d+$/.test(collectorId)) {
+      throw new Error(
+        'INTEGRATIONS_ENV=production requiere MERCADOPAGO_COLLECTOR_ID numerico para validar el cobrador del webhook.'
+      );
+    }
     return;
   }
   const token = firstNonEmpty(

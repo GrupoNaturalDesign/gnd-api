@@ -4,6 +4,7 @@ import {
   getDefaultWhatsappPhone,
   getDefaultWhatsappMessage,
   getDefaultRetiroDireccion,
+  resolveEmailPedidosInternoSync,
 } from '../src/services/empresa-tienda-config.service';
 import { getCheckoutManualExpiresHours } from '../src/services/pedido-checkout.service';
 
@@ -47,5 +48,17 @@ describe('empresaTiendaConfigService fallbacks', () => {
     saveEnv('CHECKOUT_MANUAL_EXPIRES_HOURS');
     delete process.env.CHECKOUT_MANUAL_EXPIRES_HOURS;
     assert.strictEqual(getCheckoutManualExpiresHours(), 48);
+  });
+
+  it('resolveEmailPedidosInternoSync prioriza admin y cae a RESEND_INTERNAL_TO', () => {
+    saveEnv('RESEND_INTERNAL_TO');
+    process.env.RESEND_INTERNAL_TO = ' fallback@test.com ';
+
+    assert.strictEqual(resolveEmailPedidosInternoSync(' pedidos@test.com '), 'pedidos@test.com');
+    assert.strictEqual(resolveEmailPedidosInternoSync(null), 'fallback@test.com');
+    assert.strictEqual(resolveEmailPedidosInternoSync(''), 'fallback@test.com');
+
+    delete process.env.RESEND_INTERNAL_TO;
+    assert.strictEqual(resolveEmailPedidosInternoSync(null), null);
   });
 });

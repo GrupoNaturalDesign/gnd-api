@@ -12,6 +12,7 @@ import prisma from '../lib/prisma';
 import { sfactoryService } from './sfactory/sfactory.service';
 import {
   aprobarOrdenPedidoEnSfactory,
+  cancelarOrdenPedidoEnSfactory,
   puedeReintentarAprobacionErp,
 } from './sfactory/sfactory-orden-pedido.service';
 import { SFACTORY_PE_ESTADO } from './sfactory/sfactory-orden-pedido.config';
@@ -350,6 +351,19 @@ export async function registrarCotizacionSfactoryParaPedido(
     );
   }
 
+  if (ordenId == null) {
+    const msg = 'SFactory no devolvio ID de orden; no se puede cobrar el pedido';
+    await crearLogSfactory(
+      pedidoId,
+      PedidoSfactoryAccion.crear,
+      params,
+      false,
+      response,
+      msg
+    );
+    throw new Error(msg);
+  }
+
   const totalACobrar = computeTotalACobrar(sfactoryTotal, costoEnvio);
 
   await crearLogSfactory(pedidoId, PedidoSfactoryAccion.crear, params, true, response, null);
@@ -364,7 +378,7 @@ export async function registrarCotizacionSfactoryParaPedido(
       subtotal: new Prisma.Decimal(sfactoryTotal),
       total: new Prisma.Decimal(totalACobrar),
       syncStatus: PedidoSyncStatus.pending,
-      sfactoryError: ordenId == null ? 'SFactory no devolvió un id de orden parseable.' : null,
+      sfactoryError: null,
       fechaEnvioSfactory: new Date(),
     },
   });
@@ -482,6 +496,99 @@ export interface ProcesarPedidoResult {
   message?: string;
 }
 
+function mpPagoAprobado(pedido: {
+  formaPago?: FormaPago | null;
+  mercadoPagoStatus?: string | null;
+  mercadoPagoPaymentId?: string | null;
+}): boolean {
+  return (
+    pedido.formaPago === FormaPago.mercado_pago &&
+    pedido.mercadoPagoStatus === 'approved' &&
+    pedido.mercadoPagoPaymentId != null
+  );
+}
+
+export async function cancelarCotizacionSfactoryImpaga(input: {
+  pedido: {
+    id: number;
+    empresaId: number;
+    estadoInterno: EstadoPedido;
+    formaPago?: FormaPago | null;
+    mercadoPagoStatus?: string | null;
+    mercadoPagoPaymentId?: string | null;
+    sfactoryOrdenId: number | null;
+    clienteNombre?: string | null;
+  };
+  companyKey?: string | null;
+  motivo: string;
+}): Promise<{ ok: true; response?: unknown } | { ok: false; error: string }> {
+  const { pedido, companyKey, motivo } = input;
+  if (pedido.sfactoryOrdenId == null) return { ok: true };
+  if (mpPagoAprobado(pedido)) {
+    return { ok: false, error: 'El pago MP ya esta aprobado; no se cancela PE automaticamente.' };
+  }
+
+  const readPayload = { orderId: pedido.sfactoryOrdenId, motivo };
+  try {
+    const result = await cancelarOrdenPedidoEnSfactory(
+      pedido.sfactoryOrdenId,
+      companyKey ?? undefined,
+      motivo
+    );
+    await crearLogSfactory(pedido.id, PedidoSfactoryAccion.leer, readPayload, true, result.remote, null);
+    await crearLogSfactory(
+      pedido.id,
+      PedidoSfactoryAccion.editar,
+      result.editPayload ?? { skippedEdit: result.skippedEdit, estado: SFACTORY_PE_ESTADO.cancelado },
+      true,
+      result.response,
+      null
+    );
+    await prisma.pedido.update({
+      where: { id: pedido.id },
+      data: {
+        estadoErp: OrderStatus.CANCELLED,
+        sfactoryEstado: SFACTORY_PE_ESTADO.cancelado,
+        syncStatus: PedidoSyncStatus.synced,
+        syncError: null,
+        sfactorySyncedAt: new Date(),
+        sfactorySnapshot: result.response as Prisma.InputJsonValue,
+      },
+    });
+    return { ok: true, response: result.response };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    await crearLogSfactory(pedido.id, PedidoSfactoryAccion.editar, readPayload, false, undefined, msg);
+    await prisma.pedido.update({
+      where: { id: pedido.id },
+      data: {
+        syncStatus: PedidoSyncStatus.error,
+        syncError: msg,
+      },
+    });
+    await notifyPedidoCheckout({
+      empresaId: pedido.empresaId,
+      type: 'pedido.sync_failed',
+      pedidoId: pedido.id,
+      severity: AdminNotificationSeverity.error,
+      title: `Pedido #${pedido.id}: no se pudo cancelar PE SFactory`,
+      message: msg,
+      payload: pedidoNotificationPayload(
+        {
+          id: pedido.id,
+          estadoInterno: pedido.estadoInterno,
+          syncStatus: PedidoSyncStatus.error,
+          sfactoryOrdenId: pedido.sfactoryOrdenId,
+          clienteNombre: pedido.clienteNombre ?? undefined,
+        },
+        { motivo }
+      ),
+      dedupe: false,
+    });
+    return { ok: false, error: msg };
+  }
+}
+
 /**
  * Confirmación final: stock web, creación de orden en SFactory, estado confirmado o fallido.
  * Idempotente si el pedido ya está confirmado / en curso logístico.
@@ -539,7 +646,7 @@ export async function procesarPedidoConfirmado(pedidoId: number): Promise<Proces
 
   const pedidoStockCheck = await prisma.pedido.findUnique({
     where: { id: pedidoId },
-    include: { items: true },
+    include: { items: true, empresa: true },
   });
   if (!pedidoStockCheck) throw new Error('Pedido no encontrado');
 
@@ -888,7 +995,7 @@ async function devolverStockPedidoItems(
 export async function rechazarPedido(pedidoId: number, motivo?: string) {
   const pedido = await prisma.pedido.findUnique({
     where: { id: pedidoId },
-    include: { items: true },
+    include: { items: true, empresa: true },
   });
   if (!pedido) throw new Error('Pedido no encontrado');
 
@@ -1105,7 +1212,7 @@ export async function procesarPedidosVencidos(): Promise<void> {
         },
       ],
     },
-    include: { items: true },
+    include: { items: true, empresa: true },
   });
 
   for (const pedido of candidatos) {
@@ -1129,6 +1236,12 @@ export async function procesarPedidosVencidos(): Promise<void> {
               syncError: null,
             },
           });
+        });
+
+        await cancelarCotizacionSfactoryImpaga({
+          pedido,
+          companyKey: pedido.empresa.sfactoryCompanyKey,
+          motivo: motivoPago,
         });
 
         await crearLogSfactory(

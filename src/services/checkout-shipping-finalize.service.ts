@@ -321,6 +321,8 @@ export async function reintentarEnviosPostalPendientes(limit = 20): Promise<{
     const { trackingNumber } = resolvePedidoShippingTracking(row);
     if (trackingNumber) continue;
 
+    const snap = parseCheckoutEnvioSnapshot(row.checkoutEnvioSnapshot);
+    if (!resolveProvider(snap, row.formaEnvio)) continue;
     processed += 1;
     const r = await finalizeShippingAfterPaymentApproved(row.id);
     if (r.ok && !r.error) ok += 1;

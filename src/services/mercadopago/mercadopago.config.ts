@@ -19,7 +19,7 @@ export type MercadoPagoMode = 'sandbox' | 'production';
  * - Si no está definida, en desarrollo se usa `NGROK_URL` + `/api/webhooks/mercadopago`.
  * - Firma: `MERCADOPAGO_WEBHOOK_SECRET` (secreto de la app en el panel MP). En live se exige si
  *   `MP_WEBHOOK_SIGNATURE_REQUIRED=true` (default recomendado en producción).
- * - `MERCADOPAGO_COLLECTOR_ID`: id numérico del cobrador en live (validación opcional pero recomendada).
+ * - `MERCADOPAGO_COLLECTOR_ID`: id numérico del cobrador en live (obligatorio en producción).
  */
 function isLiveMode(): boolean {
   return isIntegrationsLive();

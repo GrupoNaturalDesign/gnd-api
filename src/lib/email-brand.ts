@@ -20,7 +20,7 @@ export const BRAND_FOOTER = {
 } as const;
 
 export function getBrandLogoUrl(): string {
-  return process.env.BRAND_LOGO_URL ?? 'https://naturalonline.com.ar/logos/logo-2.svg';
+  return process.env.BRAND_LOGO_URL ?? 'https://naturalonline.com.ar/logos/logo-3.svg';
 }
 
 export function getWhatsAppHref(): string {

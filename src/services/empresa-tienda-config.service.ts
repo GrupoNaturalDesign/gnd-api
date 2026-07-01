@@ -75,9 +75,17 @@ export function getDefaultRetiroDireccion(): string {
   return process.env.STORE_PICKUP_ADDRESS?.trim() || DEFAULT_RETIRO_DIRECCION;
 }
 
+/** Admin → `RESEND_INTERNAL_TO`. Única resolución para pedidos, contacto y copy de comprobante. */
+export function resolveEmailPedidosInternoSync(dbValue?: string | null): string | null {
+  const fromDb = dbValue?.trim();
+  if (fromDb) return fromDb;
+  const fromEnv = process.env.RESEND_INTERNAL_TO?.trim();
+  return fromEnv || null;
+}
+
 function buildPublicFromRecord(row: TiendaConfigRecord | null): TiendaConfigPublic {
   return {
-    emailPedidosInterno: row?.emailPedidosInterno?.trim() || null,
+    emailPedidosInterno: resolveEmailPedidosInternoSync(row?.emailPedidosInterno),
     whatsappTelefono: row?.whatsappTelefono?.trim() || getDefaultWhatsappPhone(),
     whatsappMensajeDefault:
       row?.whatsappMensajeDefault?.trim() || getDefaultWhatsappMessage(),
@@ -105,10 +113,7 @@ export const empresaTiendaConfigService = {
 
   async resolveEmailPedidosInterno(empresaId: number): Promise<string | null> {
     const row = await this.getTiendaConfig(empresaId);
-    const fromDb = row?.emailPedidosInterno?.trim();
-    if (fromDb) return fromDb;
-    const fromEnv = process.env.RESEND_INTERNAL_TO?.trim();
-    return fromEnv || null;
+    return resolveEmailPedidosInternoSync(row?.emailPedidosInterno);
   },
 
   async resolveRetiroDireccion(empresaId: number): Promise<string> {

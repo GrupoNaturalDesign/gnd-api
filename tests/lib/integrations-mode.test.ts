@@ -15,6 +15,7 @@ const ENV_KEYS = [
   'CORREO_DEFAULT_ENV',
   'ANDREANI_DEFAULT_ENV',
   'CORREO_ENV',
+  'MERCADOPAGO_COLLECTOR_ID',
   'MERCADOPAGO_ACCESS_TOKEN_TEST',
   'MERCADOPAGO_ACCESS_TOKEN_PROD',
   'CORREO_USERNAME_QA',
@@ -104,10 +105,31 @@ describe('integrations-mode — assertIntegrationsConfigAtStartup', () => {
     delete process.env.CORREO_MOCK;
     delete process.env.ANDREANI_MOCK;
     process.env.MERCADOPAGO_ACCESS_TOKEN_PROD = 'tok';
+    process.env.MERCADOPAGO_COLLECTOR_ID = '123456';
     process.env.ANDREANI_USERNAME_PROD = 'u';
     process.env.ANDREANI_PASSWORD_PROD = 'p';
     delete process.env.CORREO_USERNAME_PROD;
     assert.throws(() => assertIntegrationsConfigAtStartup(), /CORREO_USERNAME_PROD/);
+  });
+
+  it('prod sin MERCADOPAGO_COLLECTOR_ID numerico lanza', () => {
+    process.env.INTEGRATIONS_ENV = 'production';
+    process.env.MERCADOPAGO_ACCESS_TOKEN_PROD = 'tok';
+    process.env.CORREO_USERNAME_PROD = 'u';
+    process.env.CORREO_PASSWORD_PROD = 'p';
+    process.env.ANDREANI_USERNAME_PROD = 'u';
+    process.env.ANDREANI_PASSWORD_PROD = 'p';
+    delete process.env.MERCADOPAGO_COLLECTOR_ID;
+    assert.throws(
+      () => assertIntegrationsConfigAtStartup(),
+      /MERCADOPAGO_COLLECTOR_ID numerico/
+    );
+
+    process.env.MERCADOPAGO_COLLECTOR_ID = 'abc';
+    assert.throws(
+      () => assertIntegrationsConfigAtStartup(),
+      /MERCADOPAGO_COLLECTOR_ID numerico/
+    );
   });
 
   it('conflicto INTEGRATIONS_ENV=test + CORREO_DEFAULT_ENV=prod lanza', () => {

@@ -16,6 +16,7 @@ import {
   type ManualPaymentInstructionsEmailProps,
 } from '../../emails/ManualPaymentInstructionsEmail';
 import { unsubscribeService } from './unsubscribe.service';
+import { tryGetEmpresaIdFromEnv } from '../checkout-empresa';
 import { empresaTiendaConfigService } from '../../services/empresa-tienda-config.service';
 import type {
   ContactEmailPayload,
@@ -46,14 +47,9 @@ function getInternalToEnv(): string | undefined {
 
 async function resolveInternalTo(empresaId?: number): Promise<string | undefined> {
   if (empresaId != null) {
-    const fromDb = await empresaTiendaConfigService.resolveEmailPedidosInterno(empresaId);
-    if (fromDb) return fromDb;
+    return (await empresaTiendaConfigService.resolveEmailPedidosInterno(empresaId)) ?? undefined;
   }
   return getInternalToEnv();
-}
-
-function getContactInternalTo(): string {
-  return process.env.RESEND_CONTACT_INTERNAL_TO ?? 'ventas@naturalonline.com.ar';
 }
 
 const DEFAULT_MAX_RETRIES = 3;
@@ -433,7 +429,18 @@ export const emailService = {
       metadata: { step: 'customer' },
     });
 
-    const internalTo = getContactInternalTo();
+    const internalTo = await resolveInternalTo(tryGetEmpresaIdFromEnv() ?? undefined);
+    if (!internalTo) {
+      const err = 'Email interno no configurado (admin o RESEND_INTERNAL_TO).';
+      await logEmail({
+        type: 'internal',
+        to: '—',
+        status: 'failed',
+        error: err,
+        metadata: { kind: 'contact_lead' },
+      });
+      return { success: false, error: err };
+    }
     const htmlTeam = await render(
       createElement(ContactConfirmationEmail, {
         ...data,
