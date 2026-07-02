@@ -27,6 +27,7 @@ export class FTPService {
         user: this.config.user,
         password: this.config.password,
         port: this.config.port,
+        secure: true,
       });
 
       // Cambiar al directorio base
