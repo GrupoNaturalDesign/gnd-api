@@ -905,7 +905,7 @@ export class ProductoSyncService {
                     item.color,
                     codigoStr
                   );
-                  if (productoSfactoryItem) {
+                    if (productoSfactoryItem) {
                     const parseado = parsearNombreProducto(
                       descripcionVariante,
                       codigoStr
@@ -916,7 +916,12 @@ export class ProductoSyncService {
                       item.color,
                       codigoStr
                     );
-                    if (!talle) talle = parseado.talle;
+                    // Siempre preferir parseo desde descripción SF (evita pisar M→OS por agrupación vieja)
+                    if (parseado.talle != null) {
+                      talle = parseado.talle;
+                    } else if (!talle) {
+                      talle = null;
+                    }
                   }
                   const nombreVariante = nombre;
                   const sfactoryId =
@@ -1487,7 +1492,11 @@ export class ProductoSyncService {
           item.color,
           codigoStr
         );
-        if (!talle) talle = parseado.talle;
+        if (parseado.talle != null) {
+          talle = parseado.talle;
+        } else if (!talle) {
+          talle = null;
+        }
         const nombreVariante = nombre;
         const descripcionCompleta = '';
         const sfactoryId = productoSfactory.sfactory_id || (producto as any).id || (producto as any).Id || 0;

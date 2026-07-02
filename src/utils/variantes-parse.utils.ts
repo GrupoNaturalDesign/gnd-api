@@ -20,6 +20,16 @@ export type IndicesParseo = {
  * Busca talle desde el final hacia atrás (no solo la última palabra).
  * Así detecta talle aunque después haya otro token o el color esté al final sin talle.
  */
+/** "OS" tras "MEL" / "MELANGE" es abreviatura de oscuro (color), no talle. */
+export function esOsAbreviaturaColorMelOscuro(
+  palabras: string[],
+  index: number,
+): boolean {
+  if (palabras[index]?.toUpperCase() !== 'OS') return false;
+  const prev = palabras[index - 1]?.toUpperCase();
+  return prev === 'MEL' || prev === 'MELANGE';
+}
+
 export function extraerTalleDesdePalabras(
   palabras: string[],
   indicesExcluir: Set<number> = new Set()
@@ -28,6 +38,7 @@ export function extraerTalleDesdePalabras(
     if (indicesExcluir.has(i)) continue;
     const palabra = palabras[i];
     if (!palabra) continue;
+    if (esOsAbreviaturaColorMelOscuro(palabras, i)) continue;
     const canon = canonizarTalle(palabra);
     // UNISEX al final se resuelve en resolverUnisexFinal (género o talle según contexto)
     if (canon && canon !== 'UNISEX') {
@@ -120,15 +131,7 @@ export function extraerSexoDesdePalabras(
   palabras: string[],
   textoCompleto: string
 ): { sexoRaw: string | null; indiceSexo: number } {
-  for (let i = 0; i < palabras.length; i++) {
-    const palabra = palabras[i];
-    if (!palabra) continue;
-    const lower = palabra.toLowerCase().trim();
-    if (GENERO_ALIASES.some((a) => a === lower)) {
-      return { sexoRaw: palabra, indiceSexo: i };
-    }
-  }
-
+  // H / D sueltos antes que m/f: evita confundir talle M final con masculino (ej. "... H GRIS MEL OS M").
   for (let i = 0; i < palabras.length; i++) {
     const palabra = palabras[i];
     if (!palabra) continue;
@@ -138,6 +141,20 @@ export function extraerSexoDesdePalabras(
     }
     if (upper === 'D' && !/\bDAMA\b/i.test(textoCompleto)) {
       return { sexoRaw: 'Dama', indiceSexo: i };
+    }
+  }
+
+  for (let i = 0; i < palabras.length; i++) {
+    const palabra = palabras[i];
+    if (!palabra) continue;
+    const lower = palabra.toLowerCase().trim();
+    const esUltima = i === palabras.length - 1;
+    // m/f al final con talle canónico (M, L, …) → talle, no género
+    if ((lower === 'm' || lower === 'f') && esUltima && canonizarTalle(palabra)) {
+      continue;
+    }
+    if (GENERO_ALIASES.some((a) => a === lower)) {
+      return { sexoRaw: palabra, indiceSexo: i };
     }
   }
 

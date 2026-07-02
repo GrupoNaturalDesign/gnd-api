@@ -18,6 +18,7 @@ import {
   resolverColorDesdeSfactory,
 } from '../src/utils/sfactory-color-parse.utils';
 import { limpiarSufijoGeneroSuelto } from '../src/utils/variantes-parse.utils';
+import { filterTallesForWeb } from '../src/utils/web-talles.util';
 import { ECOMMERCE_RUBROS_SFACTORY_IDS } from '../src/config/ecommerce.config';
 
 function generarSlug(text: string, codigo: string): string {
@@ -48,6 +49,8 @@ async function main() {
     },
     select: { codigo: true, descripcion: true, descrip_corta: true },
   });
+
+  console.log(`Reparse empresaId=${empresaId} — ${items.length} ítems S-Factory`);
 
   let webActualizados = 0;
   let sinColor = 0;
@@ -83,6 +86,9 @@ async function main() {
       },
     });
     webActualizados++;
+    if (webActualizados % 100 === 0) {
+      console.log(`  … ${webActualizados}/${items.length} variantes`);
+    }
   }
 
   const padres = await prisma.productoPadre.findMany({
@@ -102,8 +108,10 @@ async function main() {
     const colores = consolidarColoresCanonico(
       variantes.map((v) => v.color).filter((c): c is string => !!c)
     );
-    const talles = Array.from(
-      new Set(variantes.map((v) => v.talle).filter((t): t is string => !!t))
+    const talles = filterTallesForWeb(
+      Array.from(
+        new Set(variantes.map((v) => v.talle).filter((t): t is string => !!t)),
+      ),
     );
     const sexos = variantes.map((v) => v.sexo).filter(Boolean);
     const genero =
@@ -182,8 +190,10 @@ async function main() {
     const colores = consolidarColoresCanonico(
       variantesCanon.map((v) => v.color).filter((c): c is string => !!c)
     );
-    const talles = Array.from(
-      new Set(variantesCanon.map((v) => v.talle).filter((t): t is string => !!t))
+    const talles = filterTallesForWeb(
+      Array.from(
+        new Set(variantesCanon.map((v) => v.talle).filter((t): t is string => !!t)),
+      ),
     );
     const sexos = variantesCanon.map((v) => v.sexo).filter(Boolean);
     const genero =

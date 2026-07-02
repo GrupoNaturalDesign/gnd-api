@@ -173,7 +173,24 @@ test('limpiarSufijoGeneroSuelto: quita D suelto si género es masculino', () => 
 test('parsearNombreProducto: Cardigan Charm MEL OS', () => {
   const r = parsearNombreProducto('Cardigan Charm MEL OS');
   assert.equal(r.color, 'MELANGE');
-  assert.equal(r.talle, 'OS');
+  assert.equal(r.talle, null);
+});
+
+test('parsearNombreProducto: Sweater Essence H GRIS MEL OS M (ESSE8)', () => {
+  const r = parsearNombreProducto(
+    'Sweater Essence H GRIS MEL OS M',
+    'L-OF-TEJ- SW - ESSE8',
+  );
+  assert.equal(r.sexo, 'Masculino');
+  assert.equal(r.color, 'GRIS MELANGE OSCURO');
+  assert.equal(r.talle, 'M');
+});
+
+test('parsearNombreProducto: Sweater Essence H GRIS MEL OS S (ESSE7)', () => {
+  const r = parsearNombreProducto('Sweater Essence H GRIS MEL OS S');
+  assert.equal(r.sexo, 'Masculino');
+  assert.equal(r.color, 'GRIS MELANGE OSCURO');
+  assert.equal(r.talle, 'S');
 });
 
 test('canonizarColor: MEL y CL', () => {
