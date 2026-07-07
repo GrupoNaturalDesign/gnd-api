@@ -37,6 +37,8 @@ export const dashboardAlertasQuerySchema = z
     limitePagoPendienteAntiguo: z.coerce.number().int().positive().max(50).optional().default(8),
     /** Horas para considerar "pago pendiente viejo" (default 24). */
     horasPagoPendienteMin: z.coerce.number().int().positive().max(720).optional().default(24),
+    limiteProximosAVencer: z.coerce.number().int().positive().max(50).optional().default(8),
+    horasProximoVencimiento: z.coerce.number().int().positive().max(168).optional(),
   })
   .strict();
 
@@ -77,6 +79,8 @@ export const dashboardFullQuerySchema = z
     limiteSfactoryIssues: z.coerce.number().int().positive().max(50).optional().default(8),
     limitePagoPendienteAntiguo: z.coerce.number().int().positive().max(50).optional().default(8),
     horasPagoPendienteMin: z.coerce.number().int().positive().max(720).optional().default(24),
+    limiteProximosAVencer: z.coerce.number().int().positive().max(50).optional().default(8),
+    horasProximoVencimiento: z.coerce.number().int().positive().max(168).optional(),
     limitRecientes: z.coerce.number().int().positive().max(50).optional().default(10),
     limitStockCritico: z.coerce.number().int().positive().max(200).optional().default(20),
     maxStockCritico: z.coerce.number().nonnegative().max(999_999).optional().default(2),

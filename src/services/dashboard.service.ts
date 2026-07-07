@@ -19,6 +19,7 @@ import type {
   DashboardSerieQuery,
   DashboardStockCriticoQuery,
 } from '../validation/dashboard.schema';
+import { getCheckoutExpiryWarningHours } from '../config/checkout-expires.config';
 
 const VENTAS_ESTADOS: EstadoPedido[] = [
   EstadoPedido.confirmado,
@@ -321,7 +322,8 @@ class DashboardService {
       ],
     };
 
-    const [pendientesConfirmacion, sfactoryIssues, pagoPendienteAntiguo] = await Promise.all([
+    const [pendientesConfirmacion, sfactoryIssues, pagoPendienteAntiguo, proximosAVencer] =
+      await Promise.all([
       prisma.pedido.findMany({
         where: { empresaId, estadoInterno: EstadoPedido.pendiente_confirmacion },
         orderBy: { fechaPedido: 'asc' },
@@ -380,14 +382,49 @@ class DashboardService {
           expiresAt: true,
         },
       }),
+      prisma.pedido.findMany({
+        where: {
+          empresaId,
+          estadoInterno: {
+            in: [EstadoPedido.pendiente_pago, EstadoPedido.pendiente_confirmacion],
+          },
+          expiresAt: {
+            gt: new Date(),
+            lte: new Date(
+              Date.now() +
+                (query.horasProximoVencimiento ?? getCheckoutExpiryWarningHours()) *
+                  60 *
+                  60 *
+                  1000
+            ),
+          },
+        },
+        orderBy: { expiresAt: 'asc' },
+        take: query.limiteProximosAVencer ?? 10,
+        select: {
+          id: true,
+          clienteNombre: true,
+          clienteEmail: true,
+          total: true,
+          estadoInterno: true,
+          estadoErp: true,
+          sfactoryEstado: true,
+          syncStatus: true,
+          formaEnvio: true,
+          fechaPedido: true,
+          expiresAt: true,
+        },
+      }),
     ]);
 
     return {
       generatedAt: new Date().toISOString(),
       horasPagoPendienteMin: query.horasPagoPendienteMin,
+      horasProximoVencimiento: query.horasProximoVencimiento ?? getCheckoutExpiryWarningHours(),
       pendientesConfirmacion: pendientesConfirmacion.map((r) => this.mapPedidoSnippetRow(r)),
       sfactoryIssues: sfactoryIssues.map((r) => this.mapPedidoSnippetRow(r)),
       pagoPendienteAntiguo: pagoPendienteAntiguo.map((r) => this.mapPedidoSnippetRow(r)),
+      proximosAVencer: proximosAVencer.map((r) => this.mapPedidoSnippetRow(r)),
     };
   }
 
@@ -498,6 +535,8 @@ class DashboardService {
       limiteSfactoryIssues: query.limiteSfactoryIssues,
       limitePagoPendienteAntiguo: query.limitePagoPendienteAntiguo,
       horasPagoPendienteMin: query.horasPagoPendienteMin,
+      limiteProximosAVencer: query.limiteProximosAVencer ?? 8,
+      horasProximoVencimiento: query.horasProximoVencimiento,
     };
 
     const stockIn: DashboardStockCriticoQuery = {

@@ -16,11 +16,17 @@ import type {
   MercadoPagoPayment,
 } from './mercadopago/mercadopago.types';
 import {
-  computeExpiresAtPedidoManual,
   procesarPedidoConfirmado,
-  registrarCotizacionSfactoryParaPedido,
   type ProcesarPedidoResult,
 } from './pedido-checkout.service';
+import { computePedidoExpiresAt } from '../config/checkout-expires.config';
+import {
+  computeCheckoutProductosACobrar,
+  computeCheckoutTotalACobrar,
+  reservarStockPedidoWeb,
+  resolveCheckoutPriceMode,
+  validateItemPricesForCheckout,
+} from './checkout-pedido-lifecycle.service';
 import { adminNotificationService } from './admin-notification.service';
 import {
   validateCheckoutEnvioForMp,
@@ -34,7 +40,6 @@ import { sendManualPaymentInstructionsEmailAsync } from './pedido-payment-instru
 import {
   assertMpPricingMode,
   buildMercadoPagoPaymentMethodsForMode,
-  unitPriceMatchesMpMode,
   type MpPricingMode,
 } from '../utils/checkout-mp-pricing.util';
 import {
@@ -201,28 +206,8 @@ async function validateItemPricesForMpMode(
   items: ItemInput[],
   mpPricingMode: MpPricingMode
 ): Promise<void> {
-  const ids = [...new Set(items.map((i) => i.productoWebId))];
-  const rows = await prisma.productoPrecio.findMany({
-    where: {
-      productoWebId: { in: ids },
-      tipoCliente: 'minorista',
-    },
-  });
-  const byWebId = new Map(rows.map((r) => [r.productoWebId, r]));
-
-  for (const item of items) {
-    const row = byWebId.get(item.productoWebId);
-    if (!row) {
-      throw new Error(`Precio no encontrado para productoWebId ${item.productoWebId}.`);
-    }
-    const lista = Number(row.precioLista);
-    const transfer = row.precioTransfer != null ? Number(row.precioTransfer) : null;
-    if (!unitPriceMatchesMpMode(item.precioUnitario, lista, transfer, mpPricingMode)) {
-      throw new Error(
-        `Precio unitario inválido para ${item.codigo} (modo ${mpPricingMode}).`
-      );
-    }
-  }
+  const mode = resolveCheckoutPriceMode(FormaPago.mercado_pago, mpPricingMode);
+  await validateItemPricesForCheckout(items, mode);
 }
 
 // --- Input types (checkout MP) ---
@@ -267,7 +252,7 @@ export interface CrearPedidoMpResult {
   pedidoId: number;
   preferenceId: string;
   checkoutUrl: string;
-  /** Total productos según S-Factory (`response.total`). */
+  /** Total productos (subtotal − cupón). */
   subtotalProductos?: number;
   costoEnvio?: number;
   totalCobro?: number;
@@ -434,9 +419,7 @@ export async function crearPedidoMp(
         cuponDescuentoTotalNum != null ? new Prisma.Decimal(cuponDescuentoTotalNum) : undefined,
       cuponDetalleSnapshot,
       // --- fin cupón ---
-      expiresAt: new Date(
-        Date.now() + mercadoPagoConfig.getCheckoutMpPendingTimeoutMinutes() * 60 * 1000
-      ),
+      expiresAt: computePedidoExpiresAt(FormaPago.mercado_pago),
       items: {
         create: lineas.map(({ item, subtotal, cantidad, precioUnitario }) => ({
           productoWebId: item.productoWebId,
@@ -456,25 +439,13 @@ export async function crearPedidoMp(
     },
   });
 
-  let cotizacion: Awaited<ReturnType<typeof registrarCotizacionSfactoryParaPedido>>;
-  try {
-    cotizacion = await registrarCotizacionSfactoryParaPedido(pedido.id);
-  } catch (e: unknown) {
-    const errMsg = e instanceof Error ? e.message : String(e);
-    await prisma.pedido.update({
-      where: { id: pedido.id },
-      data: {
-        estadoInterno: EstadoPedido.fallido,
-        sfactoryError: errMsg,
-        syncStatus: PedidoSyncStatus.error,
-        syncError: errMsg,
-      },
-    });
-    throw new Error(`No se pudo cotizar el pedido en S-Factory: ${errMsg}`);
+  const stockRes = await reservarStockPedidoWeb(pedido.id, { empresaId: input.empresaId });
+  if (!stockRes.ok) {
+    throw new Error(stockRes.message ?? 'No se pudo reservar stock para el pedido.');
   }
 
-  const sfactoryTotalProductos = cotizacion.sfactoryTotalProductos;
-  const totalCobro = cotizacion.totalACobrar;
+  const subtotalProductos = computeCheckoutProductosACobrar(subtotalPedido, descuento);
+  const totalCobro = computeCheckoutTotalACobrar(subtotalPedido, descuento, costoEnvio);
   const envioNum = Number(costoEnvio.toString());
 
   const notificationUrl = mercadoPagoConfig.resolveNotificationUrl();
@@ -498,10 +469,10 @@ export async function crearPedidoMp(
 
   const preferenceItems: MercadoPagoCreatePreferenceBody['items'] = [
     {
-      id: 'productos-sfactory',
+      id: 'productos-checkout',
       title: 'Productos GND',
       quantity: 1,
-      unit_price: sfactoryTotalProductos,
+      unit_price: subtotalProductos,
       currency_id: 'ARS',
     },
   ];
@@ -551,7 +522,7 @@ export async function crearPedidoMp(
     preferenceId: preference.id,
     pedidoId: pedido.id,
     montoPedido: totalCobro,
-    subtotalSfactory: sfactoryTotalProductos,
+    subtotalProductos,
     costoEnvio: envioNum,
     descuento: Number(descuento),
     modo,
@@ -578,7 +549,7 @@ export async function crearPedidoMp(
       estadoNuevo: EstadoPedido.pendiente_pago,
       preferenceId: preference.id,
       total: String(totalCobro),
-      subtotalSfactory: sfactoryTotalProductos,
+      subtotalProductos,
     }),
     dedupe: false,
   });
@@ -596,7 +567,7 @@ export async function crearPedidoMp(
     pedidoId: pedido.id,
     preferenceId: preference.id,
     checkoutUrl,
-    subtotalProductos: sfactoryTotalProductos,
+    subtotalProductos,
     costoEnvio: envioNum,
     totalCobro,
   };
@@ -1149,6 +1120,10 @@ export async function crearPedidoManual(
     throw new Error('El pedido debe incluir al menos un ítem');
   }
 
+  const formaPagoValue = input.formaPago === 'efectivo' ? FormaPago.efectivo : FormaPago.transferencia;
+  const priceMode = resolveCheckoutPriceMode(formaPagoValue);
+  await validateItemPricesForCheckout(input.items, priceMode);
+
   const { cuponDetalle, cuponDescuentoDecimal } = await resolveCuponForPedidoCheckout(
     input.empresaId,
     usuarioId,
@@ -1208,7 +1183,6 @@ export async function crearPedidoManual(
   const factura = normalizeFacturaFields(input);
 
   const total = subtotalPedido.add(costoEnvio);
-  const formaPagoValue = input.formaPago === 'efectivo' ? FormaPago.efectivo : FormaPago.transferencia;
 
   const cuponIdForPedido = cuponDetalle?.cuponId ?? null;
   const cuponCodigoSnapshot = cuponDetalle?.codigo ?? null;
@@ -1240,7 +1214,7 @@ export async function crearPedidoManual(
       formaPago: formaPagoValue,
       observaciones: input.observaciones ?? null,
       ...factura,
-      expiresAt: computeExpiresAtPedidoManual(),
+      expiresAt: computePedidoExpiresAt(formaPagoValue),
       // --- Campos de cupón ---
       cuponId: cuponIdForPedido,
       cuponCodigoSnapshot,
@@ -1267,22 +1241,13 @@ export async function crearPedidoManual(
     },
   });
 
-  let cotizacion: Awaited<ReturnType<typeof registrarCotizacionSfactoryParaPedido>>;
-  try {
-    cotizacion = await registrarCotizacionSfactoryParaPedido(pedido.id);
-  } catch (e: unknown) {
-    const errMsg = e instanceof Error ? e.message : String(e);
-    await prisma.pedido.update({
-      where: { id: pedido.id },
-      data: {
-        estadoInterno: EstadoPedido.fallido,
-        sfactoryError: errMsg,
-        syncStatus: PedidoSyncStatus.error,
-        syncError: errMsg,
-      },
-    });
-    throw new Error(`No se pudo cotizar el pedido en S-Factory: ${errMsg}`);
+  const stockRes = await reservarStockPedidoWeb(pedido.id, { empresaId: input.empresaId });
+  if (!stockRes.ok) {
+    throw new Error(stockRes.message ?? 'No se pudo reservar stock para el pedido.');
   }
+
+  const subtotalProductos = computeCheckoutProductosACobrar(subtotalPedido, descuento);
+  const totalCobro = computeCheckoutTotalACobrar(subtotalPedido, descuento, costoEnvio);
 
   await adminNotificationService.notifyPedido({
     empresaId: input.empresaId,
@@ -1312,8 +1277,8 @@ export async function crearPedidoManual(
     externalOrderId: `WEB-${pedido.id}`,
     formaPago: input.formaPago,
     redirectPath: `/checkout/instrucciones-pago?pedidoId=${pedido.id}`,
-    subtotalProductos: cotizacion.sfactoryTotalProductos,
+    subtotalProductos,
     costoEnvio: Number(costoEnvio.toString()),
-    totalCobro: cotizacion.totalACobrar,
+    totalCobro,
   };
 }

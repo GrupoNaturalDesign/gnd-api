@@ -2,6 +2,7 @@
 import {
   reintentarFallidosSfactory,
   procesarPedidosVencidos,
+  avisarPedidosProximosAVencer,
 } from '../services/pedido-checkout.service';
 import { reintentarEnviosPostalPendientes } from '../services/checkout-shipping-finalize.service';
 import { reconciliarPedidosMpAtascados } from '../services/mp-checkout.service';
@@ -58,6 +59,9 @@ export function startPedidoCheckoutJobs(): void {
   const runExpire = () => {
     procesarPedidosVencidos().catch((e) =>
       console.error('[pedido-checkout-jobs] procesarPedidosVencidos:', e)
+    );
+    avisarPedidosProximosAVencer().catch((e) =>
+      console.error('[pedido-checkout-jobs] avisarPedidosProximosAVencer:', e)
     );
   };
   const runMpReconcile = () => {

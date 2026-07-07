@@ -13,6 +13,8 @@ export type AdminNotificationType =
   | 'pedido.sync_recovered'
   | 'pedido.cancelled'
   | 'pedido.expired'
+  | 'pedido.expiring_soon'
+  | 'pedido.price_divergence'
   | 'stock.critical'
   | 'micorreo.sync_failed';
 

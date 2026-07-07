@@ -14,6 +14,7 @@ import {
   aprobarOrdenPedidoEnSfactory,
   cancelarOrdenPedidoEnSfactory,
   puedeReintentarAprobacionErp,
+  esEstadoPeCotizacion,
 } from './sfactory/sfactory-orden-pedido.service';
 import { SFACTORY_PE_ESTADO } from './sfactory/sfactory-orden-pedido.config';
 import { adminNotificationService } from './admin-notification.service';
@@ -48,12 +49,79 @@ import {
   debeReservarStockLocal,
   syncStockPedidoItemsAsync,
 } from './sync/pedido-stock-sync.util';
+import {
+  computePedidoExpiresAt,
+  getCheckoutExpiryWarningHours,
+  getCheckoutManualExpiresHours,
+  getCheckoutSfPriceAuditTolerance,
+} from '../config/checkout-expires.config';
+import {
+  resolveCheckoutPriceMode,
+  reservarStockPedidoWeb,
+} from './checkout-pedido-lifecycle.service';
 
 function envInt(name: string, fallback: number): number {
   const v = process.env[name];
   if (v === undefined || v === '') return fallback;
   const n = parseInt(v, 10);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function buildSfactorySnapshotWithAuditoria(
+  response: unknown,
+  pedido: {
+    subtotal: Prisma.Decimal;
+    formaPago?: FormaPago | null;
+    mpPricingMode?: string | null;
+  }
+): Prisma.InputJsonValue {
+  const sfTotal = parseSfactoryTotal(response);
+  const localSubtotal = Number(pedido.subtotal);
+  const delta = sfTotal != null ? Number((sfTotal - localSubtotal).toFixed(2)) : null;
+  const priceMode = resolveCheckoutPriceMode(
+    pedido.formaPago,
+    pedido.mpPricingMode as 'transfer' | 'financiado' | null | undefined
+  );
+  const base =
+    response && typeof response === 'object'
+      ? { ...(response as Record<string, unknown>) }
+      : { response };
+  return {
+    ...base,
+    _auditoria: {
+      sfTotalProductos: sfTotal,
+      localSubtotal,
+      delta,
+      priceMode,
+      formaPago: pedido.formaPago ?? null,
+    },
+  } as Prisma.InputJsonValue;
+}
+
+async function maybeNotifySfactoryPriceDivergence(
+  pedido: { id: number; empresaId: number; clienteNombre?: string | null },
+  snapshot: Prisma.InputJsonValue
+): Promise<void> {
+  const aud = (snapshot as Record<string, unknown>)?._auditoria as
+    | { delta?: number | null; localSubtotal?: number; sfTotalProductos?: number | null }
+    | undefined;
+  if (aud?.delta == null || !Number.isFinite(aud.delta)) return;
+  const tol = getCheckoutSfPriceAuditTolerance();
+  if (Math.abs(aud.delta) <= tol) return;
+  await notifyPedidoCheckout({
+    empresaId: pedido.empresaId,
+    type: 'pedido.price_divergence',
+    pedidoId: pedido.id,
+    severity: AdminNotificationSeverity.warning,
+    title: `Pedido #${pedido.id}: divergencia precio S-Factory`,
+    message: `Subtotal local ${aud.localSubtotal} vs SF ${aud.sfTotalProductos} (Δ ${aud.delta}).`,
+    payload: {
+      pedidoId: pedido.id,
+      clienteNombre: pedido.clienteNombre,
+      auditoria: aud,
+    },
+    dedupe: false,
+  });
 }
 
 function formatDateOnly(d: Date): string {
@@ -70,21 +138,19 @@ function addDays(d: Date, days: number): Date {
   return new Date(d.getTime() + days * 24 * 60 * 60 * 1000);
 }
 
-/** Horas de gracia para acreditar transferencia/efectivo (checkout web). Env: `CHECKOUT_MANUAL_EXPIRES_HOURS` (default 48). */
-export function getCheckoutManualExpiresHours(): number {
-  const n = envInt('CHECKOUT_MANUAL_EXPIRES_HOURS', 48);
-  return Math.min(Math.max(n, 1), 720);
-}
+/** @deprecated Usar getCheckoutManualExpiresHours desde checkout-expires.config */
+export { getCheckoutManualExpiresHours };
 
-/** @deprecated Usar getCheckoutManualExpiresHours */
-export function getCheckoutManualExpiresDays(): number {
-  return Math.ceil(getCheckoutManualExpiresHours() / 24);
-}
-
-/** Fecha límite de pago para pedidos manuales del ecommerce. */
+/** @deprecated Usar computePedidoExpiresAt desde checkout-expires.config */
 export function computeExpiresAtPedidoManual(fechaPedido: Date = new Date()): Date {
-  return addHours(fechaPedido, getCheckoutManualExpiresHours());
+  return computePedidoExpiresAt(FormaPago.transferencia, fechaPedido);
 }
+
+export {
+  computePedidoExpiresAt,
+  getCheckoutExpiryWarningHours,
+  getCheckoutSfPriceAuditTolerance,
+};
 
 function pedidoNotificationPayload(pedido: {
   empresaId?: number;
@@ -114,7 +180,9 @@ async function notifyPedidoCheckout(input: {
     | 'pedido.sync_failed'
     | 'pedido.cancelled'
     | 'pedido.expired'
-    | 'pedido.sync_recovered';
+    | 'pedido.sync_recovered'
+    | 'pedido.price_divergence'
+    | 'pedido.expiring_soon';
   pedidoId: number;
   title: string;
   message: string;
@@ -312,8 +380,8 @@ export interface RegistrarCotizacionSfactoryResult {
 }
 
 /**
- * Crea la cotización PE en S-Factory antes del cobro (checkout MP / manual web).
- * Persiste `sfactoryOrdenId`, snapshot y totales: subtotal = ERP, total = ERP + envío.
+ * @deprecated Pre-cotización S-Factory eliminada del checkout web. Solo legacy/scripts.
+ * Crea la cotización PE en S-Factory antes del cobro.
  */
 export async function registrarCotizacionSfactoryParaPedido(
   pedidoId: number
@@ -486,6 +554,11 @@ async function finalizarPedidoConfirmadoEnSfactory(input: {
 
   syncStockPedidoItemsAsync(pedidoId);
 
+  await maybeNotifySfactoryPriceDivergence(
+    { id: pedidoId, empresaId: pedidoAfter.empresaId },
+    sfactorySnapshot
+  );
+
   return { ok: true, pedidoId, message: 'Pedido confirmado en SFactory' };
 }
 
@@ -629,7 +702,7 @@ export async function procesarPedidoConfirmado(pedidoId: number): Promise<Proces
   const esReintentoAprobacionErp = puedeReintentarAprobacionErp(pedidoBase);
   const reservarStockLocal = debeReservarStockLocal({
     esReintentoAprobacionErp,
-    sfactoryOrdenIdAlInicio: pedidoBase.sfactoryOrdenId,
+    stockReservadoWeb: pedidoBase.stockReservadoWeb,
   });
 
   const estadosEntradaValidos: EstadoPedido[] = [
@@ -644,112 +717,13 @@ export async function procesarPedidoConfirmado(pedidoId: number): Promise<Proces
 
   let payloadForLog: unknown = null;
 
-  const pedidoStockCheck = await prisma.pedido.findUnique({
-    where: { id: pedidoId },
-    include: { items: true, empresa: true },
-  });
-  if (!pedidoStockCheck) throw new Error('Pedido no encontrado');
-
   if (reservarStockLocal) {
-    for (const line of pedidoStockCheck.items) {
-      if (line.productoWebId == null) {
-        throw new Error(`Línea ${line.id} sin productoWebId; no se puede reservar stock.`);
-      }
-      const pw = await prisma.productoWeb.findUnique({
-        where: { id: line.productoWebId },
-      });
-      if (!pw) throw new Error(`ProductoWeb ${line.productoWebId} no encontrado`);
-      const stock = pw.stockCache ?? new Prisma.Decimal(0);
-      if (stock.lt(line.cantidad)) {
-        const msg = `Stock insuficiente para ${line.codigo} (disponible: ${stock}, pedido: ${line.cantidad})`;
-        await prisma.pedido.update({
-          where: { id: pedidoId },
-          data: {
-            estadoInterno: EstadoPedido.fallido,
-            sfactoryError: msg,
-            syncStatus: PedidoSyncStatus.error,
-            syncError: msg,
-          },
-        });
-        await notifyPedidoCheckout({
-          empresaId: pedidoBase.empresaId,
-          type: 'pedido.sync_failed',
-          pedidoId,
-          severity: AdminNotificationSeverity.error,
-          title: `Pedido #${pedidoId} sin stock suficiente`,
-          message: msg,
-          payload: pedidoNotificationPayload(pedidoBase, {
-            estadoAnterior: pedidoBase.estadoInterno,
-            estadoNuevo: EstadoPedido.fallido,
-            syncStatus: PedidoSyncStatus.error,
-          }),
-        });
-        console.error(`[pedido-checkout] Stock insuficiente pedido ${pedidoId}: ${msg}`);
-        return { ok: false, pedidoId, message: 'Stock insuficiente; pedido marcado como fallido.' };
-      }
-    }
-
-    try {
-      await prisma.$transaction(async (tx) => {
-        await tx.pedido.update({
-          where: { id: pedidoId },
-          data: {
-            estadoInterno: EstadoPedido.procesando,
-            stockReservadoWeb: true,
-            syncStatus: PedidoSyncStatus.pending,
-            syncError: null,
-            sfactoryExternalOrderId: `WEB-${pedidoId}`,
-          },
-        });
-
-        const pedido = await tx.pedido.findUnique({
-          where: { id: pedidoId },
-          include: { items: true },
-        });
-        if (!pedido) throw new Error('Pedido no encontrado');
-
-        for (const line of pedido.items) {
-          if (line.productoWebId == null) continue;
-          const updated = await tx.productoWeb.updateMany({
-            where: {
-              id: line.productoWebId,
-              stockCache: { gte: line.cantidad },
-            },
-            data: {
-              stockCache: { decrement: line.cantidad },
-            },
-          });
-          if (updated.count !== 1) {
-            throw new Error(`Stock insuficiente para ${line.codigo} durante la reserva.`);
-          }
-        }
-      });
-    } catch (e: unknown) {
-      const errMsg = e instanceof Error ? e.message : String(e);
-      await prisma.pedido.update({
-        where: { id: pedidoId },
-        data: {
-          estadoInterno: EstadoPedido.fallido,
-          sfactoryError: errMsg,
-          syncStatus: PedidoSyncStatus.error,
-          syncError: errMsg,
-          stockReservadoWeb: false,
-        },
-      });
-      await notifyPedidoCheckout({
-        empresaId: pedidoBase.empresaId,
-        type: 'pedido.sync_failed',
-        pedidoId,
-        severity: AdminNotificationSeverity.error,
-        title: `Pedido #${pedidoId} no pudo reservar stock`,
-        message: errMsg,
-        payload: pedidoNotificationPayload(pedidoBase, {
-          estadoAnterior: pedidoBase.estadoInterno,
-          estadoNuevo: EstadoPedido.fallido,
-          syncStatus: PedidoSyncStatus.error,
-        }),
-      });
-      return { ok: false, pedidoId, message: errMsg };
+    const stockRes = await reservarStockPedidoWeb(pedidoId, {
+      empresaId: pedidoBase.empresaId,
+      marcarProcesando: true,
+    });
+    if (!stockRes.ok) {
+      return { ok: false, pedidoId, message: stockRes.message ?? 'Stock insuficiente.' };
     }
   } else {
     await prisma.pedido.update({
@@ -757,6 +731,9 @@ export async function procesarPedidoConfirmado(pedidoId: number): Promise<Proces
       data: {
         syncStatus: PedidoSyncStatus.pending,
         syncError: null,
+        ...(pedidoBase.estadoInterno !== EstadoPedido.procesando
+          ? { estadoInterno: EstadoPedido.procesando }
+          : {}),
       },
     });
   }
@@ -795,6 +772,11 @@ export async function procesarPedidoConfirmado(pedidoId: number): Promise<Proces
         parseSfactoryEstado(sfResult.response) ??
         SFACTORY_PE_ESTADO.aprobado;
 
+      const snapshotAuditoria = buildSfactorySnapshotWithAuditoria(
+        sfResult.response ?? sfResult.remote,
+        pedidoAfter
+      );
+
       return finalizarPedidoConfirmadoEnSfactory({
         pedidoId,
         pedidoAfter,
@@ -802,9 +784,7 @@ export async function procesarPedidoConfirmado(pedidoId: number): Promise<Proces
         sfactoryOrdenId: ordenId,
         sfactoryEstado: est,
         sfactoryExternalOrderId: pedidoAfter.sfactoryExternalOrderId ?? `WEB-${pedidoId}`,
-        sfactorySnapshot:
-          (sfResult.response as Prisma.InputJsonValue) ??
-          (pedidoAfter.sfactorySnapshot as Prisma.InputJsonValue),
+        sfactorySnapshot: snapshotAuditoria,
         notifyTitle: `Pedido #${pedidoId} confirmado`,
         notifyMessage: `Pedido confirmado; orden SFactory ${ordenId} aprobada (estado ${est}).`,
       });
@@ -899,8 +879,9 @@ export async function procesarPedidoConfirmado(pedidoId: number): Promise<Proces
 
   try {
     const response = await sfactoryService.crearPedidoExterno(params, companyKey);
-    const ordenId = parseSfactoryOrdenId(response);
-    const est = parseSfactoryEstado(response);
+    let ordenId = parseSfactoryOrdenId(response);
+    let est = parseSfactoryEstado(response);
+    let snapshotSource: unknown = response;
 
     await crearLogSfactory(pedidoId, PedidoSfactoryAccion.crear, params, true, response, null);
 
@@ -909,7 +890,21 @@ export async function procesarPedidoConfirmado(pedidoId: number): Promise<Proces
         `[pedido-checkout] Respuesta SFactory sin id parseable para pedido ${pedidoId}:`,
         JSON.stringify(response)
       );
+    } else if (esEstadoPeCotizacion(est)) {
+      const sfResult = await aprobarOrdenPedidoEnSfactory(ordenId, companyKey);
+      await crearLogSfactory(
+        pedidoId,
+        PedidoSfactoryAccion.editar,
+        sfResult.editPayload ?? { estado: SFACTORY_PE_ESTADO.aprobado },
+        true,
+        sfResult.response,
+        null
+      );
+      est = parseSfactoryEstado(sfResult.response) ?? SFACTORY_PE_ESTADO.aprobado;
+      snapshotSource = sfResult.response ?? response;
     }
+
+    const snapshotAuditoria = buildSfactorySnapshotWithAuditoria(snapshotSource, pedidoAfter);
 
     return finalizarPedidoConfirmadoEnSfactory({
       pedidoId,
@@ -918,7 +913,7 @@ export async function procesarPedidoConfirmado(pedidoId: number): Promise<Proces
       sfactoryOrdenId: ordenId,
       sfactoryEstado: est,
       sfactoryExternalOrderId: params.ext_order_id,
-      sfactorySnapshot: response as unknown as Prisma.InputJsonValue,
+      sfactorySnapshot: snapshotAuditoria,
       notifyTitle: `Pedido #${pedidoId} confirmado`,
       notifyMessage: `Pedido confirmado y sincronizado con SFactory (orden ${ordenId ?? '—'}).`,
     });
@@ -1303,6 +1298,65 @@ export async function procesarPedidosVencidos(): Promise<void> {
       });
     } catch (e) {
       console.error(`[pedido-checkout] Error venciendo pedido ${pedido.id}:`, e);
+    }
+  }
+}
+
+/** Avisa pedidos ecommerce próximos a vencer (dentro de CHECKOUT_EXPIRY_WARNING_HOURS). */
+export async function avisarPedidosProximosAVencer(): Promise<void> {
+  const now = new Date();
+  const warningMs = getCheckoutExpiryWarningHours() * 60 * 60 * 1000;
+  const until = new Date(now.getTime() + warningMs);
+  const dedupeSince = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+  const pedidos = await prisma.pedido.findMany({
+    where: {
+      estadoInterno: {
+        in: [EstadoPedido.pendiente_pago, EstadoPedido.pendiente_confirmacion],
+      },
+      expiresAt: { gt: now, lte: until },
+      usuarioId: { not: null },
+    },
+    select: {
+      id: true,
+      empresaId: true,
+      clienteNombre: true,
+      expiresAt: true,
+      estadoInterno: true,
+      formaPago: true,
+    },
+  });
+
+  for (const pedido of pedidos) {
+    try {
+      const existing = await prisma.adminNotification.findFirst({
+        where: {
+          empresaId: pedido.empresaId,
+          type: 'pedido.expiring_soon',
+          entityId: String(pedido.id),
+          createdAt: { gte: dedupeSince },
+        },
+      });
+      if (existing) continue;
+
+      const expiresLabel = pedido.expiresAt?.toISOString() ?? '—';
+      await notifyPedidoCheckout({
+        empresaId: pedido.empresaId,
+        type: 'pedido.expiring_soon',
+        pedidoId: pedido.id,
+        severity: AdminNotificationSeverity.warning,
+        title: `Pedido #${pedido.id} vence pronto`,
+        message: `El pedido de ${pedido.clienteNombre ?? 'cliente'} vence el ${expiresLabel}.`,
+        payload: {
+          pedidoId: pedido.id,
+          expiresAt: pedido.expiresAt,
+          estadoInterno: pedido.estadoInterno,
+          formaPago: pedido.formaPago,
+        },
+        dedupe: false,
+      });
+    } catch (e) {
+      console.error(`[pedido-checkout] Error aviso vencimiento pedido ${pedido.id}:`, e);
     }
   }
 }

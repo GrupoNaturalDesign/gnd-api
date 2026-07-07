@@ -6,21 +6,21 @@ import {
 } from '../src/services/sync/pedido-stock-sync.util';
 import { stockPreciosSyncService } from '../src/services/sync/stock-precios-sync.service';
 
-test('debeReservarStockLocal — admin sin cotización previa', () => {
+test('debeReservarStockLocal — pendiente sin reserva previa', () => {
   assert.equal(
     debeReservarStockLocal({
       esReintentoAprobacionErp: false,
-      sfactoryOrdenIdAlInicio: null,
+      stockReservadoWeb: false,
     }),
     true
   );
 });
 
-test('debeReservarStockLocal — checkout con cotización SF previa', () => {
+test('debeReservarStockLocal — checkout ya reservó stock', () => {
   assert.equal(
     debeReservarStockLocal({
       esReintentoAprobacionErp: false,
-      sfactoryOrdenIdAlInicio: 42,
+      stockReservadoWeb: true,
     }),
     false
   );
@@ -30,7 +30,7 @@ test('debeReservarStockLocal — reintento aprobación ERP', () => {
   assert.equal(
     debeReservarStockLocal({
       esReintentoAprobacionErp: true,
-      sfactoryOrdenIdAlInicio: 42,
+      stockReservadoWeb: true,
     }),
     false
   );

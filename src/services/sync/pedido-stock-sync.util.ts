@@ -6,15 +6,14 @@ export function isPedidoPostSyncStockEnabled(): boolean {
 }
 
 /**
- * Si el pedido ya tenía orden en S-Factory (cotización previa), no reservar stock local:
- * la reserva ERP ya está reflejada vía sync desde inventario.
+ * Reserva stock local en procesarPedidoConfirmado solo si aún no se reservó al confirmar checkout.
  */
 export function debeReservarStockLocal(input: {
   esReintentoAprobacionErp: boolean;
-  sfactoryOrdenIdAlInicio: number | null;
+  stockReservadoWeb: boolean;
 }): boolean {
   if (input.esReintentoAprobacionErp) return false;
-  return input.sfactoryOrdenIdAlInicio == null;
+  return !input.stockReservadoWeb;
 }
 
 /**

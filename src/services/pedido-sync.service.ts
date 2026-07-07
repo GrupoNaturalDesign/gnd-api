@@ -20,10 +20,11 @@ import { stockPreciosSyncService } from './sync/stock-precios-sync.service';
 import { syncStockPedidoItemsAsync } from './sync/pedido-stock-sync.util';
 import { adminNotificationService } from './admin-notification.service';
 import {
-  computeExpiresAtPedidoManual,
+  computePedidoExpiresAt,
   procesarPedidoConfirmado,
   reintentarFallidosSfactory,
 } from './pedido-checkout.service';
+import { reservarStockPedidoWeb } from './checkout-pedido-lifecycle.service';
 import { sendPedidoStatusEmailAsync } from './pedido-email-notification.service';
 import { stableHash } from '../utils/sync-hash.utils';
 
@@ -286,7 +287,7 @@ export class PedidoSyncService {
         total: subtotal,
         formaPago: input.formaPago as FormaPago,
         observaciones: input.observaciones ?? null,
-        expiresAt: computeExpiresAtPedidoManual(),
+        expiresAt: computePedidoExpiresAt(input.formaPago as FormaPago),
         items: {
           create: items.map(({ item, cantidad, precioUnitario, subtotal: lineSubtotal }) => ({
             productoWebId: item.productoWebId,
@@ -306,6 +307,8 @@ export class PedidoSyncService {
       },
       include: { items: true, cliente: true },
     });
+
+    await reservarStockPedidoWeb(pedido.id, { empresaId });
 
     await adminNotificationService.notifyPedido({
       empresaId,

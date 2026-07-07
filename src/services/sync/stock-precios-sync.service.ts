@@ -19,6 +19,10 @@ import {
   publicarPadresSublineaAlineados,
   refrescarColoresDisponiblesPadres,
 } from '../../utils/padre-colores-sync.utils';
+import {
+  computeStockCacheConReservas,
+  getReservasActivasPorProductoWebId,
+} from './stock-reservas.util';
 
 const BATCH_CODES = STOCK_BATCH_CODES;
 
@@ -104,7 +108,8 @@ export class StockPreciosSyncService {
     codigos: string[],
     varianteByCodigo: Map<string, VarianteStockRow>,
     acc: BatchSyncAccum,
-    inventarioPorCodigo?: Map<string, InventarioDepositoRow>
+    inventarioPorCodigo?: Map<string, InventarioDepositoRow>,
+    reservasPorProductoWebId?: Map<number, Prisma.Decimal>
   ): Promise<void> {
     for (let i = 0; i < codigos.length; i += BATCH_CODES) {
       const chunk = codigos.slice(i, i + BATCH_CODES);
@@ -134,7 +139,12 @@ export class StockPreciosSyncService {
         );
 
       await runPool(tareas, getDbWriteConcurrency(), async ({ row, variante }) => {
-        const stock = Number(row.stock ?? 0);
+        const stockFisico = Number(row.stock ?? 0);
+        const reservado = reservasPorProductoWebId?.get(variante.id);
+        const stock =
+          reservasPorProductoWebId != null
+            ? computeStockCacheConReservas(stockFisico, reservado)
+            : stockFisico;
         const saleRaw = row.sale_price != null ? Number(row.sale_price) : null;
         const saleOk =
           saleRaw != null && !Number.isNaN(saleRaw) && saleRaw > 0
@@ -208,6 +218,10 @@ export class StockPreciosSyncService {
     });
 
     const varianteByCodigo = new Map(variantes.map((v) => [v.sfactoryCodigo, v]));
+    const reservas = await getReservasActivasPorProductoWebId(
+      empresaId,
+      variantes.map((v) => v.id)
+    );
     const acc: BatchSyncAccum = {
       variantesActualizadas: 0,
       variantesOmitidas: 0,
@@ -217,7 +231,7 @@ export class StockPreciosSyncService {
       codigosOmitidos: [],
     };
 
-    await this.syncVariantesStockFromSfactory(wid, codigos, varianteByCodigo, acc);
+    await this.syncVariantesStockFromSfactory(wid, codigos, varianteByCodigo, acc, undefined, reservas);
 
     if (acc.variantesActualizadas === 0 && codigos.length > 0) {
       console.warn(
@@ -297,12 +311,18 @@ export class StockPreciosSyncService {
       inventarioPorCodigo.set(c, { stock: 0, salePrice: null });
     }
 
+    const reservas = await getReservasActivasPorProductoWebId(
+      empresaId,
+      variantes.map((v) => v.id)
+    );
+
     await this.syncVariantesStockFromSfactory(
       wid,
       codigos,
       varianteByCodigo,
       acc,
-      inventarioPorCodigo
+      inventarioPorCodigo,
+      reservas
     );
 
     const {
