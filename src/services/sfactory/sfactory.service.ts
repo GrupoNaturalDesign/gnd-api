@@ -186,6 +186,9 @@ export class SFactoryService {
    * - Comercial, moneda, sucursal: configuración del `source` en SFactory.
    *
    * Prerequisito: `source` activo en external_orders_config (admin SFactory).
+   *
+   * Envía `fulfillment_mode: none` por defecto: el envío postal lo gestiona GND (Andreani/Correo),
+   * no S-Factory. Configurable con SFACTORY_PEDIDO_FULFILLMENT_MODE.
    */
   async crearPedidoExterno(
     params: SFactoryCrearPedidoExternoParams,

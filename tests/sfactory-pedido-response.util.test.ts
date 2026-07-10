@@ -23,6 +23,8 @@ test('parseSfactoryOrdenId lee id numérico o string', () => {
 test('parseSfactoryEstado lee estado', () => {
   assert.equal(parseSfactoryEstado({ estado: '1' }), '1');
   assert.equal(parseSfactoryEstado({ Estado: '5' }), '5');
+  assert.equal(parseSfactoryEstado({ data: { estado: '2' } }), '2');
+  assert.equal(parseSfactoryEstado({ data: { estado: 2 } }), '2');
 });
 
 test('computeTotalACobrar suma productos ERP + envío GND', () => {

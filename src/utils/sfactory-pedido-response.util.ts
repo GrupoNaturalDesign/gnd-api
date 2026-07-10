@@ -25,8 +25,14 @@ export function parseSfactoryOrdenId(response: unknown): number | null {
 export function parseSfactoryEstado(response: unknown): string | null {
   if (response == null || typeof response !== 'object') return null;
   const o = response as Record<string, unknown>;
-  const s = o.estado ?? o.estadoInterno ?? o.Estado;
-  return typeof s === 'string' ? s : null;
+  const direct = o.estado ?? o.estadoInterno ?? o.Estado;
+  if (typeof direct === 'string') return direct;
+  if (typeof direct === 'number' && Number.isFinite(direct)) return String(direct);
+  const data = o.data;
+  if (data && typeof data === 'object') {
+    return parseSfactoryEstado(data);
+  }
+  return null;
 }
 
 /** Total de productos calculado por S-Factory (lista de precios, IVA, descuentos ERP). */

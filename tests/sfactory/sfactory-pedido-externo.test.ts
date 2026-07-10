@@ -48,12 +48,14 @@ describe('buildPedidoExternoParams', () => {
     setSource('web');
     process.env.SFACTORY_ENTREGA_PROVINCIA_DEFAULT = 'Cordoba';
     process.env.SFACTORY_ENTREGA_LOCALIDAD_DEFAULT = 'Córdoba';
+    delete process.env.SFACTORY_PEDIDO_FULFILLMENT_MODE;
   });
 
   afterEach(() => {
     clearSource();
     delete process.env.SFACTORY_ENTREGA_PROVINCIA_DEFAULT;
     delete process.env.SFACTORY_ENTREGA_LOCALIDAD_DEFAULT;
+    delete process.env.SFACTORY_PEDIDO_FULFILLMENT_MODE;
   });
 
   it('builds valid params with full data', () => {
@@ -64,6 +66,7 @@ describe('buildPedidoExternoParams', () => {
     assert.strictEqual(result.cliente.email, 'factura@example.com');
     assert.strictEqual(result.items.length, 1);
     assert.strictEqual(result.items[0]?.sku, 'CAM-001');
+    assert.strictEqual(result.fulfillment_mode, 'none');
     assert.strictEqual(result.entrega?.direccion, 'Av. Siempre Viva 123');
     assert.strictEqual(result.entrega?.cp, '5000');
   });
@@ -113,5 +116,17 @@ describe('buildPedidoExternoParams', () => {
     assert.ok(result.fecha);
     assert.ok(result.fecha_entrega);
     assert.notStrictEqual(result.fecha, result.fecha_entrega);
+  });
+
+  it('defaults fulfillment_mode to none', () => {
+    const result = buildPedidoExternoParams(BASE_PEDIDO);
+    assert.strictEqual(result.fulfillment_mode, 'none');
+    assert.strictEqual(result.shipping_type, undefined);
+  });
+
+  it('uses SFACTORY_PEDIDO_FULFILLMENT_MODE when set', () => {
+    process.env.SFACTORY_PEDIDO_FULFILLMENT_MODE = 'reserve';
+    const result = buildPedidoExternoParams(BASE_PEDIDO);
+    assert.strictEqual(result.fulfillment_mode, 'reserve');
   });
 });

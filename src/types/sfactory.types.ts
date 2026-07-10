@@ -337,6 +337,16 @@ export interface SFactoryPedidoExternoEntrega {
   notas?: string;
 }
 
+/** Cumplimiento en S-Factory al crear pedido externo (shipping / remito / reserva). */
+export type SFactoryPedidoFulfillmentMode = 'none' | 'reserve' | 'deliver';
+
+export interface SFactoryPedidoExternoFulfillment {
+  mode?: string;
+  success?: boolean;
+  message?: string;
+  document?: unknown;
+}
+
 export interface SFactoryCrearPedidoExternoParams {
   /** Identificador del sistema externo. Debe tener config activa en SFactory. */
   source: string;
@@ -355,6 +365,13 @@ export interface SFactoryCrearPedidoExternoParams {
   /** Mínimo 1 ítem. */
   items: [SFactoryPedidoExternoItem, ...SFactoryPedidoExternoItem[]];
   entrega?: SFactoryPedidoExternoEntrega;
+  /**
+   * Override de cumplimiento. `none` evita reserva/remito en S-Factory (envío postal en GND).
+   * Si se omite, S-Factory resuelve reglas vía `vta_origen_shipping_rule` del source.
+   */
+  fulfillment_mode?: SFactoryPedidoFulfillmentMode;
+  /** Código de modalidad de envío en S-Factory; normalmente no se envía si hay fulfillment_mode. */
+  shipping_type?: string;
 }
 
 export interface SFactoryCrearPedidoExternoResponse {
@@ -362,4 +379,5 @@ export interface SFactoryCrearPedidoExternoResponse {
   estado: string;
   fecha: string;
   total: number;
+  fulfillment?: SFactoryPedidoExternoFulfillment;
 }

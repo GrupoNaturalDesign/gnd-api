@@ -677,11 +677,12 @@ export class ProductoController {
         limit: params.limit,
       });
 
-      // Cache-aside pattern
+      // Cache-aside pattern (5 min — home depende de este endpoint)
+      const DESTACADOS_CACHE_TTL_SEC = 300;
       const resultado = await CacheService.cacheAside(
         cacheKey,
         () => productoService.getDestacados(params),
-        180 // 3 minutos para listas
+        DESTACADOS_CACHE_TTL_SEC
       );
 
       // Respuesta exitosa normalizada con paginación
@@ -693,6 +694,10 @@ export class ProductoController {
         pagination: (resultado as any).pagination,
       };
 
+      res.setHeader(
+        'Cache-Control',
+        `public, max-age=60, s-maxage=${DESTACADOS_CACHE_TTL_SEC}, stale-while-revalidate=600`
+      );
       res.json(response);
     } catch (error) {
       const zodError = handleZodError(error);

@@ -45,6 +45,7 @@ import {
   parseSfactoryOrdenId,
   parseSfactoryTotal,
 } from '../utils/sfactory-pedido-response.util';
+import { resolveSfactoryPedidoFulfillmentMode } from '../utils/sfactory-pedido-externo.util';
 import {
   debeReservarStockLocal,
   syncStockPedidoItemsAsync,
@@ -367,6 +368,7 @@ export function buildPedidoExternoParams(pedido: {
     num_orden_compra: pedido.numOrdenCompra ?? undefined,
     cliente: clientePayload,
     items: tuple,
+    fulfillment_mode: resolveSfactoryPedidoFulfillmentMode(),
     ...(entrega ? { entrega } : {}),
   };
 }

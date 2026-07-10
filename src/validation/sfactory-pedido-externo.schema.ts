@@ -4,6 +4,7 @@ import type {
   SFactoryPedidoExternoCliente,
   SFactoryPedidoExternoItem,
 } from '../types/sfactory.types';
+import { resolveSfactoryPedidoFulfillmentMode } from '../utils/sfactory-pedido-externo.util';
 
 const dateYmd = z
   .string()
@@ -87,6 +88,8 @@ export const sfactoryCrearPedidoExternoBodySchema = z
     cliente: sfactoryPedidoExternoClienteSchema,
     items: z.array(sfactoryPedidoExternoItemSchema).min(1).max(500),
     entrega: sfactoryPedidoExternoEntregaSchema.optional(),
+    fulfillment_mode: z.enum(['none', 'reserve', 'deliver']).optional(),
+    shipping_type: z.string().min(1).max(100).optional(),
   })
   .strict();
 
@@ -144,6 +147,8 @@ export function toSfactoryPedidoExternoParams(
     ...(body.condiciones_venta ? { condiciones_venta: body.condiciones_venta } : {}),
     cliente,
     items: tuple,
+    fulfillment_mode: body.fulfillment_mode ?? resolveSfactoryPedidoFulfillmentMode(),
+    ...(body.shipping_type ? { shipping_type: body.shipping_type.trim() } : {}),
     ...(body.entrega ? { entrega: body.entrega } : {}),
   };
 }
