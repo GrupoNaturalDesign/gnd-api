@@ -1,76 +1,212 @@
-# Deploy API en Hostinger (Node.js managed)
+# Deploy API en Hostinger (prod oficial)
 
-## Sitio Node.js
+Runtime de producción: **`api.naturalonline.com.ar`** — path SSH:
 
-- **Dominio:** `slategray-manatee-407634.hostingersite.com`
-- **Usuario hosting:** `u967550282`
-- **Framework:** Express.js
-- **Node:** 20
-- **Build:** `npm run build` (`prisma generate && tsc`)
-- **Start:** `npm start` → `node dist/index.js`
-- **Entry file:** `dist/index.js`
+```text
+/home/u967550282/domains/api.naturalonline.com.ar/nodejs/
+```
+
+No usar sitios obsoletos `slategray-manatee-407634` ni `azure-skunk-643837` (ver [Limpieza](#sitios-obsoletos)).
+
+| Campo | Valor |
+|-------|-------|
+| Usuario hosting | `u967550282` |
+| SSH | `ssh -p 65002 u967550282@82.25.67.184` |
+| Framework | Express.js, Node 20 |
+| Build local | `npm run build` (`prisma generate && tsc`) |
+| Start plataforma | `npm start` → `node dist/index.js` |
+| Entry file hPanel | `dist/index.js` |
+| MySQL | `DB_HOST=localhost`, DB `u967550282_gnd` |
+| Monitoreo | `GET https://api.naturalonline.com.ar/api/health` |
+
+> `/health` (sin prefijo `/api`) puede devolver 404 en Hostinger. Usar siempre **`/api/health`**.
+
+---
+
+## Release (un comando)
+
+```bash
+cd api
+npm run deploy:hostinger-prod
+```
+
+El orquestador [`scripts/deploy-hostinger-prod.mjs`](../scripts/deploy-hostinger-prod.mjs) ejecuta:
+
+1. `npm run build`
+2. `node scripts/prepare-hostinger-env.mjs` → `hostinger.env` (no commitear)
+3. `python scripts/make-hostinger-deploy-zip.py` → `gnd-api-deploy_*.zip` en la raíz del monorepo
+4. Escribe `deploy-manifest.json` e indica pasos MCP
+5. SSH [`ssh-hostinger-apply-api-fix.py`](../scripts/ssh-hostinger-apply-api-fix.py) si `HOSTINGER_SSH_PASSWORD` está definida
+6. Smoke: `npm run smoke:hostinger-prod`
+
+### Pasos MCP (Cursor / Hostinger Connector)
+
+Tras el zip local:
+
+1. **`hosting_deployJsApplication`**
+   - `domain`: `api.naturalonline.com.ar`
+   - `archivePath`: ruta del zip (ver `deploy-manifest.json`)
+2. Esperar build OK (`hosting_listJsDeployments` / logs)
+3. SSH fix (sube `.env` + parches `dist/` al path `nodejs/`)
+4. **`hosting_restartNode.jsApplicationV1`** → `domain`: `api.naturalonline.com.ar`
+5. `npm run smoke:hostinger-prod`
+
+Solo smoke:
+
+```bash
+npm run smoke:hostinger-prod
+```
+
+Solo SSH + env (sin rebuild):
+
+```bash
+node scripts/deploy-hostinger-prod.mjs --ssh-only
+```
+
+---
 
 ## Variables de entorno
 
-Generar/actualizar desde Vercel + `.env` local:
+Generar desde Vercel + `.env` local:
 
 ```bash
 cd api
 node scripts/prepare-hostinger-env.mjs
 ```
 
-Salida: `api/hostinger.env` (74 vars). **No commitear.**
+Salida: `api/hostinger.env`. **No commitear.**
 
-En hPanel → sitio Node → **Environment Variables** → pegar cada línea `KEY=value` (o importar según UI).
-
-Cambios críticos respecto a Vercel:
-
-| Variable | Valor en Hostinger |
-|----------|-------------------|
+| Variable | Valor prod |
+|----------|------------|
 | `DB_HOST` | `localhost` |
+| `DB_POOL_LIMIT` | `5` (shared hosting) |
 | `NODE_ENV` | `production` |
 | `INTEGRATIONS_ENV` | `production` |
+| `MP_WEBHOOK_URL` | `https://api.naturalonline.com.ar/api/webhooks/mercadopago` |
+| `FIREBASE_ADMIN_SDK_JSON_B64` | Base64 del service account (nunca JSON escapado en `.env`) |
 
-No incluir: `DATABASE_URL` (Railway), `VERCEL_*`, `TURBO_*`, `NEXT_PUBLIC_*`, `REDIS_URL`.
+No incluir: `DATABASE_URL`, `VERCEL_*`, `NEXT_PUBLIC_*`, `REDIS_URL`, `NGROK_URL`.
 
-Después de cargar env vars → **Restart** o **Redeploy**.
+El script SSH copia `hostinger.env` a:
 
-## Deploy desde Cursor (MCP)
+- `nodejs/.env` (runtime real)
+- `public_html/.builds/config/.env` (builds de plataforma)
 
-1. Crear zip (sin `node_modules`, `dist`, secretos):
+---
+
+## Mercado Pago — webhook
+
+Verificación automática:
 
 ```bash
-tar -a -cf ../gnd-api-deploy.zip \
-  --exclude=node_modules --exclude=dist \
-  --exclude=.env --exclude=hostinger.env \
-  --exclude=serviceAccountKey.json \
-  -C api .
+npm run verify:mp-webhook-prod
 ```
 
-2. En Agent chat con Hostinger Connector: deploy a `slategray-manatee-407634.hostingersite.com`
+Esperado: `MP_WEBHOOK_URL` correcta y `POST` al endpoint devuelve **401** (firma inválida), no 404.
 
-3. Verificar build:
+**Panel MP (manual):** [developers.mercadopago.com](https://www.mercadopago.com.ar/developers/panel/app) → Webhooks → URL de producción:
 
+```text
+https://api.naturalonline.com.ar/api/webhooks/mercadopago
 ```
-GET https://slategray-manatee-407634.hostingersite.com/health
+
+Test E2E: [checkout-qa-operativo.md](./checkout-qa-operativo.md) Caso 2 (pago MP → pedido `confirmado` + PE SFactory).
+
+---
+
+## MySQL — conexiones remotas
+
+La API en Hostinger usa **`localhost`**. No debe haber acceso remoto `%` en hPanel si nadie más conecta desde fuera.
+
+Reglas revocadas en migración (jul 2026). Si necesitás acceso local de desarrollo:
+
+- phpMyAdmin desde hPanel, o
+- túnel SSH — no `srv1438.hstgr.io` desde Vercel.
+
+**Validación 7 días post-migración:** revisar `nodejs/console.log` en busca de `pool timeout` / `P1001`. Pool configurado en [`db-config.ts`](../src/lib/db-config.ts) con `DB_POOL_LIMIT=5`.
+
+---
+
+## Vercel API (apagada)
+
+El proyecto **`gnd-back`** fue eliminado de Vercel y el repo Git desconectado (jul 2026). Solo **`api.naturalonline.com.ar`** (Hostinger) recibe tráfico de tienda.
+
+El cliente Vercel (`gruponaturaldesign` / `naturalonline.com.ar`) sigue activo con `NEXT_PUBLIC_API_URL=https://api.naturalonline.com.ar/api`.
+
+---
+
+## Monitoreo y runbook
+
+### Uptime externo
+
+Configurar chequeo cada **5 minutos**:
+
+```text
+GET https://api.naturalonline.com.ar/api/health
 ```
 
-Esperado: `{ "ok": true, "db": "connected" }`
+Esperado: HTTP 200 y `{"success":true,...}`.
 
-## Build settings en hPanel (si el auto-detect falla)
+Servicios sugeridos: UptimeRobot, Better Stack, Freshping (plan gratuito).
 
-| Campo | Valor |
-|-------|-------|
-| Framework | Express.js |
-| Node version | 20 |
-| Install | `npm install` |
-| Build | `npm run build` |
-| Start | `npm start` |
-| Entry file | `dist/index.js` |
+### Runbook — API caída
+
+1. **Smoke rápido:** `npm run smoke:hostinger-prod`
+2. **hPanel** → Websites → `api.naturalonline.com.ar` → Node.js → **Restart**
+3. **SSH** al runtime:
+   ```bash
+   ssh -p 65002 u967550282@82.25.67.184
+   cd /home/u967550282/domains/api.naturalonline.com.ar/nodejs
+   head -5 .env                    # DB_HOST=localhost, FIREBASE_ADMIN_SDK_JSON_B64 presente
+   tail -100 console.log           # errores Prisma / Firebase
+   ```
+4. **Firebase:** en SSH, `node -e "require('dotenv').config({override:true}); require('./dist/lib/firebase-admin').getFirebaseAdmin(); console.log('ok')"`
+5. **Redeploy:** `npm run deploy:hostinger-prod` + MCP deploy + restart
+6. **DB:** phpMyAdmin — conexiones activas estables; sin picos anómalos
+
+### Logs
+
+- Runtime: `nodejs/console.log`
+- Builds plataforma: hPanel → Node.js → Build logs / MCP `hosting_getNodeJSBuildLogsV1`
+
+---
+
+## Sitios obsoletos
+
+**No deployar** en:
+
+| Sitio | URL |
+|-------|-----|
+| slategray | `slategray-manatee-407634.hostingersite.com` |
+| azure-skunk | `azure-skunk-643837.hostingersite.com` |
+
+**Eliminación programada:** tras **1 semana estable** en prod, borrar ambos sitios Node en hPanel (Websites → Delete). Hasta entonces, ignorar.
+
+Scripts SSH legacy movidos a [`scripts/legacy/`](../scripts/legacy/).
+
+---
 
 ## Troubleshooting
 
-- **`entry_file: index.js`** en logs viejos → corregir a `dist/index.js`
-- **`db: disconnected`** → `DB_HOST` debe ser `localhost`
-- **`prisma generate` falla en build** → cargar `DB_*` en env vars antes del build
-- **Pool timeout** → no usar `srv1438.hstgr.io` desde la API en Hostinger; solo `localhost`
+| Síntoma | Acción |
+|---------|--------|
+| `entry_file: index.js` en logs | Entry file = `dist/index.js` |
+| `db: disconnected` / pool timeout | `DB_HOST=localhost`; no `srv1438.hstgr.io` |
+| `Bad escaped character in JSON` en login | Regenerar env con `prepare-hostinger-env.mjs`; usar `FIREBASE_ADMIN_SDK_JSON_B64` |
+| Build falla `tsc` en servidor | Zip debe incluir `dist/` precompilado (`make-hostinger-deploy-zip.py`) |
+| 404 público tras SSH manual | Usar deploy plataforma + dominio; no `nohup` suelto en :3002 |
+| Git deploy hPanel roto (`Repositorio: —`) | No usar; archive deploy es el camino oficial |
+| Cron keepalive | No disponible en shared (`crontab: command not found`) — confiar en proceso persistente Hostinger |
+
+---
+
+## Scripts activos
+
+| Script | Uso |
+|--------|-----|
+| `deploy-hostinger-prod.mjs` | Orquestador release |
+| `prepare-hostinger-env.mjs` | Genera `hostinger.env` |
+| `make-hostinger-deploy-zip.py` | Zip con `dist/` |
+| `ssh-hostinger-apply-api-fix.py` | Sube `.env` + parches a `nodejs/` |
+| `smoke-hostinger-prod.mjs` | Health, rubros, webhook |
+| `verify-mp-webhook-prod.mjs` | URL MP + reachability |

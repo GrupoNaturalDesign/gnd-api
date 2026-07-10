@@ -15,8 +15,8 @@ import {
   getIntegrationsMode,
 } from './lib/integrations-mode';
 
-// Load environment variables
-dotenv.config();
+// Load environment variables (override broken platform-injected values on Hostinger)
+dotenv.config({ override: true });
 
 try {
   assertIntegrationsConfigAtStartup();

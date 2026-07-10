@@ -19,7 +19,10 @@
     "test:ci": "node --test --require ts-node/register \"tests/lib/**/*.test.ts\" \"tests/shipping/**/*.test.ts\" \"tests/cupones/**/*.test.ts\" \"tests/checkout/**/*.test.ts\" \"tests/sfactory/**/*.test.ts\" \"tests/mp-checkout-webhook.test.ts\" \"tests/pedido-sync.test.ts\" \"tests/pedido-stock-sync.test.ts\" \"tests/pedido-entrega.util.test.ts\" \"tests/pedido-shipping-label.util.test.ts\" \"tests/pedido-shipping-label.controller.test.ts\" \"tests/pedido-bordado.util.test.ts\" \"tests/pedido-pickup.rules.test.ts\" \"tests/pedido-email-notification.test.ts\" \"tests/pedido-expiring-email.service.test.ts\" \"tests/empresa-tienda-config.service.test.ts\" \"tests/store-pickup.config.test.ts\" \"tests/order-status-ui.test.ts\" \"tests/sfactory-pedido-response.util.test.ts\" \"tests/sfactory-orden-pedido.service.test.ts\" \"tests/email-domain-validation.test.ts\" \"tests/auth-session-error.util.test.ts\" \"tests/order-email-mapper.test.ts\" \"tests/email-public-security.test.ts\" \"tests/correo-functions.test.ts\" \"tests/maintenance-mode.test.ts\" \"tests/maintenance.middleware.test.ts\"",
     "test:shipping": "node --test --require ts-node/register \"tests/shipping/**/*.test.ts\"",
     "test:sandbox": "node --test --require ts-node/register \"tests/shipping/sandbox/*.test.ts\"",
-    "test:integration": "node --test --require ts-node/register \"tests/cupones/cupon-engine.integration.test.ts\" \"tests/admin-notification.integration.test.ts\""
+    "test:integration": "node --test --require ts-node/register \"tests/cupones/cupon-engine.integration.test.ts\" \"tests/admin-notification.integration.test.ts\"",
+    "deploy:hostinger-prod": "node scripts/deploy-hostinger-prod.mjs",
+    "smoke:hostinger-prod": "node scripts/smoke-hostinger-prod.mjs",
+    "verify:mp-webhook-prod": "node scripts/verify-mp-webhook-prod.mjs"
   },
   "prisma": {
     "seed": "npx ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"

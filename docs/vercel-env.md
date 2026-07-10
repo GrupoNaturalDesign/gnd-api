@@ -1,5 +1,7 @@
 # Configuración en Vercel (API / DB pool)
 
+> **Deprecado (jul 2026):** la API de producción está en Hostinger (`api.naturalonline.com.ar`). El proyecto Vercel `gnd-back` fue eliminado. Ver [hostinger-deploy.md](./hostinger-deploy.md).
+
 Para evitar **pool timeout** en el backend desplegado en Vercel, configura estas variables de entorno en el proyecto de la API.
 
 ## Dónde configurarlas

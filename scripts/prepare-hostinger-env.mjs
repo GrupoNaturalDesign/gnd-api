@@ -15,7 +15,6 @@ const SKIP_KEYS = new Set([
   'GOOGLE_APPLICATION_CREDENTIALS',
   'REDIS_URL',
   'VERCEL',
-  'MP_WEBHOOK_URL',
   'ANDREANI_DEFAULT_ENV',
   'CORREO_DEFAULT_ENV',
   'NGROK_URL',
@@ -41,16 +40,25 @@ function parseEnvFile(content) {
   return out;
 }
 
+function serializeEnvLine(key, value) {
+  if (key === 'FIREBASE_ADMIN_SDK_JSON_B64') {
+    return `${key}=${value}`;
+  }
+  if (key === 'FIREBASE_ADMIN_SDK_JSON') {
+    return null;
+  }
+  if (/[\s#"'\\]/.test(value) || value.includes('\n')) {
+    return `${key}="${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  }
+  return `${key}=${value}`;
+}
+
 function serializeEnv(env) {
   return (
     Object.entries(env)
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([k, v]) => {
-        if (/[\s#"'\\]/.test(v) || v.includes('\n')) {
-          return `${k}="${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-        }
-        return `${k}=${v}`;
-      })
+      .map(([k, v]) => serializeEnvLine(k, v))
+      .filter(Boolean)
       .join('\n') + '\n'
   );
 }
@@ -90,9 +98,25 @@ merged.CORS_ORIGIN =
 merged.NEWSLETTER_MAX_RECIPIENTS = merged.NEWSLETTER_MAX_RECIPIENTS || '50';
 merged.SHIPPING_ALTO_POR_PRENDA_CM = merged.SHIPPING_ALTO_POR_PRENDA_CM || '8';
 merged.DB_POOL_LIMIT = merged.DB_POOL_LIMIT || '5';
+merged.MP_WEBHOOK_URL =
+  'https://api.naturalonline.com.ar/api/webhooks/mercadopago';
 
-if (!merged.FIREBASE_ADMIN_SDK_JSON && fs.existsSync(firebasePath)) {
-  merged.FIREBASE_ADMIN_SDK_JSON = fs.readFileSync(firebasePath, 'utf8').trim();
+// Producción MP: collector id (sufijo del token APP_USR-...-{id})
+if (!merged.MERCADOPAGO_COLLECTOR_ID && merged.MERCADOPAGO_ACCESS_TOKEN_PROD) {
+  const suffix = merged.MERCADOPAGO_ACCESS_TOKEN_PROD.split('-').pop();
+  if (suffix && /^\d+$/.test(suffix)) {
+    merged.MERCADOPAGO_COLLECTOR_ID = suffix;
+  }
+}
+
+if (fs.existsSync(firebasePath)) {
+  const compact = JSON.stringify(JSON.parse(fs.readFileSync(firebasePath, 'utf8')));
+  merged.FIREBASE_ADMIN_SDK_JSON_B64 = Buffer.from(compact, 'utf8').toString('base64');
+  delete merged.FIREBASE_ADMIN_SDK_JSON;
+} else if (merged.FIREBASE_ADMIN_SDK_JSON) {
+  const compact = JSON.stringify(JSON.parse(merged.FIREBASE_ADMIN_SDK_JSON));
+  merged.FIREBASE_ADMIN_SDK_JSON_B64 = Buffer.from(compact, 'utf8').toString('base64');
+  delete merged.FIREBASE_ADMIN_SDK_JSON;
 }
 
 // Drop empty values (keep explicit false/0)

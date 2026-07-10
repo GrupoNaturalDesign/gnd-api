@@ -13,5 +13,6 @@
 | [meta-pixel.md](./meta-pixel.md) | Meta Pixel en tienda (`client/`) — eventos, env y flujos MP vs manual |
 | [sync-optimization.md](./sync-optimization.md) | Sync S-Factory optimizado (productos, stock, pedidos, clientes) |
 | [shipping-module.md](./shipping-module.md) | Módulo de envíos, proveedores, rutas HTTP |
+| [hostinger-deploy.md](./hostinger-deploy.md) | Deploy prod en Hostinger (`api.naturalonline.com.ar`), release, runbook, MP webhook |
 
 El código en `api/src` prevalece sobre estos resúmenes.

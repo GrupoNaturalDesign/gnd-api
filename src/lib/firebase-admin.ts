@@ -23,12 +23,48 @@ function getCredentialPath(): string {
   return path.resolve(process.cwd(), envPath);
 }
 
+/** Parse Firebase service account from env (Hostinger/Vercel-safe). */
+function parseFirebaseServiceAccountFromEnv(): admin.ServiceAccount {
+  const b64 = process.env.FIREBASE_ADMIN_SDK_JSON_B64?.trim();
+  if (b64) {
+    return JSON.parse(Buffer.from(b64, 'base64').toString('utf8')) as admin.ServiceAccount;
+  }
+
+  const raw = process.env.FIREBASE_ADMIN_SDK_JSON?.trim();
+  if (!raw) {
+    throw new Error(
+      'Firebase Admin: configurar FIREBASE_ADMIN_SDK_JSON_B64 o FIREBASE_ADMIN_SDK_JSON.'
+    );
+  }
+
+  const candidates = new Set<string>([raw]);
+  if (
+    (raw.startsWith("'") && raw.endsWith("'")) ||
+    (raw.startsWith('"') && raw.endsWith('"'))
+  ) {
+    candidates.add(raw.slice(1, -1));
+  }
+  if (raw.includes('\\"')) {
+    candidates.add(raw.replace(/\\"/g, '"').replace(/\\\\/g, '\\'));
+  }
+
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate) as admin.ServiceAccount;
+    } catch {
+      // try next normalization
+    }
+  }
+
+  throw new Error('Firebase Admin: FIREBASE_ADMIN_SDK_JSON no es JSON valido.');
+}
+
 export function getFirebaseAdmin(): admin.app.App {
   if (!admin.apps.length) {
     assertNoLocalServiceAccountInProduction();
     let credential: admin.credential.Credential | undefined;
-    if (process.env.FIREBASE_ADMIN_SDK_JSON) {
-      credential = admin.credential.cert(JSON.parse(process.env.FIREBASE_ADMIN_SDK_JSON) as admin.ServiceAccount);
+    if (process.env.FIREBASE_ADMIN_SDK_JSON_B64 || process.env.FIREBASE_ADMIN_SDK_JSON) {
+      credential = admin.credential.cert(parseFirebaseServiceAccountFromEnv());
     } else {
       const credPath = getCredentialPath();
       if (credPath) {

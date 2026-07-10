@@ -42,3 +42,5 @@ firebase-oneline.txt
 .vercel
 .env*
 hostinger.env
+deploy-manifest.json
+gnd-api-deploy_*.zip
