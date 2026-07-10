@@ -55,6 +55,7 @@ import {
   getCheckoutManualExpiresHours,
   getCheckoutSfPriceAuditTolerance,
 } from '../config/checkout-expires.config';
+import { sendPedidoExpiringSoonEmailIfNeeded } from './pedido-expiring-email.service';
 import {
   resolveCheckoutPriceMode,
   reservarStockPedidoWeb,
@@ -1321,6 +1322,8 @@ export async function avisarPedidosProximosAVencer(): Promise<void> {
       id: true,
       empresaId: true,
       clienteNombre: true,
+      clienteEmail: true,
+      total: true,
       expiresAt: true,
       estadoInterno: true,
       formaPago: true,
@@ -1329,7 +1332,7 @@ export async function avisarPedidosProximosAVencer(): Promise<void> {
 
   for (const pedido of pedidos) {
     try {
-      const existing = await prisma.adminNotification.findFirst({
+      const existingAdmin = await prisma.adminNotification.findFirst({
         where: {
           empresaId: pedido.empresaId,
           type: 'pedido.expiring_soon',
@@ -1337,24 +1340,27 @@ export async function avisarPedidosProximosAVencer(): Promise<void> {
           createdAt: { gte: dedupeSince },
         },
       });
-      if (existing) continue;
 
-      const expiresLabel = pedido.expiresAt?.toISOString() ?? '—';
-      await notifyPedidoCheckout({
-        empresaId: pedido.empresaId,
-        type: 'pedido.expiring_soon',
-        pedidoId: pedido.id,
-        severity: AdminNotificationSeverity.warning,
-        title: `Pedido #${pedido.id} vence pronto`,
-        message: `El pedido de ${pedido.clienteNombre ?? 'cliente'} vence el ${expiresLabel}.`,
-        payload: {
+      if (!existingAdmin) {
+        const expiresLabel = pedido.expiresAt?.toISOString() ?? '—';
+        await notifyPedidoCheckout({
+          empresaId: pedido.empresaId,
+          type: 'pedido.expiring_soon',
           pedidoId: pedido.id,
-          expiresAt: pedido.expiresAt,
-          estadoInterno: pedido.estadoInterno,
-          formaPago: pedido.formaPago,
-        },
-        dedupe: false,
-      });
+          severity: AdminNotificationSeverity.warning,
+          title: `Pedido #${pedido.id} vence pronto`,
+          message: `El pedido de ${pedido.clienteNombre ?? 'cliente'} vence el ${expiresLabel}.`,
+          payload: {
+            pedidoId: pedido.id,
+            expiresAt: pedido.expiresAt,
+            estadoInterno: pedido.estadoInterno,
+            formaPago: pedido.formaPago,
+          },
+          dedupe: false,
+        });
+      }
+
+      await sendPedidoExpiringSoonEmailIfNeeded(pedido, dedupeSince);
     } catch (e) {
       console.error(`[pedido-checkout] Error aviso vencimiento pedido ${pedido.id}:`, e);
     }

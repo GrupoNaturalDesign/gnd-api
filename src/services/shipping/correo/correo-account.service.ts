@@ -5,17 +5,17 @@ import prisma from '../../../lib/prisma';
 import type { FetchFn } from '../../../types/fetch.types';
 import { AdminNotificationSeverity } from '@prisma/client';
 import { adminNotificationService } from '../../admin-notification.service';
-import { ShippingValidationError } from '../shipping.errors';
+import { ShippingConfigError, ShippingValidationError } from '../shipping.errors';
 import {
   CORREO_PATHS,
   getCorreoBaseUrlForEnv,
   getCorreoTimeoutMs,
-  loadCorreoCredentials,
   loadCorreoValidateEmail,
   loadCorreoValidatePassword,
   resolveCorreoEnv,
   type CorreoEnv,
 } from './correo.config';
+import { fetchMicorreoIntegratorToken } from './correo-integrator-token';
 import {
   buildMicorreoRegisterBody,
   extractCustomerIdFromMicorreoResponse,
@@ -34,11 +34,6 @@ export interface MicorreoAccountContext {
 
 const MICORREO_NOT_CONFIGURED_MSG =
   'MiCorreo no está configurado. Completá la cuenta en Admin → Configuración → Envíos y vinculá la cuenta.';
-
-function basicAuthHeader(username: string, password: string): string {
-  const raw = `${username}:${password}`;
-  return `Basic ${Buffer.from(raw, 'utf8').toString('base64')}`;
-}
 
 function parseAccountStatus(raw: string | null | undefined): CorreoAccountStatus {
   const v = raw?.trim();
@@ -79,43 +74,6 @@ function resolveAccountFromEnvFallback(env: CorreoEnv): {
   } catch {
     return null;
   }
-}
-
-async function fetchIntegratorToken(env: CorreoEnv, fetchImpl: FetchFn): Promise<string> {
-  const { username, password } = loadCorreoCredentials(env);
-  const url = `${getCorreoBaseUrlForEnv(env)}${CORREO_PATHS.token}`;
-  const c = new AbortController();
-  const t = setTimeout(() => c.abort(), getCorreoTimeoutMs());
-  t.unref?.();
-  const res = await fetchImpl(url, {
-    method: 'POST',
-    headers: {
-      Authorization: basicAuthHeader(username, password),
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-    },
-    body: '{}',
-    signal: c.signal,
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`token ${res.status}: ${text.slice(0, 300)}`);
-  }
-  let data: unknown = {};
-  try {
-    data = text ? (JSON.parse(text) as unknown) : {};
-  } catch {
-    data = {};
-  }
-  const o = data as Record<string, unknown>;
-  const tok =
-    typeof o.token === 'string'
-      ? o.token
-      : typeof o.access_token === 'string'
-        ? o.access_token
-        : '';
-  if (!tok) throw new Error('token sin campo token en respuesta');
-  return tok;
 }
 
 async function micorreoPostJson(
@@ -271,7 +229,7 @@ export class CorreoAccountService {
     });
 
     try {
-      const token = await fetchIntegratorToken(env, this.fetchImpl);
+      const { token } = await fetchMicorreoIntegratorToken(env, this.fetchImpl);
       const { status, text, data } = await micorreoPostJson(
         env,
         this.fetchImpl,
@@ -297,7 +255,7 @@ export class CorreoAccountService {
       await persistAccountSuccess(empresaId, customerId);
       return customerId;
     } catch (e: unknown) {
-      if (e instanceof ShippingValidationError) throw e;
+      if (e instanceof ShippingValidationError || e instanceof ShippingConfigError) throw e;
       const msg = e instanceof Error ? e.message : String(e);
       await persistAccountFailure(empresaId, msg);
       await notifySyncFailed(empresaId, msg);
@@ -335,7 +293,7 @@ export class CorreoAccountService {
     });
 
     try {
-      const token = await fetchIntegratorToken(env, this.fetchImpl);
+      const { token } = await fetchMicorreoIntegratorToken(env, this.fetchImpl);
       const { status, text, data } = await micorreoPostJson(
         env,
         this.fetchImpl,
@@ -362,7 +320,7 @@ export class CorreoAccountService {
       await persistAccountSuccess(empresaId, customerId);
       return customerId;
     } catch (e: unknown) {
-      if (e instanceof ShippingValidationError) throw e;
+      if (e instanceof ShippingValidationError || e instanceof ShippingConfigError) throw e;
       const msg = e instanceof Error ? e.message : String(e);
       await persistAccountFailure(empresaId, msg);
       throw new ShippingValidationError(`No se pudo registrar MiCorreo: ${msg}`);

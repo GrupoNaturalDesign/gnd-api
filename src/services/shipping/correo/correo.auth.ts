@@ -7,23 +7,7 @@ import {
   loadCorreoCredentials,
   type CorreoEnv,
 } from './correo.config';
-
-function basicAuthHeader(username: string, password: string): string {
-  const raw = `${username}:${password}`;
-  const b64 =
-    typeof Buffer !== 'undefined'
-      ? Buffer.from(raw, 'utf8').toString('base64')
-      : btoa(raw);
-  return `Basic ${b64}`;
-}
-
-function parseExpiresMs(expires: string): number {
-  const t = Date.parse(expires);
-  if (!Number.isFinite(t)) {
-    return Date.now() + 3600_000;
-  }
-  return t;
-}
+import { fetchMicorreoIntegratorToken } from './correo-integrator-token';
 
 function redactCustomerId(id: string): string {
   if (id.length <= 4) return '****';
@@ -161,64 +145,13 @@ export class CorreoAuth {
     if (this.token != null && now < this.tokenValidUntilMs) {
       return this.token;
     }
-    const { username, password } = this.getCredentials();
-    const url = `${this.baseUrl}${CORREO_PATHS.token}`;
-    const started = Date.now();
-    shippingLogger.info('MiCorreo request start', {
-      method: 'POST',
-      path: CORREO_PATHS.token,
-    });
-    const res = await this.fetchImpl(url, {
-      method: 'POST',
-      headers: {
-        Authorization: basicAuthHeader(username, password),
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-      },
-      body: '{}',
-      signal: this.timeoutSignal(),
-    });
-    const text = await res.text();
-    const latencyMs = Date.now() - started;
-    shippingLogger.info('MiCorreo request end', {
-      method: 'POST',
-      path: CORREO_PATHS.token,
-      status: res.status,
-      latencyMs,
-    });
-    let data: unknown = {};
-    try {
-      data = text ? (JSON.parse(text) as unknown) : {};
-    } catch {
-      data = { raw: text };
-    }
-    if (!res.ok) {
-      throw new Error(`token ${res.status}: ${text.slice(0, 500)}`);
-    }
-    const o = data as Record<string, unknown>;
-    const tok =
-      typeof o.token === 'string'
-        ? o.token
-        : typeof o.access_token === 'string'
-          ? o.access_token
-          : '';
-    if (!tok) {
-      throw new Error('token sin campo token en respuesta');
-    }
-    this.token = tok;
-    let expiresMs: number;
-    if (typeof o.expires === 'string' && o.expires.trim()) {
-      expiresMs = parseExpiresMs(o.expires);
-    } else if (typeof o.expires_in === 'number' && Number.isFinite(o.expires_in)) {
-      expiresMs = now + o.expires_in * 1000;
-    } else if (typeof o.expires_in === 'string') {
-      const sec = Number.parseFloat(o.expires_in);
-      expiresMs = Number.isFinite(sec) ? now + sec * 1000 : now + 3600_000;
-    } else {
-      expiresMs = now + 3600_000;
-    }
-    this.tokenValidUntilMs = expiresMs - 60_000;
-    return tok;
+    const { token, validUntilMs } = await fetchMicorreoIntegratorToken(
+      this.env,
+      this.fetchImpl
+    );
+    this.token = token;
+    this.tokenValidUntilMs = validUntilMs;
+    return token;
   }
 
   async validateCredentials(): Promise<void> {

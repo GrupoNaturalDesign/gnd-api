@@ -41,10 +41,11 @@ function sendError(res: Response, e: unknown): void {
     return;
   }
   if (e instanceof ShippingConfigError) {
-    res.status(400).json({
+    res.status(e.httpStatus).json({
       success: false,
       error: 'Configuración',
       message: e.message,
+      code: e.code,
     });
     return;
   }

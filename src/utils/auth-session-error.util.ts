@@ -45,6 +45,18 @@ export function resolveAuthSessionError(message: string): {
     return { status: 503, clientMessage: message };
   }
 
+  if (
+    message.includes('Unique constraint') &&
+    message.toLowerCase().includes('email')
+  ) {
+    return {
+      status: 409,
+      clientMessage:
+        'Este email ya está registrado. Intentá iniciar sesión o contactá soporte si el problema persiste.',
+      logMessage: message,
+    };
+  }
+
   if (isInfrastructureMessage(message)) {
     return {
       status: 503,

@@ -1,6 +1,11 @@
 import prisma from '../lib/prisma';
 import type { TiendaConfigBody } from '../validation/tienda-config.validation';
-import { getCheckoutManualExpiresHours } from './pedido-checkout.service';
+import {
+  getCheckoutExpiryWarningHours,
+  getCheckoutManualExpiresHours,
+  getCheckoutMpExpiresHours,
+  getCheckoutPedidoExpiresHours,
+} from '../config/checkout-expires.config';
 
 export interface TiendaConfigRecord {
   id: number;
@@ -26,6 +31,9 @@ export interface TiendaConfigPublic {
   retiroNotas: string | null;
   pagoManualInstruccionesExtra: string | null;
   pagoManualHorasPlazo: number;
+  mpExpiresHours: number;
+  defaultExpiresHours: number;
+  expiryWarningHours: number;
 }
 
 const DEFAULT_WHATSAPP_PHONE = '+54 9 3517 13-6311';
@@ -95,6 +103,9 @@ function buildPublicFromRecord(row: TiendaConfigRecord | null): TiendaConfigPubl
     retiroNotas: row?.retiroNotas?.trim() || DEFAULT_RETIRO_NOTAS,
     pagoManualInstruccionesExtra: row?.pagoManualInstruccionesExtra?.trim() || null,
     pagoManualHorasPlazo: getCheckoutManualExpiresHours(),
+    mpExpiresHours: getCheckoutMpExpiresHours(),
+    defaultExpiresHours: getCheckoutPedidoExpiresHours(),
+    expiryWarningHours: getCheckoutExpiryWarningHours(),
   };
 }
 

@@ -7,9 +7,17 @@ export class ShippingMethodNotSupportedError extends Error {
 }
 
 export class ShippingConfigError extends Error {
-  constructor(message: string) {
+  readonly code?: string;
+  readonly httpStatus: number;
+
+  constructor(
+    message: string,
+    options?: { code?: string; httpStatus?: number }
+  ) {
     super(message);
     this.name = 'ShippingConfigError';
+    this.code = options?.code;
+    this.httpStatus = options?.httpStatus ?? 400;
     Object.setPrototypeOf(this, ShippingConfigError.prototype);
   }
 }

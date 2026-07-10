@@ -18,6 +18,15 @@ describe('auth-session-error.util', () => {
     assert.equal(result.clientMessage, msg);
   });
 
+  it('email duplicado en DB → 409 con mensaje claro', () => {
+    const msg =
+      'Unique constraint failed on the constraint: `email`';
+    const result = resolveAuthSessionError(msg);
+    assert.equal(result.status, 409);
+    assert.match(result.clientMessage, /ya está registrado/i);
+    assert.ok(result.logMessage?.includes('Unique constraint'));
+  });
+
   it('error Prisma → 503 genérico y log', () => {
     const result = resolveAuthSessionError('PrismaClientKnownRequestError: Unique constraint');
     assert.equal(result.status, 503);

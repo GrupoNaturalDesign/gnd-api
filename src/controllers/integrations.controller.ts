@@ -1,6 +1,5 @@
 import type { Response } from 'express';
 import { mercadoPagoConfig, mercadoPagoClient } from '../services/mercadopago';
-import { CorreoProvider } from '../services/shipping/correo/correo.provider';
 import { AndreaniAuthService } from '../services/shipping/andreani/andreani.auth.service';
 import {
   getAndreaniBaseUrl,
@@ -9,14 +8,14 @@ import {
   loadAndreaniCredentials,
   resolveAndreaniEnv,
 } from '../services/shipping/andreani/andreani.config';
+import { isCorreoMock, resolveCorreoEnv } from '../services/shipping/correo/correo.config';
 import {
-  resolveCorreoEnv,
-  isCorreoMock,
-  mapEmpresaCorreoEnv,
-} from '../services/shipping/correo/correo.config';
+  correoHealthService,
+  type MicorreoHealthLayerStatus,
+  type MicorreoHealthReport,
+} from '../services/shipping/correo/correo-health.service';
 import { getIntegrationsMode, getIntegrationsModeLabel } from '../lib/integrations-mode';
 import type { FirebaseAuthRequest } from '../middleware/firebase-auth.middleware';
-import { correoAccountService } from '../services/shipping/correo/correo-account.service';
 
 interface IntegrationStatus {
   configured: boolean;
@@ -25,9 +24,25 @@ interface IntegrationStatus {
   detail: string;
 }
 
+export interface MicorreoIntegrationLayer {
+  status: MicorreoHealthLayerStatus;
+  detail: string;
+  customerIdSuffix?: string | null;
+}
+
+export interface CorreoIntegrationStatus extends IntegrationStatus {
+  layers: {
+    integrator: MicorreoIntegrationLayer;
+    account: MicorreoIntegrationLayer;
+    operational: MicorreoIntegrationLayer;
+  };
+  healthy: boolean;
+  readyForCheckout: boolean;
+}
+
 type StatusResult = {
   mercadopago: IntegrationStatus;
-  correo: IntegrationStatus;
+  correo: CorreoIntegrationStatus;
   andreani: IntegrationStatus;
 };
 
@@ -47,6 +62,60 @@ function errorStatus(mode: string | null, detail: string): IntegrationStatus {
   return { configured: true, status: 'error', mode, detail };
 }
 
+function mapCorreoFromHealth(report: MicorreoHealthReport): CorreoIntegrationStatus {
+  const env = report.env;
+  const layers = {
+    integrator: {
+      status: report.integrator.status,
+      detail: report.integrator.detail,
+    },
+    account: {
+      status: report.account.status,
+      detail: report.account.detail,
+      customerIdSuffix: report.account.customerIdSuffix,
+    },
+    operational: {
+      status: report.operational.status,
+      detail: report.operational.detail,
+    },
+  };
+  const healthy =
+    report.integrator.status === 'ok' && report.account.status === 'ok';
+  const readyForCheckout = report.readyForCheckout;
+
+  if (report.integrator.status === 'skipped') {
+    const base = mockStatus('mock', report.integrator.detail);
+    return { ...base, layers, healthy: false, readyForCheckout: false };
+  }
+
+  if (report.integrator.status === 'error') {
+    const base = errorStatus(env, report.integrator.detail);
+    return { ...base, layers, healthy: false, readyForCheckout: false };
+  }
+
+  if (report.account.status === 'misconfigured') {
+    const base = misconfiguredStatus(report.account.detail);
+    return { ...base, layers, healthy: false, readyForCheckout: false };
+  }
+
+  if (report.account.status === 'error') {
+    const base = errorStatus(env, report.account.detail);
+    return { ...base, layers, healthy: false, readyForCheckout: false };
+  }
+
+  if (report.operational.status === 'error') {
+    const base = errorStatus(env, report.operational.detail);
+    return { ...base, layers, healthy, readyForCheckout: false };
+  }
+
+  const suffix = report.account.customerIdSuffix;
+  const detail = suffix
+    ? `Integrador y cuenta portal OK (${suffix})`
+    : 'Integrador y cuenta portal OK';
+  const base = okStatus(env, detail);
+  return { ...base, layers, healthy, readyForCheckout };
+}
+
 function checkMercadoPago(): Promise<IntegrationStatus> {
   return doCheck('Mercado Pago', async () => {
     if (!mercadoPagoConfig.isConfigured()) {
@@ -60,33 +129,42 @@ function checkMercadoPago(): Promise<IntegrationStatus> {
   });
 }
 
-function checkCorreo(empresaId: number | undefined): Promise<IntegrationStatus> {
-  return doCheck('MiCorreo', async () => {
-    if (isCorreoMock()) {
-      return mockStatus('mock', 'Modo mock activo (CORREO_MOCK=true). No se chequea conexión real.');
-    }
-    if (empresaId == null) {
-      return misconfiguredStatus(
-        'Usuario admin sin empresa asignada. Configurá MiCorreo en Admin → Envíos.'
-      );
-    }
-    const env = resolveCorreoEnv();
-    const config = await correoAccountService.getOrCreateEnvioConfig(empresaId);
-    const creds = correoAccountService.resolveAccountCredentials(config);
-    if (!creds) {
-      return misconfiguredStatus(
-        'Cuenta MiCorreo no configurada. Completá email y contraseña en Admin → Configuración → Envíos.'
-      );
-    }
-    const provider = new CorreoProvider(
-      config,
-      mapEmpresaCorreoEnv(env),
-      globalThis.fetch.bind(globalThis)
-    );
-    await provider.validateCredentials();
-    const suffix = await provider.getCustomerIdSuffixForLogs();
-    return okStatus(env, `Cuenta vinculada (${suffix}) y API responde correctamente`);
-  });
+async function checkCorreo(empresaId: number | undefined): Promise<CorreoIntegrationStatus> {
+  if (isCorreoMock()) {
+    const report = await correoHealthService.checkMicorreo(0);
+    return mapCorreoFromHealth(report);
+  }
+  if (empresaId == null) {
+    const detail =
+      'Usuario admin sin empresa asignada. Configurá MiCorreo en Admin → Envíos.';
+    return {
+      ...misconfiguredStatus(detail),
+      layers: {
+        integrator: { status: 'misconfigured', detail },
+        account: { status: 'misconfigured', detail, customerIdSuffix: null },
+        operational: { status: 'skipped', detail: 'Sin empresa asignada' },
+      },
+      healthy: false,
+      readyForCheckout: false,
+    };
+  }
+  try {
+    const report = await correoHealthService.checkMicorreo(empresaId);
+    return mapCorreoFromHealth(report);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const detail = `MiCorreo: ${msg}`;
+    return {
+      ...errorStatus(getIntegrationsModeLabel(), detail),
+      layers: {
+        integrator: { status: 'error', detail },
+        account: { status: 'error', detail, customerIdSuffix: null },
+        operational: { status: 'skipped', detail: 'No se pudo verificar' },
+      },
+      healthy: false,
+      readyForCheckout: false,
+    };
+  }
 }
 
 function checkAndreani(): Promise<IntegrationStatus> {

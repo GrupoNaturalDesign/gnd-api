@@ -59,32 +59,55 @@ export const firebaseAuthService = {
     });
 
     if (!user) {
-      if (provider !== 'google.com') {
-        assertConsumerEmailAllowed(email);
-      }
-      const roleUserId = await getRoleIdByCode('USER');
-      const displayName = (decoded.name || '').trim();
-      const nameParts = displayName ? displayName.split(/\s+/).filter(Boolean) : [];
-      // Solo usar nombre/apellido cuando Firebase/Google envían un nombre real (ej. Google); si no, dejar vacío para onboarding
-      const hasRealName = nameParts.length > 0 && !displayName.includes('@');
-      const nombre = hasRealName ? nameParts[0]! : '';
-      const apellido = nameParts.length > 1 ? nameParts.slice(1).join(' ') : null;
-
-      user = await prisma.usuario.create({
-        data: {
-          externalId: uid,
-          email,
-          nombre: nombre || 'Usuario',
-          apellido,
-          rol: 'cliente' as Rol,
-          roleId: roleUserId,
-          provider: provider === 'google.com' ? 'google' : 'firebase',
-          emailVerified: firebaseEmailVerified,
-          avatarUrl: decoded.picture || null,
-          onboardingCompleted: false,
-        },
+      const byEmail = await prisma.usuario.findFirst({
+        where: { email },
         include: { role: true },
       });
+
+      if (byEmail) {
+        if (!byEmail.activo) {
+          throw new Error('Usuario desactivado. Contacte al administrador.');
+        }
+        const updatedEmailVerified = firebaseEmailVerified || byEmail.emailVerified;
+        user = await prisma.usuario.update({
+          where: { id: byEmail.id },
+          data: {
+            externalId: uid,
+            emailVerified: updatedEmailVerified,
+            ...(decoded.picture ? { avatarUrl: decoded.picture } : {}),
+            ...(provider === 'google.com' ? { provider: 'google' } : {}),
+            updatedAt: new Date(),
+          },
+          include: { role: true },
+        });
+      } else {
+        if (provider !== 'google.com') {
+          assertConsumerEmailAllowed(email);
+        }
+        const roleUserId = await getRoleIdByCode('USER');
+        const displayName = (decoded.name || '').trim();
+        const nameParts = displayName ? displayName.split(/\s+/).filter(Boolean) : [];
+        // Solo usar nombre/apellido cuando Firebase/Google envían un nombre real (ej. Google); si no, dejar vacío para onboarding
+        const hasRealName = nameParts.length > 0 && !displayName.includes('@');
+        const nombre = hasRealName ? nameParts[0]! : '';
+        const apellido = nameParts.length > 1 ? nameParts.slice(1).join(' ') : null;
+
+        user = await prisma.usuario.create({
+          data: {
+            externalId: uid,
+            email,
+            nombre: nombre || 'Usuario',
+            apellido,
+            rol: 'cliente' as Rol,
+            roleId: roleUserId,
+            provider: provider === 'google.com' ? 'google' : 'firebase',
+            emailVerified: firebaseEmailVerified,
+            avatarUrl: decoded.picture || null,
+            onboardingCompleted: false,
+          },
+          include: { role: true },
+        });
+      }
     } else {
       if (!user.activo) {
         throw new Error('Usuario desactivado. Contacte al administrador.');

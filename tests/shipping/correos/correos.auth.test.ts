@@ -45,7 +45,7 @@ describe('SH-C-07 — CorreoAuth token cache + 401 retry', () => {
 
   it('getValidToken lanza con respuesta sin campo token', async () => {
     mockFetch.setResponses([{ status: 200, json: { no_token: 'field' } }]);
-    await assert.rejects(auth.getValidToken(), /sin campo token/);
+    await assert.rejects(auth.getValidToken(), /no devolvió token/);
   });
 
   it('getValidToken parsea access_token como fallback', async () => {

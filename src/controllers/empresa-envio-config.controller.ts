@@ -5,7 +5,8 @@ import {
   envioConfigSyncSchema,
 } from '../validation/envio-config.validation';
 import type { FirebaseAuthRequest } from '../middleware/firebase-auth.middleware';
-import { ShippingValidationError } from '../services/shipping/shipping.errors';
+import { ShippingConfigError, ShippingValidationError } from '../services/shipping/shipping.errors';
+import { correoHealthService } from '../services/shipping/correo/correo-health.service';
 
 function getEmpresaId(req: FirebaseAuthRequest): number {
   const id = req.empresaId;
@@ -66,9 +67,16 @@ export async function syncMicorreoAccount(req: FirebaseAuthRequest, res: Respons
     res.json({ success: true, data, message: 'Cuenta MiCorreo vinculada correctamente' });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : 'Error al vincular MiCorreo';
-    res.status(e instanceof ShippingValidationError ? 400 : 500).json({
+    const status =
+      e instanceof ShippingValidationError
+        ? 400
+        : e instanceof ShippingConfigError
+          ? e.httpStatus
+          : 500;
+    res.status(status).json({
       success: false,
       error: message,
+      ...(e instanceof ShippingConfigError && e.code ? { code: e.code } : {}),
     });
   }
 }
@@ -86,5 +94,16 @@ export async function registerMicorreoAccount(
       success: false,
       error: message,
     });
+  }
+}
+
+export async function getMicorreoHealth(req: FirebaseAuthRequest, res: Response): Promise<void> {
+  try {
+    const data = await correoHealthService.checkMicorreo(getEmpresaId(req));
+    res.json({ success: true, data });
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : 'Error al verificar MiCorreo';
+    const status = e instanceof ShippingConfigError ? e.httpStatus : 500;
+    res.status(status).json({ success: false, error: message });
   }
 }

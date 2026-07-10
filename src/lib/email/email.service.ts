@@ -15,6 +15,10 @@ import {
   ManualPaymentInstructionsEmail,
   type ManualPaymentInstructionsEmailProps,
 } from '../../emails/ManualPaymentInstructionsEmail';
+import {
+  OrderExpiringSoonEmail,
+  type OrderExpiringSoonEmailProps,
+} from '../../emails/OrderExpiringSoonEmail';
 import { unsubscribeService } from './unsubscribe.service';
 import { tryGetEmpresaIdFromEnv } from '../checkout-empresa';
 import { empresaTiendaConfigService } from '../../services/empresa-tienda-config.service';
@@ -118,7 +122,8 @@ async function logEmail(params: {
     | 'contact'
     | 'newsletter'
     | 'internal'
-    | 'payment_instructions';
+    | 'payment_instructions'
+    | 'order_expiring_soon';
   to: string;
   status: 'sent' | 'failed';
   messageId?: string;
@@ -314,6 +319,70 @@ export const emailService = {
       status: 'sent',
       messageId,
       metadata: { orderId: payload.orderId, formaPago: payload.formaPago },
+    });
+    return { success: true, messageId };
+  },
+
+  async sendOrderExpiringSoonEmail(
+    payload: OrderExpiringSoonEmailProps & { customerEmail: string }
+  ): Promise<EmailSendResult> {
+    const resend = getResend();
+    const from = getFromTransactional();
+    const to = payload.customerEmail.trim();
+
+    if (!to) {
+      return { success: false, error: 'Email del cliente no disponible.' };
+    }
+
+    if (!resend || !from) {
+      const err = 'Resend no configurado (RESEND_API_KEY / RESEND_FROM_TRANSACTIONAL).';
+      await logEmail({
+        type: 'order_expiring_soon',
+        to,
+        status: 'failed',
+        error: err,
+        metadata: { pedidoId: payload.orderId, formaPago: payload.formaPago },
+      });
+      return { success: false, error: err };
+    }
+
+    const subject = `Tu pedido #${payload.orderId} vence pronto`;
+    const html = await render(createElement(OrderExpiringSoonEmail, payload));
+    const text = await render(createElement(OrderExpiringSoonEmail, payload), {
+      plainText: true,
+    });
+
+    const { data, error } = await sendWithRetry(
+      () =>
+        resend.emails.send({
+          from,
+          to,
+          subject,
+          html,
+          text,
+        }),
+      { label: 'sendOrderExpiringSoonEmail' }
+    );
+
+    if (error) {
+      await logEmail({
+        type: 'order_expiring_soon',
+        to,
+        status: 'failed',
+        error: error.message,
+        metadata: { pedidoId: payload.orderId, formaPago: payload.formaPago },
+      });
+      return { success: false, error: error.message };
+    }
+
+    const messageId =
+      data && typeof data === 'object' && 'id' in data ? (data as { id: string }).id : undefined;
+    await logEmail({
+      type: 'order_expiring_soon',
+      to,
+      status: 'sent',
+      messageId,
+      metadata: { pedidoId: payload.orderId, formaPago: payload.formaPago },
     });
     return { success: true, messageId };
   },

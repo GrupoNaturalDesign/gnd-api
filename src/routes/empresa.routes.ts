@@ -9,6 +9,7 @@ import { datosBancariosBodySchema } from '../validation/datos-bancarios.validati
 import { tiendaConfigBodySchema } from '../validation/tienda-config.validation';
 import {
   getEnvioConfig,
+  getMicorreoHealth,
   patchEnvioConfig,
   registerMicorreoAccount,
   syncMicorreoAccount,
@@ -150,6 +151,11 @@ router.post('/envio-config/micorreo/sync', (req, res) => {
 // POST /api/admin/empresa/envio-config/micorreo/register
 router.post('/envio-config/micorreo/register', (req, res) => {
   void registerMicorreoAccount(req as import('../middleware/firebase-auth.middleware').FirebaseAuthRequest, res);
+});
+
+// GET /api/admin/empresa/envio-config/micorreo/health
+router.get('/envio-config/micorreo/health', (req, res) => {
+  void getMicorreoHealth(req as import('../middleware/firebase-auth.middleware').FirebaseAuthRequest, res);
 });
 
 export default router;

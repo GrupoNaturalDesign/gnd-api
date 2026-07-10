@@ -25,6 +25,7 @@ import type {
   ShippingTrackingResult,
 } from '../shipping.types';
 import {
+  ShippingConfigError,
   ShippingHttpError,
   ShippingMethodNotSupportedError,
   ShippingValidationError,
@@ -237,7 +238,13 @@ export class CorreoProvider implements ShippingProvider {
       const auth = await this.getAuth();
       await auth.validateCredentials();
     } catch (e: unknown) {
-      if (e instanceof ShippingHttpError || e instanceof ShippingValidationError) throw e;
+      if (
+        e instanceof ShippingConfigError ||
+        e instanceof ShippingHttpError ||
+        e instanceof ShippingValidationError
+      ) {
+        throw e;
+      }
       const msg = e instanceof Error ? e.message : String(e);
       throw new ShippingValidationError(`Credenciales MiCorreo inválidas: ${msg}`);
     }

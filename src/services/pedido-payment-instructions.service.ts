@@ -34,6 +34,8 @@ function formatExpiresAt(date: Date | null | undefined): string | undefined {
   });
 }
 
+export { formatExpiresAt as formatCheckoutExpiresAt };
+
 export async function buildManualPaymentInstructionsPayload(
   pedidoId: number
 ): Promise<ManualPaymentInstructionsEmailProps | null> {
