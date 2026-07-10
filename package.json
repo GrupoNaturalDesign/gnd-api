@@ -1,6 +1,9 @@
 {
   "name": "gnd-back",
   "version": "1.0.0",
+  "engines": {
+    "node": ">=20"
+  },
   "main": "dist/index.js",
   "scripts": {
     "dev": "nodemon --exec ts-node --transpile-only src/index.ts",

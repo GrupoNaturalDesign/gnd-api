@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-package-lock.json
 
 # Build output
 dist/
@@ -38,9 +37,8 @@ coverage/
 
 uploads/temp/
 
-docs/
-
 serviceAccountKey.json
 firebase-oneline.txt
 .vercel
 .env*
+hostinger.env
