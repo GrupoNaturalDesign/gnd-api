@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, EstadoPedido, FormaPago } from '@prisma/client';
 import type { Pedido, PedidoItem } from '@prisma/client';
 import type { CheckoutEnvioSnapshot } from '../../../src/utils/pedido-entrega.util';
 import { buildParcelFromShippingLines } from '../../../src/utils/shipping-parcel.util';
@@ -7,6 +7,8 @@ export const GOLDEN_EMPRESA_ID = 1;
 export const GOLDEN_PEDIDO_ANDREANI_ID = 8801;
 export const GOLDEN_PEDIDO_CORREO_ID = 8802;
 export const GOLDEN_PEDIDO_RETIRO_ID = 8803;
+/** Manual transferencia + envío postal, pendiente de aprobación admin. */
+export const GOLDEN_PEDIDO_MANUAL_POSTAL_ID = 8804;
 
 /** Snapshot como lo persiste checkout tras cotizar Andreani domicilio. */
 export const andreaniHomeSnapshot: CheckoutEnvioSnapshot = {
@@ -138,17 +140,68 @@ export function buildRetiroPedido(): Pedido {
   } as Pedido;
 }
 
+/** Transferencia/efectivo + Andreani domicilio, recién creado en web (pre-aprobación admin). */
+export function buildManualPostalPedidoPending(): Pedido {
+  return {
+    ...buildAndreaniHomePedido(),
+    id: GOLDEN_PEDIDO_MANUAL_POSTAL_ID,
+    estadoInterno: EstadoPedido.pendiente_confirmacion,
+    formaPago: FormaPago.transferencia,
+    stockReservadoWeb: true,
+    sfactoryOrdenId: null,
+    sfactoryExternalOrderId: null,
+    sfactoryEstado: null,
+    sfactorySnapshot: null,
+    usuarioId: 1,
+    clienteId: 1,
+    fechaPedido: new Date('2026-07-01T15:00:00.000Z'),
+    descuento: new Prisma.Decimal(0),
+    iva: new Prisma.Decimal(0),
+    observaciones: null,
+    entregaNotas: null,
+    refCliente: null,
+    numOrdenCompra: null,
+    cuponId: null,
+    cuponCodigoSnapshot: null,
+    cuponDetalleSnapshot: null,
+    syncStatus: 'pending',
+    expiresAt: new Date('2026-07-11T15:00:00.000Z'),
+  } as Pedido;
+}
+
 export function goldenPedidoItems(pedidoId: number): PedidoItem[] {
   return [
     {
-      id: 1,
+      id: pedidoId * 10,
       pedidoId,
       productoWebId: 101,
+      productoPadreId: 1,
+      sfactoryItemId: 501,
+      nombre: 'Camisa Joy',
       codigo: 'L-OF-CAM-JOY2',
       cantidad: new Prisma.Decimal(1),
+      precioUnitario: new Prisma.Decimal(40000),
+      descuento: new Prisma.Decimal(0),
+      subtotal: new Prisma.Decimal(40000),
+      talle: 'M',
+      color: 'Azul',
+      bordado: false,
     } as PedidoItem,
   ];
 }
+
+export const goldenEmpresaRow = {
+  id: GOLDEN_EMPRESA_ID,
+  sfactoryCompanyKey: 'golden-company-key',
+};
+
+export const goldenClienteRow = {
+  id: 1,
+  cuit: '20-12345678-9',
+  email: 'juan.perez@example.com',
+  razonSocial: 'Juan Pérez',
+  telefono: '3515551234',
+};
 
 export function makeGoldenEnvioConfig(providerDefault: 'andreani' | 'correo') {
   return {
