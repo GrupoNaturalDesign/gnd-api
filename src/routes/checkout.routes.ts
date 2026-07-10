@@ -27,6 +27,10 @@ router.get(
   }
 );
 
+router.post('/quote', firebaseAuthMiddleware, (req, res) => {
+  void checkoutController.crearQuote(req, res);
+});
+
 router.post('/mp', firebaseAuthMiddleware, (req, res) => {
   void checkoutController.iniciarPagoMp(req, res);
 });

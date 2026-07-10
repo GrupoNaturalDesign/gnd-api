@@ -1282,3 +1282,70 @@ export async function crearPedidoManual(
     totalCobro,
   };
 }
+
+export interface CrearPedidoFromQuoteClientInput extends CheckoutFacturaInput {
+  clienteNombre: string;
+  clienteEmail: string;
+  clienteTelefono?: string;
+  clienteDireccion?: string;
+  observaciones?: string;
+}
+
+/** Confirma checkout MP usando cotización persistida (precios autoritativos del servidor). */
+export async function crearPedidoMpFromQuote(
+  quoteId: string,
+  client: CrearPedidoFromQuoteClientInput,
+  usuarioId: number
+): Promise<CrearPedidoMpResult> {
+  const { loadCheckoutQuoteForConfirm, consumeCheckoutQuote, CheckoutQuoteError } =
+    await import('./checkout-quote.service');
+  const snapshot = await loadCheckoutQuoteForConfirm(quoteId, usuarioId);
+  if (snapshot.paymentKind !== 'mercado_pago') {
+    throw new CheckoutQuoteError('La cotización no corresponde a Mercado Pago', 'INVALID');
+  }
+  if (!snapshot.mpPricingMode) {
+    throw new CheckoutQuoteError('Cotización de Mercado Pago inválida', 'INVALID');
+  }
+  const input: CrearPedidoMpInput = {
+    empresaId: snapshot.empresaId,
+    items: snapshot.items,
+    checkoutEnvio: snapshot.checkoutEnvio,
+    cuponCodigo: snapshot.cuponCodigo,
+    mpPricingMode: snapshot.mpPricingMode,
+    ...client,
+  };
+  const result = await crearPedidoMp(input, usuarioId);
+  await consumeCheckoutQuote(quoteId, usuarioId);
+  return result;
+}
+
+/** Confirma checkout manual usando cotización persistida. */
+export async function crearPedidoManualFromQuote(
+  quoteId: string,
+  client: CrearPedidoFromQuoteClientInput,
+  usuarioId: number
+): Promise<CrearPedidoManualResult> {
+  const { loadCheckoutQuoteForConfirm, consumeCheckoutQuote, CheckoutQuoteError } =
+    await import('./checkout-quote.service');
+  const snapshot = await loadCheckoutQuoteForConfirm(quoteId, usuarioId);
+  if (snapshot.paymentKind !== 'manual') {
+    throw new CheckoutQuoteError('La cotización no corresponde a pago manual', 'INVALID');
+  }
+  if (snapshot.manualFormaPago !== 'efectivo' && snapshot.manualFormaPago !== 'transferencia') {
+    throw new CheckoutQuoteError('Cotización manual inválida', 'INVALID');
+  }
+  const input: CrearPedidoManualInput = {
+    empresaId: snapshot.empresaId,
+    items: snapshot.items,
+    checkoutEnvio: snapshot.checkoutEnvio,
+    cuponCodigo: snapshot.cuponCodigo,
+    formaPago: snapshot.manualFormaPago,
+    entregaCp: snapshot.checkoutEnvio?.cpDestino,
+    andreaniSucursalId: snapshot.checkoutEnvio?.agencyId,
+    andreaniSucursalDescripcion: snapshot.checkoutEnvio?.agencyLabel,
+    ...client,
+  };
+  const result = await crearPedidoManual(input, usuarioId);
+  await consumeCheckoutQuote(quoteId, usuarioId);
+  return result;
+}

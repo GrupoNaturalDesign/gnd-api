@@ -1,5 +1,10 @@
 import type { CheckoutEnvioClientPayload } from '../services/checkout-shipping.service';
 
+export type CheckoutEnvioSelectionInput = Omit<
+  CheckoutEnvioClientPayload,
+  'clientQuotedAmount' | 'parcel'
+>;
+
 export function parseParcelForCheckout(
   raw: unknown
 ): CheckoutEnvioClientPayload['parcel'] | null {
@@ -85,6 +90,39 @@ export function parseCheckoutEnvio(raw: unknown): CheckoutEnvioClientPayload | n
     cpDestino,
     clientQuotedAmount,
     ...(parcel ? { parcel } : {}),
+    ...(correoProductType ? { correoProductType } : {}),
+    ...(agencyId ? { agencyId } : {}),
+    ...(agencyLabel ? { agencyLabel } : {}),
+    ...(address ? { address } : {}),
+  };
+}
+
+/** Selección de envío para quote (sin monto ni bulto del cliente). */
+export function parseCheckoutEnvioSelection(
+  raw: unknown
+): CheckoutEnvioSelectionInput | null {
+  if (raw == null || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  const provider = o.provider;
+  const deliveryType = o.deliveryType;
+  if (provider !== 'correo' && provider !== 'andreani') return null;
+  if (deliveryType !== 'homeDelivery' && deliveryType !== 'agency') return null;
+  const cpDestino = typeof o.cpDestino === 'string' ? o.cpDestino.trim() : '';
+  if (cpDestino.length < 2) return null;
+  const agencyId = typeof o.agencyId === 'string' ? o.agencyId.trim() : undefined;
+  const agencyLabel = typeof o.agencyLabel === 'string' ? o.agencyLabel.trim() : undefined;
+  const correoProductTypeRaw = o.correoProductType;
+  const correoProductType =
+    typeof correoProductTypeRaw === 'string' && correoProductTypeRaw.trim()
+      ? correoProductTypeRaw.trim()
+      : undefined;
+  if (deliveryType === 'agency' && !agencyId) return null;
+  const address = parseAddressForCheckout(o.address);
+  if (deliveryType === 'homeDelivery' && !address) return null;
+  return {
+    provider,
+    deliveryType,
+    cpDestino,
     ...(correoProductType ? { correoProductType } : {}),
     ...(agencyId ? { agencyId } : {}),
     ...(agencyLabel ? { agencyLabel } : {}),

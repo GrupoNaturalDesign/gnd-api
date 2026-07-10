@@ -165,9 +165,9 @@ export async function quoteCheckoutShipping(params: {
  * Re-cotiza en servidor y valida contra el monto enviado por el cliente (anti-manipulación).
  * El bulto se calcula siempre desde `items` del pedido (ignora medidas del cliente).
  */
-export async function validateCheckoutEnvioForMp(
+export async function resolveCheckoutEnvioPricing(
   empresaId: number,
-  input: CheckoutEnvioClientPayload,
+  input: Omit<CheckoutEnvioClientPayload, 'clientQuotedAmount' | 'parcel'>,
   items: CheckoutShippingItemInput[],
   declaredValueSubtotal: number
 ): Promise<{
@@ -175,6 +175,8 @@ export async function validateCheckoutEnvioForMp(
   formaEnvio: FormaEnvio;
   snapshot: Prisma.InputJsonValue;
   parcel: ShippingParcel;
+  validatedAmount: number;
+  checkoutEnvio: CheckoutEnvioClientPayload;
 }> {
   const parcel = await buildParcelFromCheckoutItems(
     empresaId,
@@ -191,11 +193,6 @@ export async function validateCheckoutEnvioForMp(
       ? { correoProductType: input.correoProductType }
       : undefined
   );
-  if (Math.abs(amount - input.clientQuotedAmount) > CHECKOUT_ENVIO_QUOTE_TOLERANCE_ARS) {
-    throw new ShippingValidationError(
-      `El costo de envío cambió ($${amount.toFixed(2)}). Volvé a calcular el envío en el checkout.`
-    );
-  }
   const snapshot = {
     version: 2,
     provider: input.provider,
@@ -210,10 +207,60 @@ export async function validateCheckoutEnvioForMp(
     correoQuotes: correoQuotes?.slice(0, 8),
     andreaniRaw: andreaniRaw ?? undefined,
   };
+  const checkoutEnvio: CheckoutEnvioClientPayload = {
+    ...input,
+    clientQuotedAmount: amount,
+    parcel,
+  };
   return {
     costoEnvio: new Prisma.Decimal(amount.toFixed(2)),
     formaEnvio: mapFormaEnvioCheckout(input.provider, input.deliveryType),
     snapshot: JSON.parse(JSON.stringify(snapshot)) as Prisma.InputJsonValue,
     parcel,
+    validatedAmount: amount,
+    checkoutEnvio,
+  };
+}
+
+export async function validateCheckoutEnvioForMp(
+  empresaId: number,
+  input: CheckoutEnvioClientPayload,
+  items: CheckoutShippingItemInput[],
+  declaredValueSubtotal: number
+): Promise<{
+  costoEnvio: Prisma.Decimal;
+  formaEnvio: FormaEnvio;
+  snapshot: Prisma.InputJsonValue;
+  parcel: ShippingParcel;
+}> {
+  const { provider, deliveryType, cpDestino, correoProductType, agencyId, agencyLabel, address } =
+    input;
+  const resolved = await resolveCheckoutEnvioPricing(
+    empresaId,
+    {
+      provider,
+      deliveryType,
+      cpDestino,
+      correoProductType,
+      agencyId,
+      agencyLabel,
+      address,
+    },
+    items,
+    declaredValueSubtotal
+  );
+  if (
+    Math.abs(resolved.validatedAmount - input.clientQuotedAmount) >
+    CHECKOUT_ENVIO_QUOTE_TOLERANCE_ARS
+  ) {
+    throw new ShippingValidationError(
+      `El costo de envío cambió ($${resolved.validatedAmount.toFixed(2)}). Volvé a calcular el envío en el checkout.`
+    );
+  }
+  return {
+    costoEnvio: resolved.costoEnvio,
+    formaEnvio: resolved.formaEnvio,
+    snapshot: resolved.snapshot,
+    parcel: resolved.parcel,
   };
 }
