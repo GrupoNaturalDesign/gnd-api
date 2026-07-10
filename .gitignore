@@ -44,3 +44,4 @@ serviceAccountKey.json
 firebase-oneline.txt
 .vercel
 .env*
+hostinger.env
