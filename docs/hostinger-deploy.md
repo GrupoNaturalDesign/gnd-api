@@ -41,8 +41,11 @@ En el repo GitHub → **Settings → Secrets and variables → Actions**:
 |--------|--------|
 | `HOSTINGER_SSH_PASSWORD` | Password SSH (`ssh -p 65002 u967550282@82.25.67.184`) |
 | `HOSTINGER_API_TOKEN` | Token en [developers.hostinger.com](https://developers.hostinger.com) (o hPanel → API) |
+| `DISCORD_WEBHOOK_URL` | Webhook del canal Discord (Server → Integraciones → Webhooks) |
 
 Opcional (Variables): `HOSTINGER_DOMAIN`, `HOSTINGER_USERNAME`, host/port SSH.
+
+Tras cada deploy, Discord recibe embed **OK** (verde) o **FAILED** (rojo) con commit, autor y link al run de Actions. Sin el secret, el notify se saltea (no falla el job).
 
 ### Manual / local igual que CI
 

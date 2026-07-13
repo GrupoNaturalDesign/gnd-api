@@ -3,6 +3,7 @@
 # Secrets (repo Settings → Secrets and variables → Actions):
 #   HOSTINGER_SSH_PASSWORD  — SSH password (port 65002)
 #   HOSTINGER_API_TOKEN     — API token from https://developers.hostinger.com / hPanel
+#   DISCORD_WEBHOOK_URL     — Discord channel webhook (deploy OK / FAILED)
 #
 # Optional secrets/vars:
 #   HOSTINGER_SSH_HOST (default 82.25.67.184)
@@ -62,3 +63,17 @@ jobs:
           HOSTINGER_USERNAME: ${{ vars.HOSTINGER_USERNAME }}
           HOSTINGER_DOMAIN: ${{ vars.HOSTINGER_DOMAIN }}
         run: node scripts/ci-deploy-hostinger.mjs
+
+      - name: Discord — deploy OK
+        if: success()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DEPLOY_STATUS: success
+        run: node scripts/notify-discord-deploy.mjs
+
+      - name: Discord — deploy FAILED
+        if: failure()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DEPLOY_STATUS: failure
+        run: node scripts/notify-discord-deploy.mjs
