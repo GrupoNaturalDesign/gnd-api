@@ -1,0 +1,64 @@
+# Push-to-deploy → Hostinger (api.naturalonline.com.ar)
+#
+# Secrets (repo Settings → Secrets and variables → Actions):
+#   HOSTINGER_SSH_PASSWORD  — SSH password (port 65002)
+#   HOSTINGER_API_TOKEN     — API token from https://developers.hostinger.com / hPanel
+#
+# Optional secrets/vars:
+#   HOSTINGER_SSH_HOST (default 82.25.67.184)
+#   HOSTINGER_SSH_PORT (default 65002)
+#   HOSTINGER_SSH_USER (default u967550282)
+#   HOSTINGER_USERNAME (default u967550282)
+#   HOSTINGER_DOMAIN   (default api.naturalonline.com.ar)
+
+name: Deploy Hostinger
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-hostinger-prod
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build + sync + restart
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (prisma generate + tsc)
+        run: npm run build
+
+      - name: Setup Python (paramiko)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install paramiko
+        run: pip install paramiko
+
+      - name: Deploy (SSH sync dist + API restart + smoke)
+        env:
+          HOSTINGER_SSH_PASSWORD: ${{ secrets.HOSTINGER_SSH_PASSWORD }}
+          HOSTINGER_API_TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
+          HOSTINGER_SSH_HOST: ${{ vars.HOSTINGER_SSH_HOST }}
+          HOSTINGER_SSH_PORT: ${{ vars.HOSTINGER_SSH_PORT }}
+          HOSTINGER_SSH_USER: ${{ vars.HOSTINGER_SSH_USER }}
+          HOSTINGER_USERNAME: ${{ vars.HOSTINGER_USERNAME }}
+          HOSTINGER_DOMAIN: ${{ vars.HOSTINGER_DOMAIN }}
+        run: node scripts/ci-deploy-hostinger.mjs

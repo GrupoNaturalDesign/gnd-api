@@ -21,6 +21,7 @@
     "test:sandbox": "node --test --require ts-node/register \"tests/shipping/sandbox/*.test.ts\"",
     "test:integration": "node --test --require ts-node/register \"tests/cupones/cupon-engine.integration.test.ts\" \"tests/admin-notification.integration.test.ts\"",
     "deploy:hostinger-prod": "node scripts/deploy-hostinger-prod.mjs",
+    "deploy:hostinger-ci": "node scripts/ci-deploy-hostinger.mjs",
     "smoke:hostinger-prod": "node scripts/smoke-hostinger-prod.mjs",
     "verify:mp-webhook-prod": "node scripts/verify-mp-webhook-prod.mjs"
   },

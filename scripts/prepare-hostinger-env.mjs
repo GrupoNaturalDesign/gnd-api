@@ -82,7 +82,8 @@ for (const key of Object.keys(merged)) {
 }
 
 // Hostinger production overrides
-merged.DB_HOST = 'localhost';
+// Use 127.0.0.1 (not localhost): on Hostinger, localhost → ::1 and MySQL rejects u967550282_gnd@::1
+merged.DB_HOST = '127.0.0.1';
 merged.NODE_ENV = 'production';
 merged.PORT = merged.PORT === '3003' ? '3002' : (merged.PORT || '3002');
 merged.PEDIDO_CHECKOUT_JOBS_ENABLED = 'true';

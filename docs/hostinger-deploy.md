@@ -16,20 +16,53 @@ No usar sitios obsoletos `slategray-manatee-407634` ni `azure-skunk-643837` (ver
 | Build local | `npm run build` (`prisma generate && tsc`) |
 | Start plataforma | `npm start` → `node dist/index.js` |
 | Entry file hPanel | `dist/index.js` |
-| MySQL | `DB_HOST=localhost`, DB `u967550282_gnd` |
+| MySQL | `DB_HOST=127.0.0.1`, DB `u967550282_gnd` |
 | Monitoreo | `GET https://api.naturalonline.com.ar/api/health` |
 
 > `/health` (sin prefijo `/api`) puede devolver 404 en Hostinger. Usar siempre **`/api/health`**.
 
 ---
 
-## Release (un comando)
+## Push-to-deploy (GitHub Actions) — simil Vercel
+
+Cada **push a `master`** en [GrupoNaturalDesign/gnd-api](https://github.com/GrupoNaturalDesign/gnd-api) corre [`.github/workflows/deploy-hostinger.yml`](../.github/workflows/deploy-hostinger.yml):
+
+1. `npm ci` + `npm run build` en GitHub
+2. SSH sync de `dist/` → `nodejs/dist` ([`ssh-hostinger-sync-dist.py`](../scripts/ssh-hostinger-sync-dist.py))
+3. Enforce `DB_HOST=127.0.0.1` en `.env` del runtime
+4. Restart vía API ([`hostinger-api-restart.mjs`](../scripts/hostinger-api-restart.mjs))
+5. Smoke: `/api/health`, `/api/rubros`, webhook MP
+
+### Secrets (una vez)
+
+En el repo GitHub → **Settings → Secrets and variables → Actions**:
+
+| Secret | Valor |
+|--------|--------|
+| `HOSTINGER_SSH_PASSWORD` | Password SSH (`ssh -p 65002 u967550282@82.25.67.184`) |
+| `HOSTINGER_API_TOKEN` | Token en [developers.hostinger.com](https://developers.hostinger.com) (o hPanel → API) |
+
+Opcional (Variables): `HOSTINGER_DOMAIN`, `HOSTINGER_USERNAME`, host/port SSH.
+
+### Manual / local igual que CI
+
+```bash
+npm run build
+npm run deploy:hostinger-ci   # requiere HOSTINGER_SSH_PASSWORD + HOSTINGER_API_TOKEN
+```
+
+También: Actions → **Deploy Hostinger** → **Run workflow**.
+
+**Alcance:** sincroniza código compilado (`dist/`). No reinstala `node_modules` ni regenera Prisma en el servidor. Si cambiás dependencias npm o `schema.prisma`, usá además un deploy archive/MCP completo (sección siguiente).
+
+---
+
+## Release local (MCP + zip)
 
 ```bash
 cd api
 npm run deploy:hostinger-prod
 ```
-
 El orquestador [`scripts/deploy-hostinger-prod.mjs`](../scripts/deploy-hostinger-prod.mjs) ejecuta:
 
 1. `npm run build`
@@ -78,7 +111,7 @@ Salida: `api/hostinger.env`. **No commitear.**
 
 | Variable | Valor prod |
 |----------|------------|
-| `DB_HOST` | `localhost` |
+| `DB_HOST` | `127.0.0.1` (no `localhost`: en Hostinger resuelve a `::1` y MySQL rechaza el usuario) |
 | `DB_POOL_LIMIT` | `5` (shared hosting) |
 | `NODE_ENV` | `production` |
 | `INTEGRATIONS_ENV` | `production` |
@@ -191,7 +224,8 @@ Scripts SSH legacy movidos a [`scripts/legacy/`](../scripts/legacy/).
 | Síntoma | Acción |
 |---------|--------|
 | `entry_file: index.js` en logs | Entry file = `dist/index.js` |
-| `db: disconnected` / pool timeout | `DB_HOST=localhost`; no `srv1438.hstgr.io` |
+| `db: disconnected` / pool timeout | `DB_HOST=127.0.0.1` (no `localhost`/IPv6 `::1`); verificar que `db-config` normalice host |
+| `Access denied ... '@'::1'` | MySQL rechaza IPv6 localhost — usar `127.0.0.1` |
 | `Bad escaped character in JSON` en login | Regenerar env con `prepare-hostinger-env.mjs`; usar `FIREBASE_ADMIN_SDK_JSON_B64` |
 | Build falla `tsc` en servidor | Zip debe incluir `dist/` precompilado (`make-hostinger-deploy-zip.py`) |
 | 404 público tras SSH manual | Usar deploy plataforma + dominio; no `nohup` suelto en :3002 |

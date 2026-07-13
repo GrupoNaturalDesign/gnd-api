@@ -1,7 +1,18 @@
 import dotenv from 'dotenv';
 import type { PoolConfig } from 'mariadb';
 
-dotenv.config();
+// Hostinger (lsnode) injecta DB_* en process.env; sin override el .env no gana.
+dotenv.config({ override: true });
+
+/**
+ * En Hostinger shared, `localhost` resuelve a IPv6 (::1) y MySQL rechaza el usuario
+ * (`Access denied ... '@'::1'`). `127.0.0.1` usa TCP IPv4 y funciona.
+ */
+function normalizeMysqlHost(host: string): string {
+  const h = host.trim().toLowerCase();
+  if (h === 'localhost' || h === '::1') return '127.0.0.1';
+  return host.trim();
+}
 
 /**
  * URL para Prisma CLI (migrate) y runtime. Si la contraseña tiene `/`, `@`, etc.,
@@ -60,7 +71,7 @@ function getConnectionParams(): Pick<
 
   if (host && name && process.env.DB_USER !== undefined && process.env.DB_PASS !== undefined) {
     return {
-      host,
+      host: normalizeMysqlHost(host),
       port: Number(process.env.DB_PORT) || 3306,
       user: process.env.DB_USER,
       password: process.env.DB_PASS,
@@ -68,7 +79,8 @@ function getConnectionParams(): Pick<
     };
   }
 
-  return parseMysqlUrl(getMysqlUrlFromEnv());
+  const fromUrl = parseMysqlUrl(getMysqlUrlFromEnv());
+  return { ...fromUrl, host: normalizeMysqlHost(fromUrl.host ?? '127.0.0.1') };
 }
 
 /**
