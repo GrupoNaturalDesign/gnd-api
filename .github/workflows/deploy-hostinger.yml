@@ -44,6 +44,13 @@ jobs:
 
       - name: Build (prisma generate + tsc)
         run: npm run build
+        env:
+          # prisma.config.ts requires DB_* at generate time; CI does not connect to MySQL
+          DB_HOST: 127.0.0.1
+          DB_PORT: "3306"
+          DB_USER: ci
+          DB_PASS: ci
+          DB_NAME: ci
 
       - name: Setup Python (paramiko)
         uses: actions/setup-python@v5
