@@ -88,6 +88,10 @@ router.post(
   '/:id/crear-envio',
   pedidoAdminController.crearEnvioPostal.bind(pedidoAdminController)
 );
+router.patch(
+  '/:id/tracking',
+  pedidoAdminController.setTracking.bind(pedidoAdminController)
+);
 router.get(
   '/:id/etiqueta/disponibilidad',
   pedidoAdminController.getEtiquetaDisponibilidad.bind(pedidoAdminController)

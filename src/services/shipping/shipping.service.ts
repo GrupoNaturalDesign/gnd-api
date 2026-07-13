@@ -237,6 +237,91 @@ export class ShippingService {
     }
   }
 
+  /**
+   * Persiste nº de seguimiento cargado/editado por admin (p. ej. MiCorreo no lo
+   * devuelve en /shipping/import).
+   */
+  async setManualTracking(input: {
+    empresaId: number;
+    pedidoId: number;
+    provider: ShippingProviderName;
+    trackingNumber: string;
+  }): Promise<{
+    provider: ShippingProviderName;
+    trackingNumber: string;
+    trackingUrl: string | null;
+  }> {
+    const tn = input.trackingNumber.trim();
+    if (!tn) {
+      throw new ShippingValidationError('Indique el número de seguimiento');
+    }
+
+    const pedido = await prisma.pedido.findFirst({
+      where: { id: input.pedidoId, empresaId: input.empresaId },
+    });
+    if (!pedido) {
+      throw new ShippingValidationError(
+        'Pedido no encontrado o no pertenece a la empresa'
+      );
+    }
+
+    const trackingUrl = buildShippingTrackingUrl(input.provider, tn) ?? null;
+
+    await this.logBefore(input.pedidoId, 'set_tracking_manual', input.provider, {
+      trackingNumber: tn,
+      previous:
+        input.provider === 'correo'
+          ? pedido.correoTrackingNumber
+          : pedido.andreaniNumeroEnvio,
+    });
+
+    try {
+      await prisma.pedido.update({
+        where: { id: input.pedidoId },
+        data: {
+          ...(input.provider === 'correo'
+            ? { correoTrackingNumber: tn }
+            : { andreaniNumeroEnvio: tn }),
+          trackingUrl,
+        },
+      });
+
+      const result = {
+        provider: input.provider,
+        trackingNumber: tn,
+        trackingUrl,
+      };
+
+      await this.logAfter(
+        input.pedidoId,
+        'set_tracking_manual',
+        input.provider,
+        result,
+        true,
+        null,
+        null
+      );
+      shippingLogger.info('set_tracking_manual OK', {
+        pedidoId: input.pedidoId,
+        provider: input.provider,
+        trackingNumber: tn,
+      });
+      return result;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await this.logAfter(
+        input.pedidoId,
+        'set_tracking_manual',
+        input.provider,
+        null,
+        false,
+        msg,
+        null
+      );
+      throw e;
+    }
+  }
+
   async cancelOrder(
     pedidoId: number,
     trackingNumber: string,

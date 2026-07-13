@@ -14,11 +14,14 @@ import { finalizeShippingAfterPaymentApproved } from '../services/checkout-shipp
 import { requiresPostalShipping } from '../utils/pedido-entrega.util';
 import { resolvePedidoShippingTracking } from '../utils/pedido-shipping-tracking.util';
 import { pedidoShippingLabelService } from '../services/pedido-shipping-label.service';
-import { PedidoLabelNotAvailableError } from '../services/shipping/shipping.errors';
+import { PedidoLabelNotAvailableError, ShippingValidationError } from '../services/shipping/shipping.errors';
+import { shippingService } from '../services/shipping/shipping.service';
 import { sfactoryService } from '../services/sfactory/sfactory.service';
 import { aprobarOrdenPedidoEnSfactory } from '../services/sfactory/sfactory-orden-pedido.service';
 import { pedidosService } from '../services/pedidos.service';
 import { sfactoryCrearPedidoExternoBodySchema, toSfactoryPedidoExternoParams } from '../validation/sfactory-pedido-externo.schema';
+import { setPedidoTrackingSchema } from '../validation/pedido-tracking.validation';
+import { handleZodError } from '../utils/validation';
 import prisma from '../lib/prisma';
 import { paramAsString } from '../utils/http-param.util';
 
@@ -298,6 +301,60 @@ export class PedidoAdminController {
       res.status(400).json({
         success: false,
         error: 'No se pudo generar el envío',
+        message,
+      });
+    }
+  }
+
+  /** PATCH — carga/edita nº de seguimiento (manual, p. ej. desde portal MiCorreo). */
+  async setTracking(req: Request, res: Response) {
+    try {
+      const empresaId = getEmpresaId(req);
+      const pedidoId = parsePedidoId(req);
+      const body = setPedidoTrackingSchema.parse(req.body);
+
+      const result = await shippingService.setManualTracking({
+        empresaId,
+        pedidoId,
+        provider: body.provider,
+        trackingNumber: body.trackingNumber,
+      });
+
+      const updated = await pedidoSyncService.detalle(empresaId, pedidoId);
+      const shippingLabel =
+        updated != null
+          ? await pedidoShippingLabelService.getAvailability(empresaId, pedidoId)
+          : null;
+
+      res.json({
+        success: true,
+        data: {
+          tracking: result,
+          pedido: updated ? { ...updated, shippingLabel } : null,
+        },
+        message: `Número de seguimiento guardado: ${result.trackingNumber}`,
+      } as ApiResponse);
+    } catch (error: unknown) {
+      if (error instanceof ShippingValidationError) {
+        res.status(400).json({
+          success: false,
+          error: 'Validación',
+          message: error.message,
+        });
+        return;
+      }
+      const zodError = handleZodError(error);
+      if (zodError) {
+        res.status(400).json({
+          success: false,
+          ...zodError,
+        });
+        return;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json({
+        success: false,
+        error: 'No se pudo guardar el número de seguimiento',
         message,
       });
     }
