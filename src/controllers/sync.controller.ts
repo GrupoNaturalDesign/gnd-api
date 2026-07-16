@@ -109,6 +109,9 @@ export class SyncController {
       const forceReprocess =
         req.query.forceReprocess === 'true' ||
         (req.body && typeof req.body === 'object' && (req.body as { forceReprocess?: boolean }).forceReprocess === true);
+
+      const rubros = await rubroSyncService.syncRubros(empresaId);
+      const subrubros = await rubroSyncService.syncSubrubros(empresaId);
       const resultado = await productoSyncService.syncProductos(empresaId, {
         forceReprocess,
       });
@@ -127,10 +130,14 @@ export class SyncController {
 
       const response: ApiResponse = {
         success: true,
-        data: stockPrecios ? { ...resultado, stockPrecios } : resultado,
+        data: {
+          rubros,
+          subrubros,
+          ...(stockPrecios ? { ...resultado, stockPrecios } : resultado),
+        },
         message: stockPrecios
-          ? 'Productos sincronizados; stock/precios y activo por depósito ecommerce aplicados'
-          : 'Productos sincronizados (stock/precios post-sync no disponible)',
+          ? 'Rubros, subrubros y productos sincronizados; stock/precios y activo por depósito ecommerce aplicados'
+          : 'Rubros, subrubros y productos sincronizados (stock/precios post-sync no disponible)',
       };
       res.json(response);
     } catch (error: any) {

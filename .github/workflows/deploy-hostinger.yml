@@ -18,6 +18,16 @@ on:
   push:
     branches: [master]
   workflow_dispatch:
+    inputs:
+      post_deploy_sync:
+        description: Sync catálogo en servidor tras deploy
+        required: true
+        default: rubros
+        type: choice
+        options:
+          - none
+          - rubros
+          - full
 
 concurrency:
   group: deploy-hostinger-prod
@@ -27,7 +37,7 @@ jobs:
   deploy:
     name: Build + sync + restart
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
 
     steps:
       - name: Checkout
@@ -69,6 +79,7 @@ jobs:
           HOSTINGER_SSH_USER: ${{ vars.HOSTINGER_SSH_USER }}
           HOSTINGER_USERNAME: ${{ vars.HOSTINGER_USERNAME }}
           HOSTINGER_DOMAIN: ${{ vars.HOSTINGER_DOMAIN }}
+          POST_DEPLOY_SYNC: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.post_deploy_sync || 'rubros' }}
         run: node scripts/ci-deploy-hostinger.mjs
 
       - name: Discord — deploy OK

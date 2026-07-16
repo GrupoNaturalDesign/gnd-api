@@ -107,11 +107,14 @@ export class RubroSyncService {
       // 2. Guardar cada subrubro en la BD
       for (const subrubro of subrubros) {
         try {
-          // Buscar el rubro local correspondiente
+          const sfactoryRubroId = Number(
+            subrubro.rubro_id ?? (subrubro as SFactorySubrubro & { rubroId?: number }).rubroId
+          );
+
           const rubroLocal = await prisma.rubro.findFirst({
             where: {
               empresaId: empresaId,
-              sfactoryId: subrubro.rubro_id,
+              sfactoryId: sfactoryRubroId,
             },
           });
 
@@ -128,6 +131,8 @@ export class RubroSyncService {
               },
             },
             update: {
+              rubroId: rubroLocal.id,
+              sfactoryRubroId,
               nombre: subrubro.nombre,
               sfactoryCodigo: subrubro.codigo,
               slug: generarSlug(subrubro.nombre),
@@ -138,7 +143,7 @@ export class RubroSyncService {
               rubroId: rubroLocal.id,
               sfactoryId: subrubro.id,
               sfactoryCodigo: subrubro.codigo,
-              sfactoryRubroId: subrubro.rubro_id,
+              sfactoryRubroId: sfactoryRubroId,
               nombre: subrubro.nombre,
               slug: generarSlug(subrubro.nombre),
               visibleWeb: true,

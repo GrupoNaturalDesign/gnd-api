@@ -49,6 +49,19 @@ async function main() {
     console.error('Smoke failed after deploy');
     process.exit(1);
   }
+
+  const postDeploySync = process.env.POST_DEPLOY_SYNC ?? 'rubros';
+  if (postDeploySync !== 'none' && process.env.HOSTINGER_SSH_PASSWORD) {
+    const syncArgs =
+      postDeploySync === 'full'
+        ? ['scripts/ssh-hostinger-sync-catalogo.py', '--full']
+        : ['scripts/ssh-hostinger-sync-catalogo.py', '--rubros-only'];
+    console.log(`\nPost-deploy catalog sync (${postDeploySync})…`);
+    run('python3', syncArgs);
+  } else if (postDeploySync !== 'none') {
+    console.warn('POST_DEPLOY_SYNC set but HOSTINGER_SSH_PASSWORD missing; skipped');
+  }
+
   console.log('\nCI deploy OK');
 }
 
