@@ -4,6 +4,7 @@ import { formatArs } from '../lib/money-format';
 import { emailService } from '../lib/email/email.service';
 import type { OrderEmailPayload } from '../types/email.types';
 import { erpOrderStatusBodySchema } from '../validation/email.validation';
+import { computePedidoTotalNeto } from '../utils/pedido-totals.util';
 
 function requireErpAuth(req: Request): boolean {
   const secret = process.env.ERP_ORDER_STATUS_SECRET;
@@ -69,7 +70,7 @@ export async function postOrderStatusFromErp(req: Request, res: Response): Promi
     itemCount: pedido.cantidadPrendas ?? Math.round(itemUnits),
     subtotalFormatted: formatArs(Number(pedido.subtotal)),
     ivaFormatted: formatArs(Number(pedido.iva)),
-    totalFormatted: formatArs(Number(pedido.total)),
+    totalFormatted: formatArs(computePedidoTotalNeto(pedido)),
     status: parsed.data.status,
     notes: pedido.observaciones ?? undefined,
   };

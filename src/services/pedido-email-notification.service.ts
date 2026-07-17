@@ -8,6 +8,7 @@ import {
   resolvePedidoEntregaFromPedido,
 } from '../utils/pedido-entrega.util';
 import { resolvePedidoShippingTracking } from '../utils/pedido-shipping-tracking.util';
+import { computePedidoTotalNeto } from '../utils/pedido-totals.util';
 import { empresaTiendaConfigService } from './empresa-tienda-config.service';
 import { buildStorePickupConfirmInstructions } from '../lib/store-pickup.config';
 
@@ -52,8 +53,7 @@ export function buildOrderEmailPayloadFromPedido(
   }
 ): OrderEmailPayload {
   const itemUnits = pedido.items.reduce((acc, it) => acc + Number(it.cantidad), 0);
-  const descuento = Number(pedido.descuento);
-  const totalNeto = Number(pedido.total) - descuento;
+  const totalNeto = computePedidoTotalNeto(pedido);
   const costoEnvio = Number(pedido.costoEnvio ?? 0);
   const entrega = resolvePedidoEntregaFromPedido(pedido);
   const postal = requiresPostalShipping(pedido);
@@ -111,7 +111,7 @@ export function buildOrderEmailPayloadFromPedido(
     subtotalFormatted: formatArs(Number(pedido.subtotal)),
     ivaFormatted: formatArs(Number(pedido.iva)),
     ...(costoEnvio > 0 ? { shippingCostFormatted: formatArs(costoEnvio) } : {}),
-    totalFormatted: formatArs(totalNeto >= 0 ? totalNeto : Number(pedido.total)),
+    totalFormatted: formatArs(totalNeto),
     status,
     notes: options?.notes ?? pedido.observaciones ?? undefined,
     statusUiOverrides,

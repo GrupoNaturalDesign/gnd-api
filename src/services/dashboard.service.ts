@@ -20,6 +20,23 @@ import type {
   DashboardStockCriticoQuery,
 } from '../validation/dashboard.schema';
 import { getCheckoutExpiryWarningHours } from '../config/checkout-expires.config';
+import { computePedidoTotalNeto } from '../utils/pedido-totals.util';
+
+const PEDIDO_SNIPPET_SELECT = {
+  id: true,
+  clienteNombre: true,
+  clienteEmail: true,
+  total: true,
+  descuento: true,
+  cuponDescuentoTotal: true,
+  estadoInterno: true,
+  estadoErp: true,
+  sfactoryEstado: true,
+  syncStatus: true,
+  formaEnvio: true,
+  fechaPedido: true,
+  expiresAt: true,
+} as const;
 
 const VENTAS_ESTADOS: EstadoPedido[] = [
   EstadoPedido.confirmado,
@@ -221,6 +238,8 @@ class DashboardService {
     clienteNombre: string;
     clienteEmail: string;
     total: Prisma.Decimal;
+    descuento: Prisma.Decimal;
+    cuponDescuentoTotal: Prisma.Decimal | null;
     estadoInterno: EstadoPedido;
     estadoErp: unknown;
     sfactoryEstado: string | null;
@@ -233,7 +252,11 @@ class DashboardService {
       id: r.id,
       clienteNombre: r.clienteNombre,
       clienteEmail: r.clienteEmail,
-      total: decimalToString(r.total),
+      total: computePedidoTotalNeto({
+        total: r.total,
+        descuento: r.descuento,
+        cuponDescuentoTotal: r.cuponDescuentoTotal,
+      }).toFixed(2),
       estadoInterno: r.estadoInterno,
       estadoErp: r.estadoErp == null ? null : String(r.estadoErp),
       sfactoryEstado: r.sfactoryEstado,
@@ -328,37 +351,13 @@ class DashboardService {
         where: { empresaId, estadoInterno: EstadoPedido.pendiente_confirmacion },
         orderBy: { fechaPedido: 'asc' },
         take: query.limitePendientesConfirmacion,
-        select: {
-          id: true,
-          clienteNombre: true,
-          clienteEmail: true,
-          total: true,
-          estadoInterno: true,
-          estadoErp: true,
-          sfactoryEstado: true,
-          syncStatus: true,
-          formaEnvio: true,
-          fechaPedido: true,
-          expiresAt: true,
-        },
+        select: PEDIDO_SNIPPET_SELECT,
       }),
       prisma.pedido.findMany({
         where: sfactoryWhere,
         orderBy: { fechaPedido: 'desc' },
         take: query.limiteSfactoryIssues,
-        select: {
-          id: true,
-          clienteNombre: true,
-          clienteEmail: true,
-          total: true,
-          estadoInterno: true,
-          estadoErp: true,
-          sfactoryEstado: true,
-          syncStatus: true,
-          formaEnvio: true,
-          fechaPedido: true,
-          expiresAt: true,
-        },
+        select: PEDIDO_SNIPPET_SELECT,
       }),
       prisma.pedido.findMany({
         where: {
@@ -368,19 +367,7 @@ class DashboardService {
         },
         orderBy: { fechaPedido: 'asc' },
         take: query.limitePagoPendienteAntiguo,
-        select: {
-          id: true,
-          clienteNombre: true,
-          clienteEmail: true,
-          total: true,
-          estadoInterno: true,
-          estadoErp: true,
-          sfactoryEstado: true,
-          syncStatus: true,
-          formaEnvio: true,
-          fechaPedido: true,
-          expiresAt: true,
-        },
+        select: PEDIDO_SNIPPET_SELECT,
       }),
       prisma.pedido.findMany({
         where: {
@@ -401,19 +388,7 @@ class DashboardService {
         },
         orderBy: { expiresAt: 'asc' },
         take: query.limiteProximosAVencer ?? 10,
-        select: {
-          id: true,
-          clienteNombre: true,
-          clienteEmail: true,
-          total: true,
-          estadoInterno: true,
-          estadoErp: true,
-          sfactoryEstado: true,
-          syncStatus: true,
-          formaEnvio: true,
-          fechaPedido: true,
-          expiresAt: true,
-        },
+        select: PEDIDO_SNIPPET_SELECT,
       }),
     ]);
 
@@ -433,19 +408,7 @@ class DashboardService {
       where: { empresaId },
       orderBy: { fechaPedido: 'desc' },
       take: query.limit,
-      select: {
-        id: true,
-        clienteNombre: true,
-        clienteEmail: true,
-        total: true,
-        estadoInterno: true,
-        estadoErp: true,
-        sfactoryEstado: true,
-        syncStatus: true,
-        formaEnvio: true,
-        fechaPedido: true,
-        expiresAt: true,
-      },
+      select: PEDIDO_SNIPPET_SELECT,
     });
 
     return {

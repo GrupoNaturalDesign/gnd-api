@@ -10,6 +10,10 @@ import { resolvePedidoShippingTracking } from '../utils/pedido-shipping-tracking
 import type { ShippingProviderName } from './shipping/shipping.types';
 import type { CuentaPedidosListQuery } from '../validation/cuenta-pedidos.validation';
 import { abandonarCheckoutMp } from './mp-checkout.service';
+import {
+  computePedidoDescuentoTotal,
+  computePedidoTotalNeto,
+} from '../utils/pedido-totals.util';
 
 export interface CuentaPedidoListItem {
   id: number;
@@ -64,15 +68,6 @@ function formatNumero(id: number, externalId: string | null): string {
   return `WEB-${id}`;
 }
 
-function computeDescuentoTotal(pedido: Pedido): number {
-  return Number(pedido.descuento) + Number(pedido.cuponDescuentoTotal);
-}
-
-function computeTotalNeto(pedido: Pedido): number {
-  const net = Number(pedido.total) - computeDescuentoTotal(pedido);
-  return net >= 0 ? net : Number(pedido.total);
-}
-
 function canViewPaymentInstructions(pedido: Pedido): boolean {
   const manual =
     pedido.formaPago === FormaPago.transferencia || pedido.formaPago === FormaPago.efectivo;
@@ -113,8 +108,8 @@ function mapPedidoListItem(pedido: PedidoListRow): CuentaPedidoListItem {
     estado,
     estadoLabel: getCustomerOrderStatusLabel(estado),
     formaPago: pedido.formaPago,
-    total: computeTotalNeto(pedido),
-    descuentoTotal: computeDescuentoTotal(pedido),
+    total: computePedidoTotalNeto(pedido),
+    descuentoTotal: computePedidoDescuentoTotal(pedido),
     itemCount: pedido._count.items,
     trackingUrl: tracking.trackingUrl ?? pedido.trackingUrl,
     trackingNumber: tracking.trackingNumber,

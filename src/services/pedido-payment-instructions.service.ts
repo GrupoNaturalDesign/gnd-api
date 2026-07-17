@@ -12,6 +12,7 @@ import {
   getDefaultWhatsappPhone,
 } from './empresa-tienda-config.service';
 import { buildManualPaymentNextSteps } from '../lib/manual-payment-copy';
+import { computePedidoTotalNeto } from '../utils/pedido-totals.util';
 import type { ManualPaymentInstructionsEmailProps } from '../emails/ManualPaymentInstructionsEmail';
 
 function formaPagoToManual(
@@ -48,8 +49,7 @@ export async function buildManualPaymentInstructionsPayload(
   const formaPago = formaPagoToManual(pedido.formaPago);
   if (!formaPago) return null;
 
-  const descuento = Number(pedido.descuento);
-  const totalNeto = Number(pedido.total) - descuento;
+  const totalNeto = computePedidoTotalNeto(pedido);
 
   let bank: DatosBancariosPublic | null = null;
   if (formaPago === 'transferencia') {
@@ -84,7 +84,7 @@ export async function buildManualPaymentInstructionsPayload(
     orderId: pedido.id,
     externalOrderId,
     formaPago,
-    totalFormatted: formatArs(totalNeto >= 0 ? totalNeto : Number(pedido.total)),
+    totalFormatted: formatArs(totalNeto),
     expiresAtFormatted: formatExpiresAt(pedido.expiresAt),
     bank,
     nextSteps,
@@ -148,14 +148,13 @@ export async function getInstruccionesPagoForPedido(
       ? await empresaDatosBancariosService.getDatosBancariosPublic(empresaId)
       : null;
 
-  const descuento = Number(pedido.descuento);
-  const totalNeto = Number(pedido.total) - descuento;
+  const totalNeto = computePedidoTotalNeto(pedido);
 
   return {
     pedidoId: pedido.id,
     externalOrderId: `WEB-${pedido.id}`,
     formaPago,
-    totalFormatted: formatArs(totalNeto >= 0 ? totalNeto : Number(pedido.total)),
+    totalFormatted: formatArs(totalNeto),
     expiresAt: pedido.expiresAt?.toISOString() ?? null,
     customerEmail: pedido.clienteEmail,
     customerName: pedido.clienteNombre,

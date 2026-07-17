@@ -3,6 +3,7 @@ import prisma from '../lib/prisma';
 import { emailService } from '../lib/email/email.service';
 import { formatArs } from '../lib/money-format';
 import { formatCheckoutExpiresAt } from './pedido-payment-instructions.service';
+import { computePedidoTotalNeto } from '../utils/pedido-totals.util';
 import type { OrderExpiringSoonEmailProps } from '../emails/OrderExpiringSoonEmail';
 
 export function getClientStoreBaseUrl(): string {
@@ -72,10 +73,7 @@ export async function sendPedidoExpiringSoonEmailIfNeeded(
     return { sent: false, skipped: 'dedupe' };
   }
 
-  const total =
-    typeof pedido.total === 'object' && pedido.total != null && 'toNumber' in pedido.total
-      ? pedido.total.toNumber!()
-      : Number(pedido.total);
+  const total = computePedidoTotalNeto(pedido);
 
   const payload: OrderExpiringSoonEmailProps & { customerEmail: string } = {
     customerEmail: email,
