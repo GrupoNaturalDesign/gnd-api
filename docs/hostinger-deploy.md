@@ -234,6 +234,7 @@ Scripts SSH legacy movidos a [`scripts/legacy/`](../scripts/legacy/).
 | 404 público tras SSH manual | Usar deploy plataforma + dominio; no `nohup` suelto en :3002 |
 | Git deploy hPanel roto (`Repositorio: —`) | No usar; archive deploy es el camino oficial |
 | Cron keepalive | No disponible en shared (`crontab: command not found`) — confiar en proceso persistente Hostinger |
+| CI post-deploy: `node: command not found` | SSH no tiene `node` en PATH; usar `source /opt/alt/alt-nodejs20/enable` (ver `ssh-hostinger-sync-catalogo.py`) |
 
 ---
 

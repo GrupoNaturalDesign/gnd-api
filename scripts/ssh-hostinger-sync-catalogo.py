@@ -51,8 +51,10 @@ def main() -> int:
     mode_flag, empresa_id = parse_args()
     timeout = 900 if mode_flag != "--rubros-only" else 180
     extra = f" {mode_flag}" if mode_flag else ""
+    # Hostinger SSH has no `node` on PATH; same enable as ssh-hostinger-fix-db-host.py
+    node_enable = "source /opt/alt/alt-nodejs20/enable 2>/dev/null"
     cmd = (
-        f"cd {RUNTIME} && "
+        f"{node_enable}; cd {RUNTIME} && "
         f"test -f dist/scripts/sync-catalogo.js && "
         f"node dist/scripts/sync-catalogo.js {empresa_id}{extra}"
     )
