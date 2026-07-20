@@ -124,17 +124,25 @@ export function ManualPaymentInstructionsEmail(
 
             ) : null}
 
-            <Text style={bankLine}>
+            {props.bank.tipoCuenta?.trim() ? (
 
-              <strong>Tipo de cuenta:</strong> {props.bank.tipoCuenta}
+              <Text style={bankLine}>
 
-            </Text>
+                <strong>Tipo de cuenta:</strong> {props.bank.tipoCuenta}
 
-            <Text style={bankLine}>
+              </Text>
 
-              <strong>Nº de cuenta:</strong> {props.bank.numeroCuenta}
+            ) : null}
 
-            </Text>
+            {props.bank.numeroCuenta?.trim() ? (
+
+              <Text style={bankLine}>
+
+                <strong>Nº de cuenta:</strong> {props.bank.numeroCuenta}
+
+              </Text>
+
+            ) : null}
 
             {props.bank.cbu ? (
 

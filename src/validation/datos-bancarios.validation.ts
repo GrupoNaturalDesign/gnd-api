@@ -10,8 +10,9 @@ const optionalTrimmed = (max: number) =>
 export const datosBancariosBodySchema = z
   .object({
     banco: z.string().trim().min(1).max(100),
-    tipoCuenta: z.string().trim().min(1).max(50),
-    numeroCuenta: z.string().trim().min(1).max(50),
+    /** Opcional: p. ej. cuenta Mercado Pago no usa tipo/nº de cuenta bancaria. */
+    tipoCuenta: z.string().max(50).optional(),
+    numeroCuenta: z.string().max(50).optional(),
     cbu: optionalTrimmed(22),
     alias: optionalTrimmed(50),
     titular: z.string().trim().min(1).max(255),
@@ -35,6 +36,8 @@ export const datosBancariosBodySchema = z
   })
   .transform((data) => ({
     ...data,
+    tipoCuenta: data.tipoCuenta?.trim() || '',
+    numeroCuenta: data.numeroCuenta?.trim() || '',
     cbu: data.cbu?.replace(/\s/g, '') || null,
     alias: data.alias || null,
     cuit: data.cuit || null,
