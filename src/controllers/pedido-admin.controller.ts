@@ -587,7 +587,17 @@ export class PedidoAdminController {
         return;
       }
 
-      const params = toSfactoryPedidoExternoParams(parsed.data);
+      const source = process.env.SFACTORY_PEDIDO_EXTERNO_SOURCE?.trim();
+      if (!source) {
+        res.status(500).json({
+          success: false,
+          error: 'Falta SFACTORY_PEDIDO_EXTERNO_SOURCE (debe coincidir con external_orders_config en SFactory).',
+        });
+        return;
+      }
+
+      // Ignorar source del cliente: alineado con checkout / external_orders_config.
+      const params = toSfactoryPedidoExternoParams({ ...parsed.data, source });
       const response = await sfactoryService.crearPedidoExterno(params, empresa.sfactoryCompanyKey);
 
       res.status(201).json({

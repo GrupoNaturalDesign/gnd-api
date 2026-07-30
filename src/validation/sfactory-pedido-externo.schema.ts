@@ -76,7 +76,8 @@ export const sfactoryPedidoExternoEntregaSchema = z
 
 export const sfactoryCrearPedidoExternoBodySchema = z
   .object({
-    source: z.string().min(1).max(100),
+    /** Si se omite, se usa `SFACTORY_PEDIDO_EXTERNO_SOURCE`. */
+    source: z.string().min(1).max(100).optional(),
     ext_order_id: z.string().min(1).max(120),
     fecha: dateYmd.optional(),
     fecha_entrega: dateYmd.optional(),
@@ -135,8 +136,16 @@ export function toSfactoryPedidoExternoParams(
     ...SFactoryPedidoExternoItem[],
   ];
 
+  const source =
+    body.source?.trim() || process.env.SFACTORY_PEDIDO_EXTERNO_SOURCE?.trim() || '';
+  if (!source) {
+    throw new Error(
+      'Falta source / SFACTORY_PEDIDO_EXTERNO_SOURCE (debe coincidir con external_orders_config en SFactory).'
+    );
+  }
+
   return {
-    source: body.source.trim(),
+    source,
     ext_order_id: body.ext_order_id.trim(),
     ...(body.fecha ? { fecha: body.fecha } : {}),
     ...(body.fecha_entrega ? { fecha_entrega: body.fecha_entrega } : {}),
