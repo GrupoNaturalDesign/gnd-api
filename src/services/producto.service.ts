@@ -9,7 +9,6 @@ import type {
   ProductoPublicadoQueryParams,
   ProductosPublicadosResponse,
   ProductoPublicado,
-  VariantePublicada,
 } from '../types';
 import { sfactoryService } from './sfactory/sfactory.service';
 import { productoSyncService } from './sync/producto-sync.service';
@@ -21,16 +20,12 @@ import {
 import { extraerCodigoAgrupacion } from './producto-agrupacion.service';
 import { generoFiltroAValorBd } from '../constants/variantes-filtros';
 import { ECOMMERCE_RUBROS_SFACTORY_IDS, isRubroPermitidoEcommerce } from '../config/ecommerce.config';
-import { calcularTodosLosPrecios, CUOTAS_FINANCIADO_DEFAULT } from '../config/precios.config';
-import { buildPrecioPublico } from './precios-derivados.service';
 import { buildProductoPadreTextSearchFilter } from '../utils/producto-padre-search.util';
-import { deduplicateProductosWeb } from '../utils/variante-dedup.utils';
 import { productImageService } from './productImage.service';
 import {
   enrichProductosWebWithPadreImages,
-  firstPadreImagenUrl,
-  padreImagenForColor,
 } from '../utils/producto-imagen.util';
+import { formatProductoPadreToPublicado } from '../utils/format-producto-publicado.util';
 
 export class ProductoService {
   /**
@@ -318,14 +313,14 @@ export class ProductoService {
   }
 
   /**
-   * Obtiene productos relacionados basado en rubro y subrubro
+   * Obtiene productos relacionados (mismo subrubro/rubro) como ProductoPublicado.
+   * Misma estructura e imágenes que destacados / listado publicado.
    */
   async getRelatedProducts(
     productoId: number,
     empresaId: number,
     limit: number = 10
-  ): Promise<ProductoPadreConVariantes[]> {
-    // Primero obtener el producto para conocer su rubro y subrubro
+  ): Promise<ProductoPublicado[]> {
     const producto = await prisma.productoPadre.findUnique({
       where: { id: productoId },
       select: {
@@ -338,18 +333,16 @@ export class ProductoService {
       return [];
     }
 
-    // Construir where clause para productos relacionados
     const where: Prisma.ProductoPadreWhereInput = {
       empresaId,
       publicado: true,
-      id: { not: productoId }, // Excluir el producto actual
+      id: { not: productoId },
       productosWeb: {
         some: {
           activoSfactory: true,
         },
       },
       OR: [
-        // Prioridad 1: Mismo subrubro
         ...(producto.subrubroId
           ? [
             {
@@ -357,7 +350,6 @@ export class ProductoService {
             },
           ]
           : []),
-        // Prioridad 2: Mismo rubro
         ...(producto.rubroId
           ? [
             {
@@ -370,10 +362,17 @@ export class ProductoService {
     };
 
     const include: Prisma.ProductoPadreInclude = {
+      rubro: {
+        select: { id: true, nombre: true, slug: true },
+      },
+      subrubro: {
+        select: { id: true, nombre: true, slug: true },
+      },
       productosWeb: {
         where: {
           activoSfactory: true,
         },
+        orderBy: [{ color: 'asc' }, { talle: 'asc' }],
         include: {
           imagenes: {
             orderBy: { orden: 'asc' },
@@ -383,23 +382,12 @@ export class ProductoService {
           precios: {
             where: { tipoCliente: 'minorista' },
             take: 1,
+            select: {
+              precioLista: true,
+              precioTransfer: true,
+              precioSinImp: true,
+            },
           },
-        },
-        orderBy: [{ color: 'asc' }, { talle: 'asc' }],
-        take: 1, // Solo una variante para el preview
-      },
-      rubro: {
-        select: {
-          id: true,
-          nombre: true,
-          slug: true,
-        },
-      },
-      subrubro: {
-        select: {
-          id: true,
-          nombre: true,
-          slug: true,
         },
       },
     };
@@ -415,7 +403,20 @@ export class ProductoService {
       take: limit,
     });
 
-    return productos as ProductoPadreConVariantes[];
+    const padreIds = productos.map((p) => p.id);
+    const padreImagesMap =
+      await productImageService.getProductoPadreImagesBatch(padreIds);
+
+    return productos
+      .filter((p: any) => p.productosWeb && p.productosWeb.length > 0)
+      .map((p: any) => {
+        const padreImagenRows = (padreImagesMap.get(p.id) ?? []).map((img) => ({
+          imagenUrl: img.imagenUrl,
+          color: img.color,
+          orden: img.orden,
+        }));
+        return formatProductoPadreToPublicado(p, padreImagenRows);
+      });
   }
 
   async getVariantesByProductoPadreId(
@@ -1038,192 +1039,16 @@ export class ProductoService {
     const padreImagesMap =
       await productImageService.getProductoPadreImagesBatch(padreIds);
 
-    // Transformar a estructura optimizada
     const productosFormateados: ProductoPublicado[] = productos
       .filter((p: any) => p.productosWeb && p.productosWeb.length > 0)
       .map((producto: any): ProductoPublicado => {
-        // Type assertion para acceder a las propiedades
         const p = producto as any;
-        const variantesActivas = deduplicateProductosWeb(p.productosWeb || []) as any[];
-
-        // Obtener precios de ProductoPrecio si están disponibles, sino usar precioCache
-        const preciosProductoPrecio = variantesActivas
-          .flatMap((v: any) => v.precios || [])
-          .filter((p: any): boolean => Number(p.precioLista) > 0);
-
-        const preciosCache = variantesActivas
-          .map((v: any): number => Number(v.precioCache || 0))
-          .filter((p: number): boolean => p > 0);
-
-        // Priorizar precios de ProductoPrecio, sino usar precioCache
-        let precioLista: number | null = null;
-        let precioTransfer: number | null = null;
-        let precioSinImp: number | null = null;
-
-        if (preciosProductoPrecio.length > 0) {
-          const precioMinPrecio = Math.min(...preciosProductoPrecio.map((p: any): number => Number(p.precioLista)));
-          const precioObj = preciosProductoPrecio.find((p: any): boolean => Number(p.precioLista) === precioMinPrecio);
-
-          if (precioObj) {
-            precioLista = Number(precioObj.precioLista);
-            precioTransfer = precioObj.precioTransfer ? Number(precioObj.precioTransfer) : null;
-            precioSinImp = precioObj.precioSinImp ? Number(precioObj.precioSinImp) : null;
-          }
-        } else if (preciosCache.length > 0) {
-          precioLista = Math.min(...preciosCache);
-          const derivados = calcularTodosLosPrecios(precioLista, CUOTAS_FINANCIADO_DEFAULT);
-          precioTransfer = derivados.precioTransfer;
-          precioSinImp = derivados.precioSinImp;
-        }
-
-        const precioPublico = buildPrecioPublico({
-          precioLista,
-          precioTransfer,
-          precioSinImp,
-        });
-
-        const precioMin = preciosCache.length > 0 ? Math.min(...preciosCache) : precioLista;
-        const precioMax = preciosCache.length > 0 ? Math.max(...preciosCache) : precioLista;
-
         const padreImagenRows = (padreImagesMap.get(p.id) ?? []).map((img) => ({
           imagenUrl: img.imagenUrl,
           color: img.color,
           orden: img.orden,
         }));
-
-        // Seleccionar imagen principal (variante activa → JSON padre → imágenes BD padre)
-        let imagenPrincipal: string | null = null;
-        const varianteConImagen = variantesActivas.find(
-          (v: any) => v.imagenes && v.imagenes.length > 0
-        );
-        if (varianteConImagen?.imagenes?.[0]?.imagenUrl) {
-          imagenPrincipal = varianteConImagen.imagenes[0].imagenUrl;
-        } else if (varianteConImagen?.imagenVariante) {
-          imagenPrincipal = varianteConImagen.imagenVariante;
-        } else if (p.imagenes && typeof p.imagenes === 'object') {
-          const imagenesArray = Array.isArray(p.imagenes)
-            ? p.imagenes
-            : Object.values(p.imagenes);
-          if (imagenesArray.length > 0 && typeof imagenesArray[0] === 'string') {
-            imagenPrincipal = imagenesArray[0];
-          }
-        }
-        if (!imagenPrincipal && padreImagenRows.length > 0) {
-          imagenPrincipal = firstPadreImagenUrl(padreImagenRows);
-        }
-
-        // Crear mapa de imágenes por color (todas las variantes del mismo color usan la misma imagen)
-        const imagenesPorColor = new Map<string, string | null>();
-
-        variantesActivas.forEach((v: any): void => {
-          if (v.color && !imagenesPorColor.has(v.color)) {
-            // Buscar primera variante de este color con imagen
-            const varianteConImagenColor = variantesActivas.find(
-              (v2: any): boolean => v2.color === v.color &&
-                (v2.imagenes?.[0]?.imagenUrl || v2.imagenVariante)
-            );
-
-            let imagen = varianteConImagenColor?.imagenes?.[0]?.imagenUrl ||
-              varianteConImagenColor?.imagenVariante ||
-              null;
-
-            if (!imagen) {
-              imagen = padreImagenForColor(padreImagenRows, v.color);
-            }
-
-            imagenesPorColor.set(v.color, imagen);
-          }
-        });
-
-        // Variantes simplificadas
-        const variantes: VariantePublicada[] = variantesActivas.map((v: any): VariantePublicada => {
-          const imagenColor = v.color
-            ? imagenesPorColor.get(v.color) || padreImagenForColor(padreImagenRows, v.color) || imagenPrincipal
-            : imagenPrincipal;
-
-          return {
-            id: v.id,
-            codigo: v.sfactoryCodigo,
-            color: v.color,
-            talle: v.talle,
-            // sexo eliminado - se hereda del producto padre
-            stock: Number(v.stockCache || 0),
-            precio: Number(v.precioCache || 0),
-            imagen: imagenColor, // Imagen por color, no por variante individual
-            tieneImagen: !!imagenColor,
-            productoPadreId: p.id,
-            sfactoryId: Number(v.sfactoryId),
-          };
-        });
-
-        // Agregados
-        const colores = Array.from(
-          new Set(
-            variantesActivas
-              .map((v: any): string | null => v.color)
-              .filter((c: string | null): c is string => !!c)
-          )
-        ).sort();
-
-        const talles = Array.from(
-          new Set(
-            variantesActivas
-              .map((v: any): string | null => v.talle)
-              .filter((t: string | null): t is string => !!t)
-          )
-        ).sort();
-
-        const stockTotal = variantesActivas.reduce(
-          (sum: number, v: any): number => sum + Number(v.stockCache || 0),
-          0
-        );
-
-        // Obtener sexo común de todas las variantes (las variantes heredan el sexo del producto padre)
-        // Si todas las variantes tienen el mismo sexo, usar ese. Si no, usar null.
-        const sexos = variantesActivas
-          .map((v: any): string | null => v.sexo)
-          .filter((s: string | null): s is string => !!s);
-        const sexoUnico: string | null = sexos.length > 0 && new Set(sexos).size === 1
-          ? (sexos[0] ?? null)
-          : null;
-
-        return {
-          id: p.id,
-          codigoAgrupacion: p.codigoAgrupacion,
-          slug: p.slug,
-          nombre: p.nombre,
-          descripcion: p.descripcion,
-          descripcionCorta: p.descripcionCorta,
-          destacado: p.destacado,
-          orden: p.orden,
-          sexo: (p as any).genero ?? sexoUnico, // Preferir genero del padre; fallback a variantes
-          rubro: p.rubro && p.rubro.slug
-            ? {
-              id: p.rubro.id,
-              nombre: p.rubro.nombre,
-              slug: p.rubro.slug,
-            }
-            : null,
-          subrubro: p.subrubro && p.subrubro.slug
-            ? {
-              id: p.subrubro.id,
-              nombre: p.subrubro.nombre,
-              slug: p.subrubro.slug,
-            }
-            : null,
-          imagenPrincipal,
-          precioLista: precioPublico.precioLista,
-          precioTransfer: precioPublico.precioTransfer,
-          precioSinImp: precioPublico.precioSinImp,
-          variantes,
-          colores: colores as string[],
-          talles: talles as string[],
-          totalVariantes: variantesActivas.length,
-          tieneStock: stockTotal > 0,
-          stockTotal,
-          precioMin,
-          precioMax,
-        };
+        return formatProductoPadreToPublicado(p, padreImagenRows);
       });
 
     const totalPages = Math.ceil(total / limit);
