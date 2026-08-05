@@ -127,11 +127,17 @@ Coordinar con marketing: verificar dominio en Business Manager y evitar pixel du
 
 ---
 
+## Microdatos de catálogo (fichas)
+
+En `producto/[slug]` se emite JSON-LD `Product` + `Offer` y tags Open Graph `product:*` (`product:retailer_item_id`, precio, availability). El **id** es el mismo `codigo` de variante que usa el Pixel (`content_ids`). Builder: `client/src/app/utils/productMicrodata.ts`.
+
+Validar con [Microdata Debug](https://business.facebook.com/ads/microdata/debug) tras deploy.
+
 ## Fuera de alcance (por ahora)
 
 - Conversions API (CAPI) al confirmar pedido en admin
 - `Purchase` para transferencia/efectivo cuando admin verifica el pago
-- Catálogo Meta / verificación de dominio (configuración en Meta Business, no en código)
+- Verificación de dominio / carga CSV del catálogo (configuración en Meta Business)
 
 ---
 
