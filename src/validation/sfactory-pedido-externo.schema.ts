@@ -18,6 +18,23 @@ const ivaValues = z.union([
   z.literal(27),
 ]);
 
+/** Placeholders comunes en ERP que no son emails reales. */
+function isEmailPlaceholder(email: string): boolean {
+  const t = email.trim();
+  if (!t) return true;
+  return t === '-' || /^(n\/?a|sin\s*email|no\s*tiene|\.+)$/i.test(t);
+}
+
+/** Email usable para SFactory: no vacío, no placeholder, formato válido. */
+export function normalizeSfactoryClienteEmail(
+  email: string | null | undefined
+): string | undefined {
+  const trim = email?.trim() ?? '';
+  if (isEmailPlaceholder(trim)) return undefined;
+  if (!z.string().email().safeParse(trim).success) return undefined;
+  return trim;
+}
+
 /** Cliente: SFactory resuelve por CUIT (11 dígitos) o email. */
 export const sfactoryPedidoExternoClienteSchema = z
   .object({
@@ -40,7 +57,20 @@ export const sfactoryPedidoExternoClienteSchema = z
       });
     }
     const emailTrim = val.email?.trim() ?? '';
-    const emailOk = emailTrim.length > 0 && z.string().email().safeParse(emailTrim).success;
+    const hasEmailValue = !isEmailPlaceholder(emailTrim);
+    const emailOk =
+      hasEmailValue && z.string().email().safeParse(emailTrim).success;
+
+    // Si envían un email (no placeholder), debe ser formato válido aunque haya CUIT.
+    // Evita que SFactory responda "cliente.email tiene un formato invalido".
+    if (hasEmailValue && !emailOk) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['email'],
+        message:
+          'El email del cliente no tiene un formato válido. Corregilo en la ficha del cliente e intentá de nuevo.',
+      });
+    }
     if (!hasValidCuit && !emailOk) {
       ctx.addIssue({
         code: 'custom',
@@ -105,7 +135,7 @@ export function toSfactoryPedidoExternoParams(
   const c = body.cliente;
   const cuitDigits = c.cuit?.replace(/\D/g, '') ?? '';
   const cuit = cuitDigits.length === 11 ? cuitDigits : undefined;
-  const email = c.email?.trim() || undefined;
+  const email = normalizeSfactoryClienteEmail(c.email);
 
   const cliente: SFactoryPedidoExternoCliente = {
     ...(c.nombre ? { nombre: c.nombre } : {}),

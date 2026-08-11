@@ -568,10 +568,11 @@ export class PedidoAdminController {
     try {
       const parsed = sfactoryCrearPedidoExternoBodySchema.safeParse(req.body);
       if (!parsed.success) {
+        const firstIssue = parsed.error.issues[0]?.message;
         res.status(400).json({
           success: false,
           error: 'Validación',
-          message: 'Payload inválido para pedido externo',
+          message: firstIssue || 'Payload inválido para pedido externo',
           details: parsed.error.flatten(),
         });
         return;
@@ -606,7 +607,11 @@ export class PedidoAdminController {
         message: 'Pedido creado en SFactory',
       } as ApiResponse);
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
+      let message = error instanceof Error ? error.message : String(error);
+      if (/cliente\.email.*formato|email.*formato invalido/i.test(message)) {
+        message =
+          'El email del cliente no tiene un formato válido. Corregilo en la ficha del cliente e intentá de nuevo.';
+      }
       res.status(400).json({ success: false, error: 'Error al crear pedido en SFactory', message });
     }
   }
