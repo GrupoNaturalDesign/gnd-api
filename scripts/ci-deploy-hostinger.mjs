@@ -39,6 +39,7 @@ async function main() {
   }
 
   run('python3', ['scripts/ssh-hostinger-sync-dist.py']);
+  run('python3', ['scripts/ssh-hostinger-prisma-deploy.py']);
   run('node', ['scripts/hostinger-api-restart.mjs']);
 
   console.log('\nWaiting 12s for process boot...');
