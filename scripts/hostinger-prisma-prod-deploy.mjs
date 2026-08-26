@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 /**
- * En runtime Hostinger (nodejs/): prisma generate + migración SQL pendiente.
- * Uso vía SSH: cd nodejs && node scripts/hostinger-prisma-prod-deploy.mjs
+ * En runtime Hostinger (nodejs/): aplica migración SQL pendiente.
+ * El Prisma Client se sube desde CI (node_modules/@prisma/client); no corre generate aquí.
  */
-import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -18,12 +17,26 @@ dotenv.config({ path: path.join(root, '.env'), override: true });
 const migrationFile = path.join(root, 'migrations', 'add_producto_padre_colores_aprobados.sql');
 
 async function main() {
-  console.log('>>> prisma generate');
-  execSync('npx prisma generate --schema=./prisma/schema.prisma', {
-    cwd: root,
-    stdio: 'inherit',
-    env: process.env,
-  });
+  const clientPath = path.join(root, 'node_modules', '@prisma', 'client', 'index.js');
+  if (!fs.existsSync(clientPath)) {
+    throw new Error(
+      '@prisma/client missing on server — CI should upload node_modules/@prisma/client before this step'
+    );
+  }
+
+  console.log('>>> verify ProductoPadreColorAprobado in Prisma client');
+  const { PrismaClient } = await import('@prisma/client');
+  const prisma = new PrismaClient();
+  try {
+    if (typeof prisma.productoPadreColorAprobado?.findMany !== 'function') {
+      throw new Error(
+        'productoPadreColorAprobado missing in @prisma/client — redeploy from CI build'
+      );
+    }
+    console.log('Prisma client OK');
+  } finally {
+    await prisma.$disconnect();
+  }
 
   if (!fs.existsSync(migrationFile)) {
     console.log('SKIP migration: file not found', migrationFile);
