@@ -41,6 +41,14 @@ test('parsearNombreProducto: talle numérico 42', () => {
   const r = parsearNombreProducto('Camisa Wrench Hombre Cemento 42');
   assert.equal(r.talle, '42');
   assert.equal(r.color, 'CEMENTO');
+  assert.equal(r.nombreBase, 'Camisa Wrench');
+});
+
+test('parsearNombreProducto: talle numérico 32 no queda en nombreBase', () => {
+  const r = parsearNombreProducto('Camisa Wrench Hombre Cemento 32');
+  assert.equal(r.talle, '32');
+  assert.equal(r.color, 'CEMENTO');
+  assert.equal(r.nombreBase, 'Camisa Wrench');
 });
 
 test('parsearNombreProducto: 2XS', () => {

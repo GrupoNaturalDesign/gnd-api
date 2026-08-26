@@ -63,6 +63,8 @@ export const TALLES_CANONICOS = [
   'XL',
   '2XL',
   '3XL',
+  '30',
+  '32',
   '34',
   '36',
   '38',
