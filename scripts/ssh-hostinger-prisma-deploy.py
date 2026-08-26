@@ -2,13 +2,14 @@
 """
 Sube Prisma Client generado en CI + schema + migración SQL a Hostinger.
 
-Evita `prisma generate` en el servidor (prisma CLI está en devDependencies).
+Usa tar.gz (rápido en CI) o fallback SFTP. No corre prisma generate en el servidor.
 
 Env: HOSTINGER_SSH_PASSWORD (required)
 """
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -37,6 +38,11 @@ def run(ssh: paramiko.SSHClient, cmd: str, timeout: int = 300) -> int:
         print(err.rstrip(), file=sys.stderr)
     print(f"[exit {code}]")
     return code
+
+
+def run_ok(ssh: paramiko.SSHClient, cmd: str, timeout: int = 300) -> None:
+    if run(ssh, cmd, timeout=timeout) != 0:
+        raise RuntimeError(f"Command failed: {cmd}")
 
 
 def ensure_remote_dir(sftp: paramiko.SFTPClient, remote_dir: str) -> None:
@@ -87,16 +93,77 @@ def resolve_npm_package(api: Path, *parts: str) -> Path | None:
     return None
 
 
+def prisma_tar_members(api: Path) -> list[str]:
+    """Paths relative to node_modules for tar (npm ci layout on GitHub Actions)."""
+    nm = api / "node_modules"
+    members: list[str] = []
+    if (nm / "@prisma" / "client").exists():
+        members.append("@prisma/client")
+    elif resolve_npm_package(api, "@prisma", "client"):
+        # pnpm dev: symlink usually exists; if not, fall back to SFTP tree upload
+        members.append("@prisma/client")
+    if (nm / ".prisma").is_dir():
+        members.append(".prisma")
+    return members
+
+
+def create_prisma_tar(api: Path, tar_path: Path) -> list[str]:
+    members = prisma_tar_members(api)
+    if not members:
+        raise RuntimeError("No Prisma artifacts under node_modules — run npm run build first")
+    nm = api / "node_modules"
+    cmd = ["tar", "czf", str(tar_path), "-C", str(nm), *members]
+    print(f">>> {' '.join(cmd)}")
+    subprocess.run(cmd, check=True)
+    print(f"Created {tar_path} ({tar_path.stat().st_size} bytes)")
+    return members
+
+
+def sync_prisma_via_tar(ssh: paramiko.SSHClient, sftp: paramiko.SFTPClient, api: Path) -> None:
+    tar_path = api / ".deploy-prisma-artifacts.tar.gz"
+    remote_tar = f"{RUNTIME}/.deploy-prisma-artifacts.tar.gz"
+    try:
+        members = create_prisma_tar(api, tar_path)
+        print(f"Tar members: {members}")
+        upload_file(sftp, tar_path, remote_tar)
+        run_ok(ssh, f"mkdir -p {RUNTIME}/node_modules")
+        run_ok(ssh, f"cd {RUNTIME}/node_modules && tar xzf {remote_tar}")
+        run_ok(ssh, f"rm -f {remote_tar}")
+    finally:
+        tar_path.unlink(missing_ok=True)
+
+
+def sync_prisma_via_sftp(ssh: paramiko.SSHClient, sftp: paramiko.SFTPClient, api: Path) -> None:
+    prisma_client = resolve_npm_package(api, "@prisma", "client")
+    prisma_engines = api / "node_modules" / ".prisma"
+    if prisma_client is None:
+        raise RuntimeError("Missing @prisma/client — run npm run build first")
+
+    remote_client = f"{RUNTIME}/node_modules/@prisma/client"
+    remote_client_new = f"{RUNTIME}/node_modules/@prisma/client_new"
+    print(f"SFTP sync {prisma_client} -> {remote_client}")
+    run_ok(ssh, f"rm -rf {remote_client_new} && mkdir -p {remote_client_new}")
+    n_client = upload_tree(sftp, prisma_client, remote_client_new)
+    print(f"Uploaded {n_client} files to @prisma/client_new")
+    run_ok(ssh, f"rm -rf {remote_client} && mv {remote_client_new} {remote_client}")
+
+    if prisma_engines.is_dir():
+        remote_engines = f"{RUNTIME}/node_modules/.prisma"
+        remote_engines_new = f"{RUNTIME}/node_modules/.prisma_new"
+        run_ok(ssh, f"rm -rf {remote_engines_new} && mkdir -p {remote_engines_new}")
+        n_engines = upload_tree(sftp, prisma_engines, remote_engines_new)
+        print(f"Uploaded {n_engines} files to .prisma_new")
+        run_ok(ssh, f"rm -rf {remote_engines} && mv {remote_engines_new} {remote_engines}")
+
+
 def main() -> int:
     if not PASSWORD:
         print("HOSTINGER_SSH_PASSWORD required", file=sys.stderr)
         return 1
 
-    prisma_client = resolve_npm_package(API, "@prisma", "client")
-    prisma_engines = API / "node_modules" / ".prisma"
-
-    if prisma_client is None:
-        print("Missing local node_modules/@prisma/client — run npm run build in CI first", file=sys.stderr)
+    client_nm = API / "node_modules" / "@prisma" / "client"
+    if not client_nm.exists() and resolve_npm_package(API, "@prisma", "client") is None:
+        print("Missing local @prisma/client — run npm run build in CI first", file=sys.stderr)
         return 1
 
     files = [
@@ -120,37 +187,36 @@ def main() -> int:
     ssh.connect(HOST, port=PORT, username=USER, password=PASSWORD, timeout=30)
     sftp = ssh.open_sftp()
 
-    for local, remote in files:
-        upload_file(sftp, local, remote)
+    try:
+        for local, remote in files:
+            upload_file(sftp, local, remote)
 
-    remote_client = f"{RUNTIME}/node_modules/@prisma/client"
-    remote_client_new = f"{RUNTIME}/node_modules/@prisma/client_new"
-    print(f"Sync {prisma_client} -> {remote_client}")
-    run(ssh, f"rm -rf {remote_client_new} && mkdir -p {remote_client_new}")
-    n_client = upload_tree(sftp, prisma_client, remote_client_new)
-    print(f"Uploaded {n_client} files to @prisma/client_new")
-    run(ssh, f"rm -rf {remote_client} && mv {remote_client_new} {remote_client}")
+        use_tar = os.name != "nt" and prisma_tar_members(API)
+        if use_tar:
+            try:
+                sync_prisma_via_tar(ssh, sftp, API)
+            except (FileNotFoundError, subprocess.CalledProcessError) as e:
+                print(f"WARN: tar sync failed ({e}), falling back to SFTP", file=sys.stderr)
+                sync_prisma_via_sftp(ssh, sftp, API)
+        else:
+            sync_prisma_via_sftp(ssh, sftp, API)
 
-    if prisma_engines.is_dir():
-        remote_engines = f"{RUNTIME}/node_modules/.prisma"
-        remote_engines_new = f"{RUNTIME}/node_modules/.prisma_new"
-        print(f"Sync {prisma_engines} -> {remote_engines}")
-        run(ssh, f"rm -rf {remote_engines_new} && mkdir -p {remote_engines_new}")
-        n_engines = upload_tree(sftp, prisma_engines, remote_engines_new)
-        print(f"Uploaded {n_engines} files to .prisma_new")
-        run(ssh, f"rm -rf {remote_engines} && mv {remote_engines_new} {remote_engines}")
+        node_enable = "source /opt/alt/alt-nodejs20/enable 2>/dev/null"
+        cmd = f"{node_enable}; cd {RUNTIME} && node scripts/hostinger-prisma-prod-deploy.mjs"
+        code = run(ssh, cmd, timeout=300)
+        if code != 0:
+            return code
+    finally:
+        sftp.close()
+        ssh.close()
 
-    node_enable = "source /opt/alt/alt-nodejs20/enable 2>/dev/null"
-    cmd = f"{node_enable}; cd {RUNTIME} && node scripts/hostinger-prisma-prod-deploy.mjs"
-    code = run(ssh, cmd, timeout=300)
-
-    sftp.close()
-    ssh.close()
-    if code != 0:
-        return code
     print("Prisma client + migration on Hostinger OK")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except RuntimeError as e:
+        print(str(e), file=sys.stderr)
+        raise SystemExit(1) from e
