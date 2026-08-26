@@ -26,6 +26,64 @@ import {
   enrichProductosWebWithPadreImages,
 } from '../utils/producto-imagen.util';
 import { formatProductoPadreToPublicado } from '../utils/format-producto-publicado.util';
+import {
+  motivoInactivoVariante,
+  type MotivoInactivoVariante,
+} from '../utils/variante-whitelist-report.utils';
+import { productoColoresAprobacionService } from './producto-colores-aprobacion.service';
+import { listarColoresAprobadosPorPadreIds } from '../config/colores-padre-whitelist.utils';
+import type { ColorCanonico } from '../constants/variantes-filtros';
+
+export type VariantesScope = 'activas' | 'todas';
+
+function buildProductosWebInclude(
+  includeVariantes: boolean,
+  variantesScope: VariantesScope,
+  extras?: {
+    precios?: boolean;
+    imagenes?: { orderBy: { orden: 'asc' }; take: number };
+  }
+): Prisma.ProductoPadreInclude['productosWeb'] {
+  if (!includeVariantes) return false;
+  return {
+    ...(variantesScope === 'activas' ? { where: { activoSfactory: true } } : {}),
+    ...(extras?.precios || extras?.imagenes
+      ? {
+          include: {
+            ...(extras.precios ? { precios: true } : {}),
+            ...(extras.imagenes ? { imagenes: extras.imagenes } : {}),
+          },
+        }
+      : {}),
+    orderBy: [{ color: 'asc' }, { talle: 'asc' }],
+  };
+}
+
+function enrichProductosWebAdmin(
+  producto: ProductoPadreConVariantes,
+  variantesScope: VariantesScope,
+  coloresAprobados: ReadonlySet<ColorCanonico> = new Set(),
+  coloresPendientesCount = 0
+): ProductoPadreConVariantes {
+  if (variantesScope !== 'todas' || !producto.productosWeb?.length) {
+    return { ...producto, coloresPendientesCount };
+  }
+  const codigoAgrupacion = producto.codigoAgrupacion;
+  return {
+    ...producto,
+    coloresPendientesCount,
+    productosWeb: producto.productosWeb.map((v) => ({
+      ...v,
+      motivoInactivo: motivoInactivoVariante(
+        codigoAgrupacion,
+        v.color,
+        v.activoSfactory,
+        v.stockCache != null ? Number(v.stockCache) : null,
+        coloresAprobados
+      ) as MotivoInactivoVariante,
+    })),
+  };
+}
 
 export class ProductoService {
   /**
@@ -83,21 +141,12 @@ export class ProductoService {
       ...(searchFilter ?? {}),
     };
 
+    const variantesScope: VariantesScope = params.variantesScope ?? 'activas';
+
     const include: Prisma.ProductoPadreInclude = {
-      productosWeb: params.includeVariantes
-        ? {
-          where: {
-            activoSfactory: true,
-          },
-          include: {
-            precios: true,
-          },
-          orderBy: [
-            { color: 'asc' },
-            { talle: 'asc' },
-          ],
-        }
-        : false,
+      productosWeb: buildProductosWebInclude(params.includeVariantes ?? false, variantesScope, {
+        precios: true,
+      }),
       rubro: {
         select: {
           id: true,
@@ -128,7 +177,7 @@ export class ProductoService {
     const total = await prisma.productoPadre.count({ where });
 
     // Obtener datos paginados
-    const data = await prisma.productoPadre.findMany({
+    const data = (await prisma.productoPadre.findMany({
       where,
       include,
       orderBy: [
@@ -138,12 +187,38 @@ export class ProductoService {
       ],
       skip,
       take: limit,
-    }) as ProductoPadreConVariantes[];
+    })) as ProductoPadreConVariantes[];
+
+    const ids = data.map((p) => p.id);
+    let enriched: ProductoPadreConVariantes[] = data;
+
+    if (params.empresaId != null && ids.length > 0) {
+      const pendientesMap =
+        await productoColoresAprobacionService.contarColoresPendientesPorPadres(
+          params.empresaId,
+          ids
+        );
+      const aprobadosMap =
+        variantesScope === 'todas'
+          ? await listarColoresAprobadosPorPadreIds(ids)
+          : new Map<number, Set<ColorCanonico>>();
+
+      enriched = data.map((p) =>
+        enrichProductosWebAdmin(
+          p,
+          variantesScope,
+          variantesScope === 'todas' ? (aprobadosMap.get(p.id) ?? new Set()) : new Set(),
+          pendientesMap.get(p.id) ?? 0
+        )
+      );
+    } else if (variantesScope === 'todas') {
+      enriched = data.map((p) => enrichProductosWebAdmin(p, variantesScope));
+    }
 
     const totalPages = Math.ceil(total / limit);
 
     return {
-      data,
+      data: enriched,
       pagination: {
         page,
         limit,
@@ -155,20 +230,13 @@ export class ProductoService {
 
   async getById(
     id: number,
-    includeVariantes = false
+    includeVariantes = false,
+    variantesScope: VariantesScope = 'activas'
   ): Promise<ProductoPadreConVariantes | null> {
     const include: Prisma.ProductoPadreInclude = {
-      productosWeb: includeVariantes
-        ? {
-          where: {
-            activoSfactory: true,
-          },
-          orderBy: [
-            { color: 'asc' },
-            { talle: 'asc' },
-          ],
-        }
-        : false,
+      productosWeb: buildProductosWebInclude(includeVariantes, variantesScope, {
+        precios: true,
+      }),
       rubro: {
         select: {
           id: true,
@@ -190,10 +258,41 @@ export class ProductoService {
       },
     };
 
-    return prisma.productoPadre.findUnique({
+    const producto = (await prisma.productoPadre.findUnique({
       where: { id },
       include,
-    }) as Promise<ProductoPadreConVariantes | null>;
+    })) as ProductoPadreConVariantes | null;
+
+    if (!producto) return null;
+
+    if (variantesScope === 'todas') {
+      const [aprobados, pendientesMap] = await Promise.all([
+        productoColoresAprobacionService.listarColoresAprobados(id),
+        producto.empresaId != null
+          ? productoColoresAprobacionService.contarColoresPendientesPorPadres(
+              producto.empresaId,
+              [id]
+            )
+          : Promise.resolve(new Map<number, number>()),
+      ]);
+      return enrichProductosWebAdmin(
+        producto,
+        variantesScope,
+        aprobados,
+        pendientesMap.get(id) ?? 0
+      );
+    }
+
+    if (producto.empresaId != null) {
+      const pendientesMap =
+        await productoColoresAprobacionService.contarColoresPendientesPorPadres(
+          producto.empresaId,
+          [id]
+        );
+      return enrichProductosWebAdmin(producto, variantesScope, new Set(), pendientesMap.get(id) ?? 0);
+    }
+
+    return producto;
   }
 
   async getBySlug(
@@ -202,24 +301,10 @@ export class ProductoService {
     includeVariantes = false
   ): Promise<ProductoPadreConVariantes | null> {
     const include: Prisma.ProductoPadreInclude = {
-      productosWeb: includeVariantes
-        ? {
-          where: {
-            activoSfactory: true,
-          },
-          include: {
-            precios: true,
-            imagenes: {
-              orderBy: { orden: 'asc' },
-              take: 5,
-            },
-          },
-          orderBy: [
-            { color: 'asc' },
-            { talle: 'asc' },
-          ],
-        }
-        : false,
+      productosWeb: buildProductosWebInclude(includeVariantes, 'activas', {
+        precios: true,
+        imagenes: { orderBy: { orden: 'asc' }, take: 5 },
+      }),
       rubro: {
         select: {
           id: true,

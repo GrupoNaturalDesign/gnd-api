@@ -25,7 +25,13 @@ import {
   resolverCodigosPermitidosDeposito,
   type InventarioDepositoRow,
 } from '../../utils/sfactory-stock-fetch.utils';
-import { activoSfactoryConWhitelist } from '../../config/colores-padre-whitelist.utils';
+import { activoSfactoryConWhitelist, listarColoresAprobadosPorEmpresa, listarColoresAprobadosPorPadreIds } from '../../config/colores-padre-whitelist.utils';
+import type { ColorCanonico } from '../../constants/variantes-filtros';
+import {
+  esBloqueoPorWhitelist,
+  registrarBloqueoWhitelist,
+  type VarianteBloqueadaWhitelist,
+} from '../../utils/variante-whitelist-report.utils';
 import { resolverColorDesdeSfactory } from '../../utils/sfactory-color-parse.utils';
 import { realinearVariantesAgrupacionCanonica } from '../../utils/sfactory-realign-agrupacion.utils';
 import {
@@ -515,6 +521,8 @@ export class ProductoSyncService {
         }
       });
 
+      const coloresAprobadosPorPadre = await listarColoresAprobadosPorEmpresa(empresaId);
+
       const productosSfactoryMap = new Map<string, (typeof productosSfactory)[0]>();
       productosSfactory.forEach((p) => {
         productosSfactoryMap.set(p.codigo, p);
@@ -746,6 +754,8 @@ export class ProductoSyncService {
       let productosPadreCreados = 0;
       let productosWebCreados = 0;
       let productosWebOmitidos = 0;
+      const detalleBloqueadas: VarianteBloqueadaWhitelist[] = [];
+      const bloqueadasSeen = new Set<string>();
 
       const BATCH_SIZE = 15;
       const TRANSACTION_TIMEOUT = 120000;
@@ -948,13 +958,43 @@ export class ProductoSyncService {
                         ? Number((producto as any).Stock)
                         : 0,
                     ultimaSyncSfactory: productoSfactoryItem?.ultima_sync || new Date(),
-                    activoSfactory: activoSfactoryConWhitelist(
-                      codigoAgrupacion,
-                      color,
-                      inventarioPorCodigo.size > 0
-                        ? activoSfactoryDesdeDeposito(codigoStr, inventarioPorCodigo)
-                        : (productoSfactoryItem?.activo ?? 'S') === 'S'
-                    ),
+                    activoSfactory: (() => {
+                      const activoPorDeposito =
+                        inventarioPorCodigo.size > 0
+                          ? activoSfactoryDesdeDeposito(codigoStr, inventarioPorCodigo)
+                          : (productoSfactoryItem?.activo ?? 'S') === 'S';
+                      const aprobadosExtra =
+                        coloresAprobadosPorPadre.get(productoPadre.id) ?? new Set();
+                      if (
+                        esBloqueoPorWhitelist(
+                          codigoAgrupacion,
+                          color,
+                          activoPorDeposito,
+                          aprobadosExtra
+                        )
+                      ) {
+                        const invRow = inventarioPorCodigo.get(codigoStr);
+                        registrarBloqueoWhitelist(detalleBloqueadas, bloqueadasSeen, {
+                          codigoAgrupacion,
+                          sfactoryCodigo: codigoStr,
+                          color: color ?? '',
+                          stock:
+                            invRow?.stock ??
+                            Number(
+                              (producto as any).Stock !== null &&
+                                (producto as any).Stock !== undefined
+                                ? (producto as any).Stock
+                                : 0
+                            ),
+                        });
+                      }
+                      return activoSfactoryConWhitelist(
+                        codigoAgrupacion,
+                        color,
+                        activoPorDeposito,
+                        aprobadosExtra
+                      );
+                    })(),
                   };
 
                   const webExistente =
@@ -1085,6 +1125,8 @@ export class ProductoSyncService {
         productosPadreCreados,
         productosWebCreados,
         productosWebOmitidos,
+        variantesBloqueadasPorWhitelist: bloqueadasSeen.size,
+        detalleBloqueadasWhitelist: detalleBloqueadas,
         realineacion,
         publicadosSublinea: publicadosSub.publicados,
         coloresPadresRefrescados: coloresPadres.padresActualizados,
@@ -1387,6 +1429,17 @@ export class ProductoSyncService {
     }
     const { inventarioPorCodigo } = await obtenerInventarioPorCodigos([...codigosGrupo]);
 
+    const padreExistente = await prisma.productoPadre.findFirst({
+      where: { empresaId, codigoAgrupacion },
+      select: { id: true },
+    });
+    const aprobadosMap = padreExistente
+      ? await listarColoresAprobadosPorPadreIds([padreExistente.id])
+      : new Map<number, Set<ColorCanonico>>();
+    const aprobadosExtra = padreExistente
+      ? (aprobadosMap.get(padreExistente.id) ?? new Set())
+      : new Set<ColorCanonico>();
+
     // Procesar el grupo (reutilizar lógica existente)
     const TRANSACTION_TIMEOUT = 120000; // 2 minutos
     await prisma.$transaction(async (tx: PrismaTransaction) => {
@@ -1520,7 +1573,8 @@ export class ProductoSyncService {
             color,
             inventarioPorCodigo.size > 0
               ? activoSfactoryDesdeDeposito(codigoStr, inventarioPorCodigo)
-              : productoSfactory.activo === 'S'
+              : productoSfactory.activo === 'S',
+            aprobadosExtra
           ),
         };
 
@@ -1597,6 +1651,10 @@ export class ProductoSyncService {
         gruposOmitidos: procesamiento.gruposOmitidos,
         exitosos: procesamiento.exitosos,
         fallidos: procesamiento.fallidos + syncSfactory.errores,
+        variantesBloqueadasPorWhitelist:
+          procesamiento.variantesBloqueadasPorWhitelist ?? 0,
+        detalleBloqueadasWhitelist:
+          procesamiento.detalleBloqueadasWhitelist ?? [],
       },
     };
 
@@ -1632,6 +1690,9 @@ export class ProductoSyncService {
     console.log(`   • Productos padre escritos: ${procesamiento.productosPadreCreados}`);
     console.log(`   • Variantes escritas: ${procesamiento.productosWebCreados}`);
     console.log(`   • Variantes omitidas: ${procesamiento.productosWebOmitidos}`);
+    console.log(
+      `   • Bloqueadas por assortiment (con stock depósito): ${procesamiento.variantesBloqueadasPorWhitelist ?? 0}`
+    );
     console.log(`   • Exitosos: ${procesamiento.exitosos}`);
     console.log(`   • Fallidos: ${procesamiento.fallidos}`);
     console.log(`   • Sin código: ${procesamiento.sinCodigo}`);

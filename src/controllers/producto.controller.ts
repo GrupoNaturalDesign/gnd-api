@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { productoService } from '../services';
+import { productoColoresAprobacionService } from '../services/producto-colores-aprobacion.service';
 import { sfactoryService } from '../services/sfactory/sfactory.service';
 import { sfactoryAuthService } from '../services/sfactory/sfactory-auth.service';
 import { CacheService } from '../services/cache.service';
@@ -109,20 +110,24 @@ export class ProductoController {
       const { id } = ProductoByIdParamsSchema.parse({
         id: req.params.id,
         includeVariantes: req.query.includeVariantes,
+        variantesScope: req.query.variantesScope,
       });
 
       const includeVariantes = req.query.includeVariantes === 'true';
+      const variantesScope =
+        req.query.variantesScope === 'todas' ? 'todas' : 'activas';
       
       // Construir key de cache
       const cacheKey = CacheService.buildProductKey('padre', {
         id,
         includeVariantes,
+        variantesScope,
       });
 
       // Cache-aside pattern
       const producto = await CacheService.cacheAside(
         cacheKey,
-        () => productoService.getById(id, includeVariantes),
+        () => productoService.getById(id, includeVariantes, variantesScope),
         300 // 5 minutos para detalles
       );
 
@@ -1583,6 +1588,88 @@ export class ProductoController {
    */
   async deleteFichaTecnica(req: Request, res: Response, next: NextFunction) {
     return this._deleteDocumento(req, res, next, 'fichaTecnicaUrl');
+  }
+
+  /**
+   * GET /api/productos/:id/colores-pendientes
+   */
+  async getColoresPendientes(req: Request, res: Response, next: NextFunction) {
+    try {
+      const validation = validateEmpresaId(req);
+      if ('error' in validation) {
+        return res.status(400).json({ success: false, ...validation });
+      }
+      const { empresaId } = validation;
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ success: false, message: 'ID inválido' });
+      }
+
+      const colores = await productoColoresAprobacionService.listarColoresPendientes(
+        id,
+        empresaId
+      );
+
+      const response: ApiResponse = {
+        success: true,
+        data: colores,
+        message: 'Colores pendientes obtenidos',
+      };
+      res.json(response);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/productos/:id/colores/aprobar
+   */
+  async aprobarColor(req: Request, res: Response, next: NextFunction) {
+    try {
+      const validation = validateEmpresaId(req);
+      if ('error' in validation) {
+        return res.status(400).json({ success: false, ...validation });
+      }
+      const { empresaId } = validation;
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ success: false, message: 'ID inválido' });
+      }
+
+      const body = z.object({ color: z.string().min(1).max(100) }).parse(req.body);
+      const aprobadoPor =
+        (req as Request & { user?: { email?: string; uid?: string } }).user?.email ??
+        (req as Request & { user?: { email?: string; uid?: string } }).user?.uid ??
+        null;
+
+      const result = await productoColoresAprobacionService.aprobarColor(
+        id,
+        empresaId,
+        body.color,
+        aprobadoPor
+      );
+
+      await CacheService.invalidateProducts(empresaId);
+
+      const response: ApiResponse = {
+        success: true,
+        data: result,
+        message: `Color ${result.color} publicado en tienda`,
+      };
+      res.json(response);
+    } catch (error) {
+      const zodError = handleZodError(error);
+      if (zodError) {
+        return res.status(400).json({ success: false, ...zodError });
+      }
+      if (error instanceof Error && error.message === 'Producto no encontrado') {
+        return res.status(404).json({ success: false, message: error.message });
+      }
+      if (error instanceof Error && error.message === 'Color inválido') {
+        return res.status(400).json({ success: false, message: error.message });
+      }
+      next(error);
+    }
   }
 }
 

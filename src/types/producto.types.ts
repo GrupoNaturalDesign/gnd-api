@@ -26,7 +26,10 @@ export const ProductoWebResponseSchema = z.object({
   updatedAt: z.date(),
 });
 
-export type ProductoWebResponse = z.infer<typeof ProductoWebResponseSchema>;
+export type ProductoWebResponse = z.infer<typeof ProductoWebResponseSchema> & {
+  /** Solo admin cuando variantesScope=todas */
+  motivoInactivo?: 'activa' | 'sin_stock_deposito' | 'pendiente_aprobacion' | 'sin_color';
+};
 
 // ============================================
 // ProductoPrecio Response Types
@@ -104,6 +107,8 @@ export type ProductoPadreConVariantes = ProductoPadreResponse & {
   _count?: {
     productosWeb: number;
   };
+  /** Colores con stock pendientes de aprobar en admin (whitelist + BD). */
+  coloresPendientesCount?: number;
 };
 
 // ============================================
@@ -116,6 +121,8 @@ export interface ProductoQueryParams extends BaseQueryParams {
   publicado?: boolean;
   destacado?: boolean;
   includeVariantes?: boolean;
+  /** Admin: `todas` incluye variantes inactivas (bloqueadas por assortiment o sin stock). Tienda: solo `activas`. */
+  variantesScope?: 'activas' | 'todas';
   genero?: string;
   sexo?: string;
 }
@@ -126,6 +133,7 @@ export const ProductoQueryParamsSchema = BaseQueryParamsSchema.extend({
   publicado: z.coerce.boolean().optional(),
   destacado: z.coerce.boolean().optional(),
   includeVariantes: z.coerce.boolean().optional(),
+  variantesScope: z.enum(['activas', 'todas']).optional(),
   genero: z.string().max(50).optional(),
   sexo: z.string().max(50).optional(),
 });
@@ -137,11 +145,13 @@ export const ProductoQueryParamsSchema = BaseQueryParamsSchema.extend({
 export interface ProductoByIdParams {
   id: number;
   includeVariantes?: boolean;
+  variantesScope?: 'activas' | 'todas';
 }
 
 export const ProductoByIdParamsSchema = z.object({
   id: z.coerce.number().int().positive(),
   includeVariantes: z.coerce.boolean().optional(),
+  variantesScope: z.enum(['activas', 'todas']).optional(),
 });
 
 // ============================================

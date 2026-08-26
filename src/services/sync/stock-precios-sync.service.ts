@@ -4,7 +4,12 @@ import { ECOMMERCE_RUBROS_SFACTORY_IDS } from '../../config/ecommerce.config';
 import { productoPrecioService } from '../productoPrecio.service';
 import { getDbWriteConcurrency } from '../../lib/db-config';
 import { shouldUpdateStockPrecio } from '../../utils/sync-hash.utils';
-import { activoSfactoryConWhitelist } from '../../config/colores-padre-whitelist.utils';
+import { activoSfactoryConWhitelist, listarColoresAprobadosPorPadreIds } from '../../config/colores-padre-whitelist.utils';
+import {
+  esBloqueoPorWhitelist,
+  registrarBloqueoWhitelist,
+  type VarianteBloqueadaWhitelist,
+} from '../../utils/variante-whitelist-report.utils';
 import {
   activoSfactoryDesdeDeposito,
   fetchStockRowsResilient,
@@ -46,6 +51,8 @@ export interface StockPreciosSyncResult {
   variantesActivadas: number;
   /** Padres despublicados sin variantes vendibles (solo si despublicarPadresSinVendibles). */
   padresDespublicados: number;
+  variantesBloqueadasPorWhitelist: number;
+  detalleBloqueadasWhitelist: VarianteBloqueadaWhitelist[];
 }
 
 export interface DesactivarFueraDepositoResult {
@@ -57,6 +64,8 @@ export interface DesactivarFueraDepositoResult {
   publicadosSublinea: number;
   /** Padres con colores_disponibles refrescados. */
   coloresPadresRefrescados: number;
+  variantesBloqueadasPorWhitelist: number;
+  detalleBloqueadasWhitelist: VarianteBloqueadaWhitelist[];
 }
 
 async function runPool<T>(
@@ -99,6 +108,8 @@ function emptyStockPreciosResult(warehouseId: number): StockPreciosSyncResult {
     variantesDesactivadas: 0,
     variantesActivadas: 0,
     padresDespublicados: 0,
+    variantesBloqueadasPorWhitelist: 0,
+    detalleBloqueadasWhitelist: [],
   };
 }
 
@@ -254,6 +265,8 @@ export class StockPreciosSyncService {
       variantesDesactivadas: 0,
       variantesActivadas: 0,
       padresDespublicados: 0,
+      variantesBloqueadasPorWhitelist: 0,
+      detalleBloqueadasWhitelist: [],
     };
   }
 
@@ -378,6 +391,8 @@ export class StockPreciosSyncService {
       variantesDesactivadas: purge.variantesDesactivadas,
       variantesActivadas: purge.variantesActivadas,
       padresDespublicados: purge.padresDespublicados,
+      variantesBloqueadasPorWhitelist: purge.variantesBloqueadasPorWhitelist,
+      detalleBloqueadasWhitelist: purge.detalleBloqueadasWhitelist,
     };
   }
 
@@ -415,6 +430,8 @@ export class StockPreciosSyncService {
         codigosOmitidos: options?.codigosOmitidosAcumulados ?? [],
         publicadosSublinea: 0,
         coloresPadresRefrescados: 0,
+        variantesBloqueadasPorWhitelist: 0,
+        detalleBloqueadasWhitelist: [],
       };
     }
 
@@ -425,12 +442,16 @@ export class StockPreciosSyncService {
       },
       select: {
         id: true,
+        productoPadreId: true,
         sfactoryCodigo: true,
         activoSfactory: true,
         color: true,
         productoPadre: { select: { codigoAgrupacion: true } },
       },
     });
+
+    const padreIds = [...new Set(variantes.map((v) => v.productoPadreId))];
+    const coloresAprobadosPorPadre = await listarColoresAprobadosPorPadreIds(padreIds);
 
     const codigos = variantes.map((v) => v.sfactoryCodigo).filter(Boolean);
     const codigosOmitidos = [...(options?.codigosOmitidosAcumulados ?? [])];
@@ -450,15 +471,36 @@ export class StockPreciosSyncService {
     const omitSet = new Set(codigosOmitidos);
     let variantesDesactivadas = 0;
     let variantesActivadas = 0;
+    const detalleBloqueadas: VarianteBloqueadaWhitelist[] = [];
+    const bloqueadasSeen = new Set<string>();
 
     await runPool(variantes, getDbWriteConcurrency(), async (v) => {
       const codigo = v.sfactoryCodigo;
       const activoDeposito =
         !omitSet.has(codigo) && activoSfactoryDesdeDeposito(codigo, inventario);
+      const aprobadosExtra =
+        coloresAprobadosPorPadre.get(v.productoPadreId) ?? new Set();
+      if (
+        esBloqueoPorWhitelist(
+          v.productoPadre.codigoAgrupacion,
+          v.color,
+          activoDeposito,
+          aprobadosExtra
+        )
+      ) {
+        const invRow = inventario.get(codigo);
+        registrarBloqueoWhitelist(detalleBloqueadas, bloqueadasSeen, {
+          codigoAgrupacion: v.productoPadre.codigoAgrupacion,
+          sfactoryCodigo: codigo,
+          color: v.color ?? '',
+          stock: invRow?.stock ?? 0,
+        });
+      }
       const debeActivo = activoSfactoryConWhitelist(
         v.productoPadre.codigoAgrupacion,
         v.color,
-        activoDeposito
+        activoDeposito,
+        aprobadosExtra
       );
       if (debeActivo === v.activoSfactory) return;
       await prisma.productoWeb.update({
@@ -516,6 +558,8 @@ export class StockPreciosSyncService {
       codigosOmitidos,
       publicadosSublinea: publicadosSublinea.publicados,
       coloresPadresRefrescados: coloresPadres.padresActualizados,
+      variantesBloqueadasPorWhitelist: bloqueadasSeen.size,
+      detalleBloqueadasWhitelist: detalleBloqueadas,
     };
   }
 }

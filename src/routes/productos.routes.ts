@@ -28,6 +28,12 @@ router.get('/buscar-padre', productoController.buscarProductosPadre.bind(product
 // GET /api/productos/variantes/:codigoBase - Obtener variantes de un código base
 router.get('/variantes/:codigoBase', productoController.obtenerVariantesPorCodigoBase.bind(productoController));
 
+// GET /api/productos/:id/colores-pendientes - Colores nuevos pendientes de aprobar
+router.get('/:id/colores-pendientes', productoController.getColoresPendientes.bind(productoController));
+
+// POST /api/productos/:id/colores/aprobar - Aprobar color y publicar variantes
+router.post('/:id/colores/aprobar', productoController.aprobarColor.bind(productoController));
+
 // GET /api/productos/:id/completo - Obtener producto completo para edición
 router.get('/:id/completo', productoController.obtenerProductoCompleto.bind(productoController));
 

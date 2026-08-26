@@ -48,6 +48,7 @@ model Empresa {
   tiendaConfig         EmpresaTiendaConfig?
   cupones              Cupon[]
   adminNotifications   AdminNotification[]
+  coloresAprobadosPadre ProductoPadreColorAprobado[]
 
   @@index([codigo], map: "idx_codigo")
   @@index([activa], map: "idx_activa")
@@ -277,6 +278,7 @@ model ProductoPadre {
   rubro                Rubro?         @relation(fields: [rubroId], references: [id], onUpdate: NoAction, map: "productos_padre_ibfk_2")
   subrubro             Subrubro?      @relation(fields: [subrubroId], references: [id], onUpdate: NoAction, map: "productos_padre_ibfk_3")
   productosWeb         ProductoWeb[]
+  coloresAprobados     ProductoPadreColorAprobado[]
 
   @@unique([empresaId, codigoAgrupacion], name: "unique_empresa_agrupacion", map: "unique_empresa_agrupacion")
   @@index([empresaId, publicado], map: "idx_publicado")
@@ -331,6 +333,22 @@ model ProductoWeb {
   @@index([sexo], map: "idx_sexo")
   @@index([stockCache], map: "idx_stock")
   @@map("productos_web")
+}
+
+/// Colores habilitados en tienda por aprobación admin (override sobre whitelist estática).
+model ProductoPadreColorAprobado {
+  id              Int           @id @default(autoincrement()) @map("id") @db.UnsignedInt
+  empresaId       Int           @map("empresa_id") @db.UnsignedInt
+  productoPadreId Int           @map("producto_padre_id") @db.UnsignedInt
+  color           String        @map("color") @db.VarChar(100)
+  aprobadoPor     String?       @map("aprobado_por") @db.VarChar(128)
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamp(0)
+  productoPadre   ProductoPadre @relation(fields: [productoPadreId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "pp_colores_aprobados_padre_fk")
+  empresa         Empresa       @relation(fields: [empresaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "pp_colores_aprobados_empresa_fk")
+
+  @@unique([productoPadreId, color], map: "unique_padre_color_aprobado")
+  @@index([empresaId], map: "idx_pp_colores_aprobados_empresa")
+  @@map("producto_padre_colores_aprobados")
 }
 
 model ProductoImagen {
