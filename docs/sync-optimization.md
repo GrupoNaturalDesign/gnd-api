@@ -86,6 +86,7 @@ Script manual: `npx ts-node --transpile-only scripts/refrescar-colores-padre.ts 
 - `inventory_stock_items_by_warehouse_v2` no soporta `all_items: true` — ver [sfactory-inventory-stock.md](./sfactory-inventory-stock.md).
 - El filtro de depósito es **por código** (`resolverCodigosPermitidosDeposito`); un padre puede procesarse si al menos una variante es vendible en el depósito, pero las demás quedan con `activoSfactory=false`.
 - SKUs marcadores `_D/_H/_U` solo se activan si tienen `sale_price` en el depósito ecommerce.
+- Variantes **sin color** en padres **sin** whitelist de colores: siguen activas si el depósito las considera vendibles (`activoSfactoryConWhitelist`). Padres con whitelist siguen exigiendo color permitido/aprobado.
 
 ## Código
 

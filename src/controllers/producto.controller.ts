@@ -73,6 +73,7 @@ export class ProductoController {
         page: params.page,
         limit: params.limit,
         includeVariantes: params.includeVariantes,
+        variantesScope: params.variantesScope,
       });
 
       // Cache-aside pattern

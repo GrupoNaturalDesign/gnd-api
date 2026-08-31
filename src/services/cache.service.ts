@@ -208,12 +208,14 @@ export class CacheService {
         if (params?.page) parts.push(`page:${params.page}`);
         if (params?.limit) parts.push(`limit:${params.limit}`);
         if (params?.includeVariantes) parts.push('variantes:true');
+        if (params?.variantesScope) parts.push(`scope:${params.variantesScope}`);
         break;
 
       case 'padre':
         parts.push(CACHE_NAMESPACES.PRODUCTS_PADRE);
         if (params?.id) parts.push(params.id);
         if (params?.includeVariantes) parts.push('variantes:true');
+        if (params?.variantesScope) parts.push(`scope:${params.variantesScope}`);
         break;
 
       case 'web':

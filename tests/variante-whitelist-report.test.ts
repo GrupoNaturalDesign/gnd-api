@@ -1,11 +1,23 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { activoSfactoryConWhitelist } from '../src/config/colores-padre-whitelist.utils';
 import {
   dedupeBloqueadasWhitelist,
   esBloqueoPorWhitelist,
   motivoInactivoVariante,
   registrarBloqueoWhitelist,
 } from '../src/utils/variante-whitelist-report.utils';
+
+test('activoSfactoryConWhitelist: sin color y sin whitelist sigue activo si depósito OK (Jean Flow)', () => {
+  assert.equal(activoSfactoryConWhitelist('L-WW-PAN-JFL_H', null, true), true);
+  assert.equal(activoSfactoryConWhitelist('L-WW-PAN-JFL_D', '', true), true);
+  assert.equal(activoSfactoryConWhitelist('L-WW-PAN-JFL_H', null, false), false);
+});
+
+test('activoSfactoryConWhitelist: sin color con whitelist no activa', () => {
+  assert.equal(activoSfactoryConWhitelist('L-WW-CAM-WR_H', null, true), false);
+  assert.equal(activoSfactoryConWhitelist('L-WW-CAM-WR_H', 'AZUL MARINO', true), true);
+});
 
 test('motivoInactivoVariante: AZUL pendiente en WR_H (solo AZUL MARINO)', () => {
   assert.equal(

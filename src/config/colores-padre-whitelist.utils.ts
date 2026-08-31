@@ -37,6 +37,11 @@ export function colorPermitidoEnPadre(
   return permitidos.includes(canon);
 }
 
+/**
+ * Activa en web si el depósito lo permite y el color no está bloqueado.
+ * Sin color: padres **sin** whitelist siguen vendibles (evita apagar stock por parseo fallido).
+ * Padres **con** whitelist exigen color canónico permitido o aprobado en admin.
+ */
 export function activoSfactoryConWhitelist(
   codigoAgrupacion: string,
   color: string | null | undefined,
@@ -44,6 +49,9 @@ export function activoSfactoryConWhitelist(
   coloresAprobadosExtra?: ReadonlySet<ColorCanonico> | readonly ColorCanonico[] | null
 ): boolean {
   if (!activoPorDepositoOSfactory) return false;
+  if (!color?.trim()) {
+    return !tieneWhitelistColores(codigoAgrupacion);
+  }
   return colorPermitidoEnPadre(codigoAgrupacion, color, coloresAprobadosExtra);
 }
 
