@@ -2,6 +2,7 @@
 """
 Sync local api/dist → Hostinger runtime nodejs/dist (push-to-deploy).
 
+Uploads a single gzipped tar (fast/reliable) then swaps dist atomically.
 Does NOT overwrite .env unless --with-env and hostinger.env exists.
 Always enforces DB_HOST=127.0.0.1 on runtime .env (Hostinger IPv6 fix).
 
@@ -15,6 +16,9 @@ from __future__ import annotations
 
 import os
 import sys
+import tarfile
+import tempfile
+import time
 from pathlib import Path
 
 import paramiko
@@ -32,7 +36,7 @@ PASSWORD = os.environ.get("HOSTINGER_SSH_PASSWORD") or ""
 WITH_ENV = "--with-env" in sys.argv
 
 
-def run(ssh: paramiko.SSHClient, cmd: str, timeout: int = 120) -> tuple[int, str]:
+def run(ssh: paramiko.SSHClient, cmd: str, timeout: int = 180) -> tuple[int, str]:
     print(f">>> {cmd}")
     _, stdout, stderr = ssh.exec_command(cmd, timeout=timeout)
     out = stdout.read().decode("utf-8", errors="replace")
@@ -45,32 +49,6 @@ def run(ssh: paramiko.SSHClient, cmd: str, timeout: int = 120) -> tuple[int, str
     return code, out
 
 
-def ensure_remote_dir(sftp: paramiko.SFTPClient, remote_dir: str) -> None:
-    parts = remote_dir.strip("/").split("/")
-    path = ""
-    for part in parts:
-        path += "/" + part
-        try:
-            sftp.stat(path)
-        except OSError:
-            sftp.mkdir(path)
-
-
-def upload_tree(sftp: paramiko.SFTPClient, local_dir: Path, remote_dir: str) -> int:
-    count = 0
-    for path in local_dir.rglob("*"):
-        if path.is_dir():
-            continue
-        rel = path.relative_to(local_dir).as_posix()
-        remote = f"{remote_dir}/{rel}"
-        ensure_remote_dir(sftp, str(Path(remote).parent).replace("\\", "/"))
-        sftp.put(str(path), remote)
-        count += 1
-        if count % 50 == 0:
-            print(f"  uploaded {count} files...")
-    return count
-
-
 def main() -> int:
     if not PASSWORD:
         print("HOSTINGER_SSH_PASSWORD required", file=sys.stderr)
@@ -79,48 +57,75 @@ def main() -> int:
         print("Run npm run build first (dist/index.js missing)", file=sys.stderr)
         return 1
 
-    ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    ssh.connect(HOST, port=PORT, username=USER, password=PASSWORD, timeout=30)
-    sftp = ssh.open_sftp()
+    with tempfile.NamedTemporaryFile(suffix=".tgz", delete=False) as tmp:
+        tar_path = Path(tmp.name)
+    try:
+        print(f"Packing {DIST} -> {tar_path.name}")
+        with tarfile.open(tar_path, "w:gz") as tar:
+            tar.add(DIST, arcname="dist")
+        size_mb = tar_path.stat().st_size / (1024 * 1024)
+        print(f"Archive {size_mb:.1f} MB")
 
-    remote_dist = f"{RUNTIME}/dist"
-    print(f"Sync {DIST} → {remote_dist}")
-    # Replace dist atomically-ish: upload to dist_new then swap
-    remote_new = f"{RUNTIME}/dist_new"
-    run(ssh, f"rm -rf {remote_new} && mkdir -p {remote_new}")
-    n = upload_tree(sftp, DIST, remote_new)
-    print(f"Uploaded {n} files to dist_new")
-    run(ssh, f"rm -rf {remote_dist} && mv {remote_new} {remote_dist}")
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(HOST, port=PORT, username=USER, password=PASSWORD, timeout=30)
+        sftp = ssh.open_sftp()
 
-    # Safety: never leave DB_HOST=localhost (IPv6 ::1 rejection on Hostinger)
-    for env_path in (
-        f"{RUNTIME}/.env",
-        f"/home/u967550282/domains/api.naturalonline.com.ar/public_html/.builds/config/.env",
-    ):
-        run(
+        remote_tar = f"{RUNTIME}/gnd-dist.tgz"
+        remote_dist = f"{RUNTIME}/dist"
+        remote_new = f"{RUNTIME}/dist_new"
+
+        print(f"Upload {tar_path.name} -> {remote_tar}")
+        t0 = time.time()
+        sftp.put(str(tar_path), remote_tar)
+        print(f"Upload done in {time.time() - t0:.1f}s")
+
+        code, out = run(
             ssh,
-            f"test -f {env_path} && "
-            f"grep -q '^DB_HOST=' {env_path} && "
-            f"sed -i 's/^DB_HOST=.*/DB_HOST=127.0.0.1/' {env_path} || true",
+            f"cd {RUNTIME} && rm -rf {remote_new} && mkdir -p {remote_new} && "
+            f"tar -xzf gnd-dist.tgz -C {remote_new} --strip-components=1 && "
+            f"rm -f gnd-dist.tgz && "
+            f"test -f {remote_new}/index.js && test -f {remote_new}/lib/db-config.js && "
+            f"rm -rf {remote_dist} && mv {remote_new} {remote_dist} && echo dist_ok",
+            timeout=180,
         )
+        if code != 0 or "dist_ok" not in out:
+            print("Remote extract/swap failed", file=sys.stderr)
+            return 1
 
-    if WITH_ENV:
-        env_local = API / "hostinger.env"
-        if env_local.exists():
-            print("Uploading hostinger.env → runtime .env")
-            sftp.put(str(env_local), f"{RUNTIME}/.env")
-            run(ssh, f"sed -i 's/^DB_HOST=.*/DB_HOST=127.0.0.1/' {RUNTIME}/.env")
-        else:
-            print("WARN: --with-env but hostinger.env missing; skipped", file=sys.stderr)
+        # Safety: never leave DB_HOST=localhost (IPv6 ::1 rejection on Hostinger)
+        for env_path in (
+            f"{RUNTIME}/.env",
+            f"/home/u967550282/domains/api.naturalonline.com.ar/public_html/.builds/config/.env",
+        ):
+            run(
+                ssh,
+                f"test -f {env_path} && "
+                f"grep -q '^DB_HOST=' {env_path} && "
+                f"sed -i 's/^DB_HOST=.*/DB_HOST=127.0.0.1/' {env_path} || true",
+            )
 
-    run(ssh, f"grep '^DB_HOST=' {RUNTIME}/.env || true")
-    run(ssh, f"test -f {remote_dist}/index.js && test -f {remote_dist}/lib/db-config.js && echo dist_ok")
+        if WITH_ENV:
+            env_local = API / "hostinger.env"
+            if env_local.exists():
+                print("Uploading hostinger.env -> runtime .env")
+                sftp.put(str(env_local), f"{RUNTIME}/.env")
+                run(ssh, f"sed -i 's/^DB_HOST=.*/DB_HOST=127.0.0.1/' {RUNTIME}/.env")
+            else:
+                print("WARN: --with-env but hostinger.env missing; skipped", file=sys.stderr)
 
-    sftp.close()
-    ssh.close()
-    print("SSH sync done. Restart Node next.")
-    return 0
+        run(ssh, f"grep '^DB_HOST=' {RUNTIME}/.env || true")
+        run(ssh, f"mkdir -p {RUNTIME}/tmp && touch {RUNTIME}/tmp/restart.txt || true")
+
+        sftp.close()
+        ssh.close()
+        print("SSH sync done. Restart Node next.")
+        return 0
+    finally:
+        try:
+            tar_path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 if __name__ == "__main__":
