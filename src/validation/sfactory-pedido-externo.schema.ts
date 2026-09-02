@@ -5,6 +5,7 @@ import type {
   SFactoryPedidoExternoItem,
 } from '../types/sfactory.types';
 import { resolveSfactoryPedidoFulfillmentMode } from '../utils/sfactory-pedido-externo.util';
+import { asTrimmedString, digitsOnly } from '../utils/string-coerce.util';
 
 const dateYmd = z
   .string()
@@ -17,6 +18,17 @@ const ivaValues = z.union([
   z.literal(21),
   z.literal(27),
 ]);
+
+/**
+ * SFactory a veces manda cuit/teléfono/CP como number.
+ * Aceptamos string|number y normalizamos a string antes de validar.
+ */
+function stringish(max: number) {
+  return z.preprocess(
+    (v) => (typeof v === 'number' ? String(v) : v),
+    z.string().max(max)
+  );
+}
 
 /** Placeholders comunes en ERP que no son emails reales. */
 function isEmailPlaceholder(email: string): boolean {
@@ -39,17 +51,18 @@ export function normalizeSfactoryClienteEmail(
 export const sfactoryPedidoExternoClienteSchema = z
   .object({
     nombre: z.string().min(1).max(500).optional(),
-    cuit: z.string().max(20).optional(),
+    cuit: stringish(20).optional(),
     email: z.string().max(255).optional(),
     razon_social: z.string().min(1).max(500).optional(),
-    telefono: z.string().max(80).optional(),
-    movil: z.string().max(80).optional(),
+    telefono: stringish(80).optional(),
+    movil: stringish(80).optional(),
   })
   .strict()
   .superRefine((val, ctx) => {
-    const cuitDigits = val.cuit?.replace(/\D/g, '') ?? '';
+    const cuitDigits = digitsOnly(val.cuit);
     const hasValidCuit = cuitDigits.length === 11;
-    if (val.cuit != null && val.cuit.trim() !== '' && !hasValidCuit) {
+    const cuitTrim = asTrimmedString(val.cuit);
+    if (cuitTrim != null && !hasValidCuit) {
       ctx.addIssue({
         code: 'custom',
         path: ['cuit'],
@@ -98,7 +111,10 @@ export const sfactoryPedidoExternoEntregaSchema = z
     provincia: z.string().min(1).max(120),
     localidad: z.string().min(1).max(200),
     direccion: z.string().min(1).max(500),
-    cp: z.string().min(1).max(20),
+    cp: z.preprocess(
+      (v) => (typeof v === 'number' ? String(v) : v),
+      z.string().min(1).max(20)
+    ),
     localidad_id: z.number().int().positive().optional(),
     notas: z.string().max(2000).optional(),
   })
@@ -133,17 +149,19 @@ export function toSfactoryPedidoExternoParams(
   body: SFactoryCrearPedidoExternoValidated
 ): SFactoryCrearPedidoExternoParams {
   const c = body.cliente;
-  const cuitDigits = c.cuit?.replace(/\D/g, '') ?? '';
+  const cuitDigits = digitsOnly(c.cuit);
   const cuit = cuitDigits.length === 11 ? cuitDigits : undefined;
   const email = normalizeSfactoryClienteEmail(c.email);
+  const telefono = asTrimmedString(c.telefono) ?? undefined;
+  const movil = asTrimmedString(c.movil) ?? undefined;
 
   const cliente: SFactoryPedidoExternoCliente = {
     ...(c.nombre ? { nombre: c.nombre } : {}),
     ...(cuit ? { cuit } : {}),
     ...(email ? { email } : {}),
     ...(c.razon_social ? { razon_social: c.razon_social } : {}),
-    ...(c.telefono ? { telefono: c.telefono } : {}),
-    ...(c.movil ? { movil: c.movil } : {}),
+    ...(telefono ? { telefono } : {}),
+    ...(movil ? { movil } : {}),
   };
 
   const items: SFactoryPedidoExternoItem[] = body.items.map((it) => {

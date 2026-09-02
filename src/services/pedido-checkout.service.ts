@@ -47,6 +47,7 @@ import {
 } from '../utils/sfactory-pedido-response.util';
 import { resolveSfactoryPedidoFulfillmentMode } from '../utils/sfactory-pedido-externo.util';
 import { normalizeSfactoryClienteEmail } from '../validation/sfactory-pedido-externo.schema';
+import { digitsOnly } from '../utils/string-coerce.util';
 import {
   debeReservarStockLocal,
   syncStockPedidoItemsAsync,
@@ -276,7 +277,7 @@ export function buildPedidoExternoParams(pedido: {
 
   const c = pedido.cliente;
   const email = normalizeSfactoryClienteEmail(c?.email) ?? normalizeSfactoryClienteEmail(pedido.clienteEmail) ?? null;
-  const cuitDigits = c?.cuit?.replace(/\D/g, '') ?? '';
+  const cuitDigits = digitsOnly(c?.cuit);
   const cuit = cuitDigits.length === 11 ? cuitDigits : undefined;
   if (!cuit && !email) {
     throw new Error(

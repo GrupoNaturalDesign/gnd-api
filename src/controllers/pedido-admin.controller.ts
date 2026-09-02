@@ -22,6 +22,7 @@ import { pedidosService } from '../services/pedidos.service';
 import { sfactoryCrearPedidoExternoBodySchema, toSfactoryPedidoExternoParams } from '../validation/sfactory-pedido-externo.schema';
 import { setPedidoTrackingSchema } from '../validation/pedido-tracking.validation';
 import { handleZodError } from '../utils/validation';
+import { normalizeClienteBusquedaList } from '../utils/cliente-busqueda.util';
 import prisma from '../lib/prisma';
 import { paramAsString } from '../utils/http-param.util';
 
@@ -724,7 +725,6 @@ export class PedidoAdminController {
       let data = await sfactoryService.buscarCliente(search, empresa.sfactoryCompanyKey);
 
       if (!data || data.length === 0) {
-        const searchLower = search.toLowerCase();
         const searchNum = search.replace(/\D/g, '');
         const isCuit = searchNum.length === 11;
         const isEmail = search.includes('@');
@@ -753,7 +753,11 @@ export class PedidoAdminController {
         data = localClients;
       }
 
-      res.json({ success: true, data } as ApiResponse);
+      // Unifica SFactory (tax_id number / legal_name) y Prisma local → strings estables
+      res.json({
+        success: true,
+        data: normalizeClienteBusquedaList(Array.isArray(data) ? data : []),
+      } as ApiResponse);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       res.status(400).json({ success: false, error: 'Error al buscar clientes', message });
