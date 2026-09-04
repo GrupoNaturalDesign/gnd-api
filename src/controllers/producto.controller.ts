@@ -1503,6 +1503,7 @@ export class ProductoController {
       }
 
       const url = await imageUploadService.uploadDocument({
+        productoPadreId: productoPadre.id,
         nombreBase: productoPadre.nombre,
         tipo,
         file,

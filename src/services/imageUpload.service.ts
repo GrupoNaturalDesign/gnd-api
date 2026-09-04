@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import sharp from 'sharp';
 import { ftpService } from './ftp.service';
-import { slugifyProductName, slugifyImageName } from '../utils/slugify.util';
+import { slugifyProductName, slugifyImageName, slugifyProductFolder } from '../utils/slugify.util';
 import { parseProductDescription } from '../utils/skuParser.util';
 import type { MulterFile } from '../types/multer.types';
 
@@ -320,17 +320,20 @@ export class ImageUploadService {
   }
 
   /**
-   * Sube un documento (tabla de talles o ficha técnica) al FTP
-   * Path resultante: products/{slugProducto}/docs/{tipo}.{ext}
+   * Sube un documento (tabla de talles o ficha técnica) al FTP.
+   * Path: products/{slug}-{productoPadreId}/docs/{tipo}.{ext}?v={ts}
+   * El id evita colisión entre padre hombre/dama con el mismo nombre;
+   * ?v= fuerza refresh de caché al reemplazar.
    */
   async uploadDocument(options: {
+    productoPadreId: number;
     nombreBase: string;
     tipo: 'tabla-talles' | 'ficha-tecnica';
     file: MulterFile;
   }): Promise<string> {
-    const { nombreBase, tipo, file } = options;
+    const { productoPadreId, nombreBase, tipo, file } = options;
 
-    const folderName = slugifyProductName(nombreBase);
+    const folderName = slugifyProductFolder(nombreBase, productoPadreId);
     const folderPath = `${folderName}/docs`;
     const isImage = file.mimetype.startsWith('image/');
     const ext = isImage ? '.jpg' : (path.extname(file.originalname).toLowerCase() || '.pdf');
@@ -361,7 +364,8 @@ export class ImageUploadService {
 
       await ftpService.disconnect();
 
-      const publicPath = `products/${remotePath}`;
+      // Cache-bust: misma ruta de archivo, URL distinta en BD para invalidar CDN/browser
+      const publicPath = `products/${remotePath}?v=${Date.now()}`;
       console.log(`✅ [DOC UPLOAD] Documento subido: ${publicPath}`);
       return publicPath;
     } catch (error) {

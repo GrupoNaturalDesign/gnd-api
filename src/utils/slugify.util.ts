@@ -25,6 +25,14 @@ export function slugifyProductName(nombreBase: string): string {
 }
 
 /**
+ * Carpeta única por producto padre (evita colisión hombre/dama con mismo nombre).
+ * Ej: "Pantalón Jean Flow" + 113 → "pantalon-jean-flow-113"
+ */
+export function slugifyProductFolder(nombreBase: string, productoPadreId: number): string {
+  return `${slugifyProductName(nombreBase)}-${productoPadreId}`;
+}
+
+/**
  * Crea un slug para el nombre de archivo de imagen
  * Incluye nombre base y color
  */
