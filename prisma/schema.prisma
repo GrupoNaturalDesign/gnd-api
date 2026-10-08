@@ -185,6 +185,18 @@ model Usuario {
   @@map("usuarios")
 }
 
+model PortalIdentidad {
+  usuarioId Int @id @map("usuario_id") @db.UnsignedInt
+  dni String @db.VarChar(8)
+  estado String @default("pendiente") @db.VarChar(16)
+  dniVerificado String? @unique @map("dni_verificado") @db.VarChar(8)
+  aprobadoPor Int? @map("aprobado_por") @db.UnsignedInt
+  motivo String? @db.VarChar(300)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(0)
+  @@map("portal_identidades")
+}
+
 model Rubro {
   id                        Int                @id @default(autoincrement()) @map("id") @db.UnsignedInt
   empresaId                 Int                @map("empresa_id") @db.UnsignedInt

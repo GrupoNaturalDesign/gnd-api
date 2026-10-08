@@ -63,6 +63,7 @@ jobs:
           DB_NAME: ci
 
       - name: Setup Python (paramiko)
+        # La aprobación de identidad debe validarse antes de publicar.
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"

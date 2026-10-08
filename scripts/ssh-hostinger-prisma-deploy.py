@@ -167,6 +167,7 @@ def main() -> int:
         return 1
 
     files = [
+        (API / "migrations" / "add_portal_identidades.sql", f"{RUNTIME}/migrations/add_portal_identidades.sql"),
         (API / "prisma" / "schema.prisma", f"{RUNTIME}/prisma/schema.prisma"),
         (
             API / "migrations" / "add_producto_padre_colores_aprobados.sql",

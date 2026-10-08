@@ -112,3 +112,15 @@ Ambos incluidos en `npm test`.
 ## Contrato SSFI actualizado — 8 de octubre de 2026
 
 Audience: `SSFI-PORTAL`. Issuer enviado: `naturalonline.com.ar` (confirmar su allowlist con SSFI). URL: `/ssfi/portal`. No se consulta `verify-dni`: SSFI valida la nómina al recibir el JWT. El contrato requiere DNI o CUIL de colaborador; el acceso por CUIT de empresa sin DNI queda pendiente de confirmación y no genera token.
+
+## Vinculación con aprobación administrativa
+
+- Cliente: `/portal-clientes`. Si el SSO devuelve 409, el botón lo deriva a esta pantalla. Solicita DNI/CUIL y exige email verificado.
+- API cliente: `GET/POST /api/portal-clientes/identidad`. El POST guarda únicamente una solicitud pendiente y nunca modifica una aprobación existente.
+- Administrador: `/admin/portal-clientes`, accesible desde el menú admin. Permite revisar las últimas 100 solicitudes o vincular por email una cuenta existente.
+- API admin: `GET/POST /api/admin/portal-clientes`, protegida por Firebase, rol admin y alcance de empresa. Cada decisión exige motivo y confirmación explícita de verificación.
+- Tabla: `portal_identidades`, separada del catálogo y de los clientes sincronizados. Estados: pendiente, aprobado, rechazado. `dni_verificado` solo se escribe al aprobar y es único. Las solicitudes pendientes/rechazadas no firman tokens y prevalecen sobre otras fuentes para evitar bypass de revocaciones.
+- El documento no se copia al log global de auditoría; la tabla conserva responsable, motivo y fecha de la última decisión.
+- Deploy: aplicar `migrations/add_portal_identidades.sql` (CREATE TABLE IF NOT EXISTS) antes del reinicio del backend y antes de publicar frontend. El pipeline SSH ya incluye esta migración.
+- Cuenta de prueba: un administrador puede vincular `admin@ntds.com` con `41711946`, según autorización de la identidad de prueba por SSFI. No se modifica el rol. Si la cuenta no tiene email verificado, debe completar ese paso primero.
+- Para datos reales, confirmar la titularidad con empresa/RRHH antes de aprobar. No se implementó OTP de SSFI ni se consulta `verify-dni`. El CUIT/CUIL opcional en registro queda fuera de esta entrega; los datos se solicitan al intentar entrar al portal.

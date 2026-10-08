@@ -36,7 +36,7 @@ export class PortalClientesError extends Error {
   }
 }
 
-type FuenteIdentidad = 'cliente_vinculado' | 'sfactory_cliente_id' | 'email_verificado';
+type FuenteIdentidad = 'cliente_vinculado' | 'sfactory_cliente_id' | 'email_verificado' | 'aprobacion_admin';
 
 interface UsuarioParaPortal {
   id: number;
@@ -53,6 +53,11 @@ interface UsuarioParaPortal {
 async function resolverIdentidadUsuario(
   usuario: UsuarioParaPortal
 ): Promise<{ identidad: IdentidadPortal; fuente: FuenteIdentidad } | null> {
+  const manual = await prisma.portalIdentidad.findUnique({ where: { usuarioId: usuario.id } });
+  if (manual) {
+    if (manual.estado !== 'aprobado' || !manual.dniVerificado || !usuario.emailVerified) return null;
+    return { identidad: { dni: manual.dniVerificado }, fuente: 'aprobacion_admin' };
+  }
   const vinculado = resolverIdentidadPortal(usuario.cliente?.cuit);
   if (vinculado) return { identidad: vinculado, fuente: 'cliente_vinculado' };
 

@@ -29,6 +29,7 @@ import { firebaseAuthMiddleware } from '../middleware/firebase-auth.middleware';
 import { requireAdmin } from '../middleware/require-admin.middleware';
 import usuarioAdminRoutes from './usuario-admin.routes';
 import portalClientesRoutes from './portal-clientes.routes';
+import * as portalIdentidadController from '../controllers/portal-identidad.controller';
 
 const router = Router();
 
@@ -162,6 +163,8 @@ router.use('/shipping', shippingRoutes);
 router.use('/checkout', checkoutLimiter, checkoutRoutes);
 router.use('/cuenta', firebaseAuthMiddleware, cuentaRoutes);
 router.use('/portal-clientes', portalClientesLimiter, firebaseAuthMiddleware, portalClientesRoutes);
+router.get('/admin/portal-clientes', portalClientesLimiter, firebaseAuthMiddleware, requireAdmin, empresaMiddleware, portalIdentidadController.listar);
+router.post('/admin/portal-clientes', portalClientesLimiter, firebaseAuthMiddleware, requireAdmin, empresaMiddleware, portalIdentidadController.decidir);
 router.use('/webhooks/mercadopago', webhookLimiter, webhookMpRoutes);
 
 router.use('/emails', publicEmailLimiter, emailPublicRoutes);

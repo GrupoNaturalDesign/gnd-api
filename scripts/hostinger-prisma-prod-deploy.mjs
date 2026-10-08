@@ -70,6 +70,10 @@ async function applyMigration() {
   });
   try {
     await conn.query(sql);
+    const portalMigration = path.join(root, 'migrations', 'add_portal_identidades.sql');
+    if (!fs.existsSync(portalMigration)) throw new Error('Missing portal identity migration');
+    await conn.query(fs.readFileSync(portalMigration, 'utf8'));
+    console.log('Portal identity migration OK');
     console.log('Migration OK');
   } finally {
     await conn.end();
