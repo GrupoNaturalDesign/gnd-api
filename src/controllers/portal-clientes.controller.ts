@@ -7,6 +7,7 @@ import { generarLinkPortalClientes, PortalClientesError } from '../services/port
  * Requiere Bearer token. Devuelve la URL del portal con el JWT de AutoLogin (vence en 3 min).
  */
 export async function sso(req: FirebaseAuthRequest, res: Response): Promise<void> {
+  res.set('Cache-Control', 'no-store');
   const uid = req.uid;
   if (!uid) {
     res.status(401).json({ success: false, error: 'No autenticado.' });
@@ -14,7 +15,6 @@ export async function sso(req: FirebaseAuthRequest, res: Response): Promise<void
   }
   try {
     const link = await generarLinkPortalClientes(uid);
-    res.set('Cache-Control', 'no-store');
     res.status(200).json({ success: true, data: link });
   } catch (e: unknown) {
     if (e instanceof PortalClientesError) {

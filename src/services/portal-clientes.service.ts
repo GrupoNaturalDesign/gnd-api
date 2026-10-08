@@ -69,7 +69,6 @@ async function resolverIdentidadUsuario(
     const clientes = await prisma.cliente.findMany({
       where: { email: usuario.email, activo: true, cuit: { not: null } },
       select: { cuit: true },
-      take: 10,
     });
     const porEmail = resolverIdentidadUnica(clientes.map((c) => c.cuit));
     if (porEmail) return { identidad: porEmail, fuente: 'email_verificado' };
