@@ -47,15 +47,6 @@ process.on('uncaughtException', (err) => {
 
 // Redis desactivado por ahora (activar con REDIS_ENABLED=true en .env)
 
-app.get('/health', async (_req, res) => {
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    res.json({ ok: true, db: 'connected', integrationsMode: getIntegrationsMode() });
-  } catch {
-    res.status(503).json({ ok: false, db: 'disconnected', integrationsMode: getIntegrationsMode() });
-  }
-});
-
 const PORT = process.env.PORT || 3002;
 const httpServer = createServer(app);
 initSocketServer(httpServer);

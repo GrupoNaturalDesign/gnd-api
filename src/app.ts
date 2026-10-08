@@ -7,6 +7,8 @@ import { asyncLocalStorage } from './lib/async-context';
 import { auditMiddleware } from './middleware/audit.middleware';
 import { maintenanceMiddleware } from './middleware/maintenance.middleware';
 import { isDbConnectionError, DB_UNAVAILABLE_MESSAGE } from './lib/db-error-utils';
+import { prisma } from './lib/prisma';
+import { getIntegrationsMode } from './lib/integrations-mode';
 
 const app = express();
 
@@ -63,6 +65,15 @@ app.use(maintenanceMiddleware);
 // ============================================
 // Routes
 // ============================================
+
+app.get('/health', async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ ok: true, db: 'connected', integrationsMode: getIntegrationsMode() });
+  } catch {
+    res.status(503).json({ ok: false, db: 'disconnected', integrationsMode: getIntegrationsMode() });
+  }
+});
 
 app.use('/api', routes);
 

@@ -11,6 +11,7 @@
 | [installment-providers.md](./installment-providers.md) | *(Deprecado)* Cotización modular de cuotas — referencia histórica |
 | [maintenance.md](./maintenance.md) | Modo mantenimiento (`MAINTENANCE_MODE` en API y `client/.env.local`) |
 | [meta-pixel.md](./meta-pixel.md) | Meta Pixel en tienda (`client/`) — eventos, env y flujos MP vs manual |
+| [portal-clientes.md](./portal-clientes.md) | SSO al Portal de Clientes por JWT HS256 — contrato del token, DNI/CUIT, decisiones |
 | [sync-optimization.md](./sync-optimization.md) | Sync S-Factory optimizado (productos, stock, pedidos, clientes) |
 | [shipping-module.md](./shipping-module.md) | Módulo de envíos, proveedores, rutas HTTP |
 | [hostinger-deploy.md](./hostinger-deploy.md) | Deploy prod en Hostinger (`api.naturalonline.com.ar`), release, runbook, MP webhook |

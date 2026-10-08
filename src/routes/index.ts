@@ -28,6 +28,7 @@ import { empresaMiddleware } from '../middleware/empresa.middleware';
 import { firebaseAuthMiddleware } from '../middleware/firebase-auth.middleware';
 import { requireAdmin } from '../middleware/require-admin.middleware';
 import usuarioAdminRoutes from './usuario-admin.routes';
+import portalClientesRoutes from './portal-clientes.routes';
 
 const router = Router();
 
@@ -79,6 +80,12 @@ const webhookLimiter = createLimiter(
   60 * 1000,
   300,
   'Demasiadas solicitudes de webhook.'
+);
+const portalClientesLimiter = createLimiter(
+  'portal-clientes',
+  15 * 60 * 1000,
+  30,
+  'Demasiados intentos de acceso al Portal Clientes. Intente mas tarde.'
 );
 const sfactoryAuthLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -154,6 +161,7 @@ router.use('/shipping', shippingRoutes);
 
 router.use('/checkout', checkoutLimiter, checkoutRoutes);
 router.use('/cuenta', firebaseAuthMiddleware, cuentaRoutes);
+router.use('/portal-clientes', portalClientesLimiter, firebaseAuthMiddleware, portalClientesRoutes);
 router.use('/webhooks/mercadopago', webhookLimiter, webhookMpRoutes);
 
 router.use('/emails', publicEmailLimiter, emailPublicRoutes);
