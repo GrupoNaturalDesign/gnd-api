@@ -1,12 +1,12 @@
 const DEFAULT_BASE_URL = 'https://clientes.naturalonline.com.ar';
-const LOGIN_PATH = '/ssfi/login';
+const LOGIN_PATH = '/ssfi/portal';
 /** HS256 con secretos cortos es vulnerable a fuerza bruta. */
 const MIN_SECRET_LENGTH = 32;
 
 export const PORTAL_CLIENTES_JWT = {
   alg: 'HS256',
   issuer: 'naturalonline.com.ar',
-  audience: 'clientes.naturalonline.com.ar',
+  audience: 'SSFI-PORTAL',
   expiresInSeconds: 180,
 } as const;
 

@@ -17,8 +17,8 @@ Acceso desde la tienda al **Portal de Clientes/Colaboradores** (`clientes.natura
 La URL de prueba es la de producción: acordar con el equipo del portal qué usuarios usar.
 
 - [ ] Persona física cuyo email verificado coincide con un cliente con CUIL en nómina → entra directo a su panel.
-- [ ] Usuario de empresa (CUIT `30`/`33`/`34`) → el portal valida por `cuit`.
-- [ ] Cliente con CUIT que no está en nómina → pantalla Usuario No Registrado.
+- [ ] Cuenta con solo CUIT de empresa → 409; el contrato actualizado requiere identidad de colaborador.
+- [ ] Colaborador con DNI que no está en nómina → pantalla de bloqueo de SSFI.
 - [ ] Usuario sin CUIT asociado → toast de "No encontramos un CUIT/CUIL…" (409), sin redirigir.
 - [ ] Copiar la URL con el token y abrirla después de 3 min → el portal rechaza el acceso.
 - [ ] Sin `PORTAL_CLIENTES_JWT_SECRET` → toast "no está disponible" (503); la API sigue funcionando.
@@ -28,8 +28,8 @@ La URL de prueba es la de producción: acordar con el equipo del portal qué usu
 
 1. Usuario logueado en la tienda hace clic en **Portal Clientes** (menú de usuario; oculto sin sesión).
 2. La API firma un JWT con la identidad del usuario.
-3. El front redirige a `https://clientes.naturalonline.com.ar/ssfi/login?token={JWT}`.
-4. El portal valida firma, `exp`, `iss`, `aud` y busca en nómina por DNI (o por CUIT si es empresa). Si no está, muestra **Usuario No Registrado**.
+3. El front redirige a `https://clientes.naturalonline.com.ar/ssfi/portal?token={JWT}`.
+4. El portal valida firma, `exp`, `iss`, `aud` y busca en nómina por DNI/CUIL de colaborador. Si no está, muestra **Usuario No Registrado**.
 
 ## Variables de entorno (API)
 
@@ -67,8 +67,8 @@ Logs (`[portal-clientes/sso]`): `usuarioId`, resultado, fuente y tipo (persona/e
 | `email` | Email del usuario en la tienda. |
 | `iat` / `exp` | `exp` = `iat` + **180 s** (se genera al hacer clic). |
 | `iss` | `naturalonline.com.ar` |
-| `aud` | `clientes.naturalonline.com.ar` |
-| `jti` | UUID por token. El portal lo recibe pero **no** lo usa para impedir reuso. |
+| `aud` | `SSFI-PORTAL` |
+| `jti` | UUID por token. SSFI debe impedir reuso; verificarlo en la prueba integral. |
 
 ## Origen de DNI / CUIT
 
@@ -77,7 +77,7 @@ Ni `usuarios` ni S-Factory tienen campo DNI: la única fuente es el CUIT/CUIL (`
 | Entrada (se ignoran guiones, puntos y espacios) | Claims |
 |-------------------------------------------------|--------|
 | CUIL persona física (`20`, `23`, `24`, `27`) | `dni` = 8 dígitos centrales + `cuit` |
-| CUIT empresa (`30`, `33`, `34`) | solo `cuit` |
+| CUIT empresa (`30`, `33`, `34`) | Identidad sin DNI: SSO devuelve 409 |
 | DNI suelto de 7–8 dígitos | solo `dni` |
 | Vacío / otro prefijo / otro largo | `null` → no se genera token |
 
@@ -95,7 +95,7 @@ Si ninguna da resultado → `409 IDENTIFICACION_REQUERIDA`.
 
 - **DNI sin ceros iniciales.** Un DNI de 7 dígitos aparece en el CUIL con un cero de relleno (`20-06123456-3`); se envía `"6123456"`, no `"06123456"`. Motivo: el DNI es un número y el portal pidió "solo dígitos"; las nóminas y ERPs lo guardan sin relleno. Si el portal lo espera con 8 dígitos, el cambio es solo en `normalizarDni`.
 - **Sin validación del dígito verificador del CUIT.** Un CUIT mal cargado no matchea en nómina y el portal muestra Usuario No Registrado; rechazarlo de nuestro lado no agrega seguridad.
-- **Token de un solo uso no garantizado.** El portal ignora `jti`, así que un token copiado sirve hasta su `exp` (3 min). Riesgo aceptado por la vida corta; si se endurece, el portal debe registrar `jti` usados.
+- **Prevención de replay en SSFI.** GND emite un UUID distinto por token. SSFI debe registrar los `jti` consumidos y rechazar un segundo ingreso; pendiente de prueba integral.
 - **Sin entorno de prueba separado.** La URL de prueba es la de producción: coordinar usuarios de prueba con el equipo del portal.
 - **Solo fuentes de CUIT que el usuario no puede editar.** El portal da acceso por DNI: aceptar un CUIT tipeado (perfil o `pedidos.factura_cuit`) permitiría entrar al panel de otra persona. Por eso no se usa `factura_cuit` (puede ser de un tercero) y el email solo cuenta si está verificado en Firebase.
 - **Email con varios clientes distintos → no se elige.** Si el mismo email está en clientes con CUIT diferentes, se devuelve 409 en vez de adivinar.
@@ -108,3 +108,7 @@ Si ninguna da resultado → `409 IDENTIFICACION_REQUERIDA`.
 - `api/tests/portal-clientes-token.util.test.ts` — claims, `exp` = 180 s, `jti` único, firma inválida/vencida, URL.
 
 Ambos incluidos en `npm test`.
+
+## Contrato SSFI actualizado — 8 de octubre de 2026
+
+Audience: `SSFI-PORTAL`. Issuer enviado: `naturalonline.com.ar` (confirmar su allowlist con SSFI). URL: `/ssfi/portal`. No se consulta `verify-dni`: SSFI valida la nómina al recibir el JWT. El contrato requiere DNI o CUIL de colaborador; el acceso por CUIT de empresa sin DNI queda pendiente de confirmación y no genera token.

@@ -14,6 +14,9 @@ export function firmarTokenPortalClientes(
   secret: string,
   now: Date = new Date()
 ): string {
+  if (!identidad.dni || !/^\d{6,8}$/.test(identidad.dni)) {
+    throw new Error('Portal SSFI requiere una identidad de colaborador con DNI válido.');
+  }
   const payload: Record<string, string | number> = {
     email,
     iat: Math.floor(now.getTime() / 1000),

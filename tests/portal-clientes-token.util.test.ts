@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import jwt from 'jsonwebtoken';
+import { getPortalClientesConfig } from '../src/config/portal-clientes.config';
 import {
   construirLinkPortalClientes,
   firmarTokenPortalClientes,
@@ -14,12 +15,26 @@ function verificar(token: string) {
   return jwt.verify(token, SECRET, {
     algorithms: ['HS256'],
     issuer: 'naturalonline.com.ar',
-    audience: 'clientes.naturalonline.com.ar',
+    audience: 'SSFI-PORTAL',
     clockTimestamp: NOW_SEC,
   }) as jwt.JwtPayload;
 }
 
 describe('portal-clientes-token.util', () => {
+  it('configura la ruta de producción del contrato SSFI', () => {
+    const previousSecret = process.env.PORTAL_CLIENTES_JWT_SECRET;
+    const previousUrl = process.env.PORTAL_CLIENTES_URL;
+    try {
+      process.env.PORTAL_CLIENTES_JWT_SECRET = SECRET;
+      delete process.env.PORTAL_CLIENTES_URL;
+      assert.equal(getPortalClientesConfig().loginUrl, 'https://clientes.naturalonline.com.ar/ssfi/portal');
+    } finally {
+      if (previousSecret === undefined) delete process.env.PORTAL_CLIENTES_JWT_SECRET;
+      else process.env.PORTAL_CLIENTES_JWT_SECRET = previousSecret;
+      if (previousUrl === undefined) delete process.env.PORTAL_CLIENTES_URL;
+      else process.env.PORTAL_CLIENTES_URL = previousUrl;
+    }
+  });
   it('firma HS256 con los claims acordados y vence a los 180 s', () => {
     const token = firmarTokenPortalClientes(
       { dni: '34768467', cuit: '20347684678' },
@@ -30,6 +45,8 @@ describe('portal-clientes-token.util', () => {
     assert.equal(jwt.decode(token, { complete: true })?.header.alg, 'HS256');
 
     const payload = verificar(token);
+    assert.equal(payload.iss, 'naturalonline.com.ar');
+    assert.equal(payload.aud, 'SSFI-PORTAL');
     assert.equal(payload.dni, '34768467');
     assert.equal(payload.cuit, '20347684678');
     assert.equal(payload.email, 'usuario@empresa.com');
@@ -38,12 +55,11 @@ describe('portal-clientes-token.util', () => {
     assert.match(String(payload.jti), /^[0-9a-f-]{36}$/);
   });
 
-  it('empresa: no incluye dni', () => {
-    const payload = verificar(
-      firmarTokenPortalClientes({ cuit: '30712345678' }, 'a@b.com', SECRET, NOW)
+  it('rechaza CUIT de empresa sin identidad de colaborador', () => {
+    assert.throws(
+      () => firmarTokenPortalClientes({ cuit: '30712345678' }, 'a@b.com', SECRET, NOW),
+      /DNI válido/
     );
-    assert.equal(payload.cuit, '30712345678');
-    assert.equal('dni' in payload, false);
   });
 
   it('jti distinto en cada token', () => {
@@ -65,11 +81,11 @@ describe('portal-clientes-token.util', () => {
     const link = construirLinkPortalClientes(
       { dni: '34768467' },
       'a@b.com',
-      { secret: SECRET, loginUrl: 'https://clientes.naturalonline.com.ar/ssfi/login' },
+      { secret: SECRET, loginUrl: 'https://clientes.naturalonline.com.ar/ssfi/portal' },
       NOW
     );
     const url = new URL(link.url);
-    assert.equal(url.origin + url.pathname, 'https://clientes.naturalonline.com.ar/ssfi/login');
+    assert.equal(url.origin + url.pathname, 'https://clientes.naturalonline.com.ar/ssfi/portal');
     assert.equal(verificar(url.searchParams.get('token') ?? '').dni, '34768467');
     assert.equal(link.expiresAt, '2026-10-03T12:03:00.000Z');
   });

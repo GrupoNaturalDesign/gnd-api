@@ -104,7 +104,7 @@ export async function generarLinkPortalClientes(uid: string): Promise<PortalClie
   }
 
   const resultado = await resolverIdentidadUsuario(usuario);
-  if (!resultado) {
+  if (!resultado || !resultado.identidad.dni) {
     console.info('[portal-clientes/sso]', { usuarioId: usuario.id, resultado: 'sin_identidad' });
     throw new PortalClientesError(
       'IDENTIFICACION_REQUERIDA',
