@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { agruparProductosPorCodigoBase } from '../src/services/producto-agrupacion.service';
 import {
+  assertPointInventoryQuerySize,
   inventarioDesdeStockRow,
   resolverCodigosPermitidosDeposito,
   resolverGruposConStock,
@@ -139,4 +140,12 @@ test('resolverGruposConStock (legacy): arrastra todo el grupo si una variante ti
 
   assert.ok(codigosPermitidos.has('L-WW-TEST1'));
   assert.ok(codigosPermitidos.has('L-WW-TEST2'));
+});
+
+test('consulta puntual impide convertir by_warehouse_v2 en un barrido masivo', () => {
+  assert.doesNotThrow(() => assertPointInventoryQuerySize(80));
+  assert.throws(
+    () => assertPointInventoryQuerySize(81),
+    /inventory_stock_items_changed_since/
+  );
 });

@@ -155,7 +155,10 @@ por corrida con `PEDIDO_SFACTORY_SYNC_LIMIT` (default: 50).
 ### Sync de stock SFactory
 
 El job reutiliza `stockPreciosSyncService.syncStockPreciosPorDepositoEcommerce`
-para actualizar `ProductoWeb.stockCache`, `precioCache` y precios derivados.
+para actualizar `ProductoWeb.stockCache`, `precioCache` y precios derivados. La
+primera ejecución carga un snapshot con `inventory_stock_items_changed_since` +
+`all_items`; las siguientes envían el cursor durable como `changed_since`. Cada
+ciclo realiza una sola llamada y un lease impide solapamientos.
 Intervalo configurable con `PEDIDO_STOCK_SYNC_INTERVAL_MS` (default: 1 hora).
 Se deshabilita con `PEDIDO_STOCK_SYNC_ENABLED=false`.
 
@@ -226,14 +229,21 @@ Comercial, moneda, sucursal y demás valores se toman de la configuración del `
 
 ---
 
-## Soporte de stock: `inventory_stock_items_by_warehouse_v2`
+## Soporte de stock
 
-### Qué funciona
+### Sincronización periódica
+
+Usa `inventory_stock_items_changed_since`; ver
+[sfactory-inventory-stock.md](./sfactory-inventory-stock.md). El snapshot y el
+cursor se guardan en MySQL y el catálogo lee ese cache local.
+
+### Consulta puntual
 
 - `lista_depositos`: devuelve correctamente todos los depósitos disponibles.
-- Consulta por ítems puntuales: con `warehouse_id`, `field` y `items` el endpoint responde `success: true`. En algunos casos devuelve `data: []` si el ítem no tiene stock en ese depósito.
+- `inventory_stock_items_by_warehouse_v2` se conserva para los pocos ítems de un
+  pedido, producto o grupo. Los códigos se envían juntos y se rechazan más de 80.
 
-### Qué no funciona aún
+### Limitación conocida
 
 La consulta con `all_items: true` (para obtener todo el stock de un depósito sin listar SKUs) devuelve error:
 
@@ -249,7 +259,8 @@ La consulta con `all_items: true` (para obtener todo el stock de un depósito si
 }
 ```
 
-La validación del servidor ignora `all_items: true` y exige igualmente el array `items`. Se requiere que el administrador de SFactory habilite o documente el request correcto para este caso de uso.
+La validación de `by_warehouse_v2` ignora `all_items: true` y exige `items`.
+Ese recurso ya no se utiliza para sincronización masiva.
 
 ---
 

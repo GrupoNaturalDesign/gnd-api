@@ -6,6 +6,16 @@ import { sfactoryService } from '../services/sfactory/sfactory.service';
 import type { ProductoAgrupado } from '../services/producto-agrupacion.service';
 
 export const STOCK_BATCH_CODES = 80;
+export const STOCK_POINT_QUERY_MAX_CODES = 80;
+
+export function assertPointInventoryQuerySize(count: number): void {
+  if (count > STOCK_POINT_QUERY_MAX_CODES) {
+    throw new Error(
+      `La consulta puntual de inventario admite hasta ${STOCK_POINT_QUERY_MAX_CODES} códigos. ` +
+      'Para sincronización masiva use inventory_stock_items_changed_since.'
+    );
+  }
+}
 
 export type StockRow = {
   item_code: string;
@@ -129,6 +139,7 @@ export async function obtenerInventarioPorCodigos(
 }> {
   const wid = warehouseId ?? getEcommerceWarehouseId();
   const unicos = [...new Set(codigos.filter(Boolean))];
+  assertPointInventoryQuerySize(unicos.length);
   const inventarioPorCodigo = new Map<string, InventarioDepositoRow>();
   for (const c of unicos) {
     inventarioPorCodigo.set(c, { stock: 0, salePrice: null });
@@ -137,9 +148,8 @@ export async function obtenerInventarioPorCodigos(
   const codigosOmitidos: string[] = [];
   let llamadasApi = 0;
 
-  for (let i = 0; i < unicos.length; i += STOCK_BATCH_CODES) {
-    const chunk = unicos.slice(i, i + STOCK_BATCH_CODES);
-    const { rows, apiCalls } = await fetchStockRowsResilient(wid, chunk, codigosOmitidos);
+  if (unicos.length > 0) {
+    const { rows, apiCalls } = await fetchStockRowsResilient(wid, unicos, codigosOmitidos);
     llamadasApi += apiCalls;
     for (const row of rows) {
       inventarioPorCodigo.set(row.item_code, inventarioDesdeStockRow(row));

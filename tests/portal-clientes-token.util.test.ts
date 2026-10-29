@@ -27,7 +27,7 @@ describe('portal-clientes-token.util', () => {
     try {
       process.env.PORTAL_CLIENTES_JWT_SECRET = SECRET;
       delete process.env.PORTAL_CLIENTES_URL;
-      assert.equal(getPortalClientesConfig().loginUrl, 'https://clientes.naturalonline.com.ar/ssfi/portal');
+      assert.equal(getPortalClientesConfig().loginUrl, 'https://clientes.naturalonline.com.ar/ssfi/login');
     } finally {
       if (previousSecret === undefined) delete process.env.PORTAL_CLIENTES_JWT_SECRET;
       else process.env.PORTAL_CLIENTES_JWT_SECRET = previousSecret;
@@ -81,11 +81,11 @@ describe('portal-clientes-token.util', () => {
     const link = construirLinkPortalClientes(
       { dni: '34768467' },
       'a@b.com',
-      { secret: SECRET, loginUrl: 'https://clientes.naturalonline.com.ar/ssfi/portal' },
+      { secret: SECRET, loginUrl: 'https://clientes.naturalonline.com.ar/ssfi/login' },
       NOW
     );
     const url = new URL(link.url);
-    assert.equal(url.origin + url.pathname, 'https://clientes.naturalonline.com.ar/ssfi/portal');
+    assert.equal(url.origin + url.pathname, 'https://clientes.naturalonline.com.ar/ssfi/login');
     assert.equal(verificar(url.searchParams.get('token') ?? '').dni, '34768467');
     assert.equal(link.expiresAt, '2026-10-03T12:03:00.000Z');
   });

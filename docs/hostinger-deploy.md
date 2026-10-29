@@ -23,40 +23,9 @@ No usar sitios obsoletos `slategray-manatee-407634` ni `azure-skunk-643837` (ver
 
 ---
 
-## Push-to-deploy (GitHub Actions) — simil Vercel
+## Deploy disponible en este checkout
 
-Cada **push a `master`** en [GrupoNaturalDesign/gnd-api](https://github.com/GrupoNaturalDesign/gnd-api) corre [`.github/workflows/deploy-hostinger.yml`](../.github/workflows/deploy-hostinger.yml):
-
-1. `npm ci` + `npm run build` en GitHub
-2. SSH sync de `dist/` → `nodejs/dist` ([`ssh-hostinger-sync-dist.py`](../scripts/ssh-hostinger-sync-dist.py))
-3. Enforce `DB_HOST=127.0.0.1` en `.env` del runtime
-4. Restart vía API ([`hostinger-api-restart.mjs`](../scripts/hostinger-api-restart.mjs))
-5. Smoke: `/api/health`, `/api/rubros`, webhook MP
-
-### Secrets (una vez)
-
-En el repo GitHub → **Settings → Secrets and variables → Actions**:
-
-| Secret | Valor |
-|--------|--------|
-| `HOSTINGER_SSH_PASSWORD` | Password SSH (`ssh -p 65002 u967550282@82.25.67.184`) |
-| `HOSTINGER_API_TOKEN` | Token en [developers.hostinger.com](https://developers.hostinger.com) (o hPanel → API) |
-| `DISCORD_WEBHOOK_URL` | Webhook del canal Discord (Server → Integraciones → Webhooks) |
-
-Opcional (Variables): `HOSTINGER_DOMAIN`, `HOSTINGER_USERNAME`, host/port SSH.
-
-Tras cada deploy, Discord recibe embed **OK** (verde) o **FAILED** (rojo) con commit, autor y link al run de Actions. Sin el secret, el notify se saltea (no falla el job).
-
-### Manual / local igual que CI
-
-```bash
-npm run build
-npm run deploy:hostinger-ci   # requiere HOSTINGER_SSH_PASSWORD + HOSTINGER_API_TOKEN
-```
-
-También: Actions → **Deploy Hostinger** → **Run workflow**.
-
-**Alcance:** sincroniza código compilado (`dist/`). No reinstala `node_modules` ni regenera Prisma en el servidor. Si cambiás dependencias npm o `schema.prisma`, usá además un deploy archive/MCP completo (sección siguiente).
+En este workspace no existe `.github/workflows/deploy-hostinger.yml`; los workflows disponibles corren pruebas. Para publicar en Hostinger usar el release local/MCP de la sección siguiente. El deploy de API y el de frontend son pasos separados.
 
 ---
 

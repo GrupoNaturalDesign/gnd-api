@@ -9,6 +9,7 @@ import {
   checkSyncProductosCooldown,
 } from '../services/sync/sync-productos-guard.service';
 import { ApiResponse } from '../types';
+import { buildStockSyncMessage } from '../utils/stock-sync-response.util';
 
 export class SyncController {
   async syncRubros(req: Request, res: Response, next: NextFunction) {
@@ -181,22 +182,10 @@ export class SyncController {
         warehouseId
       );
 
-      const omitMsg =
-        data.codigosOmitidos.length > 0
-          ? ` · ${data.codigosOmitidos.length} código(s) omitido(s) (no existen en S-Factory)`
-          : '';
-      const skipMsg =
-        data.variantesOmitidas > 0
-          ? ` · ${data.variantesOmitidas} sin cambios`
-          : '';
-
       const response: ApiResponse = {
         success: true,
         data,
-        message:
-          'Stock y precios actualizados desde S-Factory (depósito ecommerce)' +
-          skipMsg +
-          omitMsg,
+        message: buildStockSyncMessage(data),
       };
       res.json(response);
     } catch (error: any) {

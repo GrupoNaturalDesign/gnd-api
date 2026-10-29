@@ -12,10 +12,10 @@ import {
 } from '../../utils/variante-whitelist-report.utils';
 import {
   activoSfactoryDesdeDeposito,
+  assertPointInventoryQuerySize,
   fetchStockRowsResilient,
   getEcommerceWarehouseId,
   inventarioDesdeStockRow,
-  obtenerInventarioPorCodigos,
   STOCK_BATCH_CODES,
   type InventarioDepositoRow,
   type StockRow,
@@ -28,20 +28,30 @@ import {
   computeStockCacheConReservas,
   getReservasActivasPorProductoWebId,
 } from './stock-reservas.util';
+import {
+  obtenerInventarioLocalPorCodigos,
+  sfactoryInventorySyncService,
+} from './sfactory-inventory-sync.service';
 
 const BATCH_CODES = STOCK_BATCH_CODES;
 
 export interface StockPreciosSyncResult {
   warehouseId: number;
+  /** Snapshot inicial o delta por changed_since. Ausente solo en consultas puntuales legacy. */
+  mode?: 'initial' | 'incremental';
+  changedSince?: string | null;
+  rowsReceived?: number;
+  nextCursorAt?: string | null;
+  skippedDueToLock?: boolean;
   codigosConsultados: number;
   variantesActualizadas: number;
   /** Variantes sin cambios respecto a cache local (no se escribió en BD). */
   variantesOmitidas: number;
   /** Upserts de precio minorista por cambio de sale_price. */
   preciosActualizados: number;
-  /** Lotes lógicos (trozos de hasta BATCH_CODES códigos). */
+  /** Lotes lógicos; en delta/snapshot siempre es una sola consulta. */
   lotes: number;
-  /** Total de llamadas HTTP a inventory_stock_items_by_warehouse_v2 (incluye reintentos por código omitido). */
+  /** Total de llamadas HTTP de inventario realizadas en esta ejecución. */
   llamadasApi: number;
   /** Códigos que S-Factory indicó como inexistentes (se omitieron y se siguió con el resto). */
   codigosOmitidos: string[];
@@ -214,6 +224,7 @@ export class StockPreciosSyncService {
     if (codigos.length === 0) {
       return emptyStockPreciosResult(wid);
     }
+    assertPointInventoryQuerySize(codigos.length);
 
     const variantes = await prisma.productoWeb.findMany({
       where: {
@@ -278,122 +289,7 @@ export class StockPreciosSyncService {
     empresaId: number,
     warehouseId?: number
   ): Promise<StockPreciosSyncResult> {
-    const wid = warehouseId ?? getEcommerceWarehouseId();
-
-    const rubros = await prisma.rubro.findMany({
-      where: {
-        empresaId,
-        sfactoryId: { in: ECOMMERCE_RUBROS_SFACTORY_IDS },
-      },
-      select: { id: true },
-    });
-    const rubroIds = rubros.map((r) => r.id);
-    if (rubroIds.length === 0) {
-      throw new Error(
-        'No hay rubros ecommerce (WORKWEAR/OFFICE) para esta empresa. Sincronizá rubros primero.'
-      );
-    }
-
-    const variantes = await prisma.productoWeb.findMany({
-      where: {
-        empresaId,
-        productoPadre: { rubroId: { in: rubroIds } },
-      },
-      select: {
-        id: true,
-        sfactoryCodigo: true,
-        stockCache: true,
-        precioCache: true,
-        activoSfactory: true,
-      },
-    });
-
-    const codigos = variantes.map((v) => v.sfactoryCodigo).filter(Boolean);
-    const varianteByCodigo = new Map(variantes.map((v) => [v.sfactoryCodigo, v]));
-
-    const acc: BatchSyncAccum = {
-      variantesActualizadas: 0,
-      variantesOmitidas: 0,
-      preciosActualizados: 0,
-      lotes: 0,
-      llamadasApi: 0,
-      codigosOmitidos: [],
-    };
-    const inventarioPorCodigo = new Map<string, InventarioDepositoRow>();
-    for (const c of codigos) {
-      inventarioPorCodigo.set(c, { stock: 0, salePrice: null });
-    }
-
-    const reservas = await getReservasActivasPorProductoWebId(
-      empresaId,
-      variantes.map((v) => v.id)
-    );
-
-    await this.syncVariantesStockFromSfactory(
-      wid,
-      codigos,
-      varianteByCodigo,
-      acc,
-      inventarioPorCodigo,
-      reservas
-    );
-
-    const {
-      variantesActualizadas,
-      variantesOmitidas,
-      preciosActualizados,
-      lotes,
-      llamadasApi,
-      codigosOmitidos,
-    } = acc;
-
-    if (variantesActualizadas === 0 && codigos.length > 0) {
-      console.warn(
-        '[StockPreciosSync] 0 variantes actualizadas con',
-        codigos.length,
-        'códigos consultados y',
-        lotes,
-        'lote(s). Depósito:',
-        wid
-      );
-    }
-    if (variantesActualizadas === 0 && codigos.length === 0) {
-      console.warn(
-        '[StockPreciosSync] Sin variantes ecommerce (rubros WORKWEAR/OFFICE activas). empresaId:',
-        empresaId
-      );
-    }
-    if (codigosOmitidos.length > 0) {
-      console.warn(
-        '[StockPreciosSync] Códigos omitidos (no existen en S-Factory):',
-        codigosOmitidos.join(', ')
-      );
-    }
-
-    const purge = await this.desactivarVariantesFueraDepositoEcommerce(empresaId, {
-      warehouseId: wid,
-      rubroIds,
-      inventarioPrecargado: inventarioPorCodigo,
-      codigosOmitidosAcumulados: codigosOmitidos,
-      despublicarPadresSinVendibles:
-        process.env.SYNC_DESPUBLICAR_PADRES_SIN_VENDIBLES === 'true',
-    });
-
-    return {
-      warehouseId: wid,
-      codigosConsultados: codigos.length,
-      variantesActualizadas,
-      variantesOmitidas,
-      preciosActualizados,
-      lotes,
-      llamadasApi,
-      codigosOmitidos,
-      variantesDesactivadas: purge.variantesDesactivadas,
-      variantesActivadas: purge.variantesActivadas,
-      padresDespublicados: purge.padresDespublicados,
-      variantesBloqueadasPorWhitelist: purge.variantesBloqueadasPorWhitelist,
-      detalleBloqueadasWhitelist: purge.detalleBloqueadasWhitelist,
-    };
+    return sfactoryInventorySyncService.sync(empresaId, warehouseId);
   }
 
   /**
@@ -458,11 +354,7 @@ export class StockPreciosSyncService {
     let inventario = options?.inventarioPrecargado ?? null;
     if (!inventario) {
       if (codigos.length > 0) {
-        const inv = await obtenerInventarioPorCodigos(codigos, wid);
-        inventario = inv.inventarioPorCodigo;
-        for (const c of inv.codigosOmitidos) {
-          if (!codigosOmitidos.includes(c)) codigosOmitidos.push(c);
-        }
+        inventario = await obtenerInventarioLocalPorCodigos(empresaId, codigos, wid);
       } else {
         inventario = new Map<string, InventarioDepositoRow>();
       }

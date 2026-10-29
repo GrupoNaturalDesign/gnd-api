@@ -28,8 +28,10 @@ function verifyPrismaClientArtifacts() {
     if (!fs.existsSync(file)) continue;
     const text = fs.readFileSync(file, 'utf8');
     if (
-      text.includes('ProductoPadreColorAprobado') ||
-      text.includes('productoPadreColorAprobado')
+      (text.includes('ProductoPadreColorAprobado') ||
+        text.includes('productoPadreColorAprobado')) &&
+      (text.includes('SfactoryInventorySyncState') ||
+        text.includes('sfactoryInventorySyncState'))
     ) {
       hits++;
     }
@@ -37,7 +39,7 @@ function verifyPrismaClientArtifacts() {
 
   if (hits === 0) {
     throw new Error(
-      'ProductoPadreColorAprobado not found in uploaded @prisma/client — redeploy from CI build'
+      'Inventory sync models not found in uploaded @prisma/client — redeploy from CI build'
     );
   }
   console.log('Prisma client artifacts OK');
@@ -74,6 +76,10 @@ async function applyMigration() {
     if (!fs.existsSync(portalMigration)) throw new Error('Missing portal identity migration');
     await conn.query(fs.readFileSync(portalMigration, 'utf8'));
     console.log('Portal identity migration OK');
+    const inventoryMigration = path.join(root, 'migrations', 'add_sfactory_inventory_delta_sync.sql');
+    if (!fs.existsSync(inventoryMigration)) throw new Error('Missing inventory delta migration');
+    await conn.query(fs.readFileSync(inventoryMigration, 'utf8'));
+    console.log('S-Factory inventory delta migration OK');
     console.log('Migration OK');
   } finally {
     await conn.end();

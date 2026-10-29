@@ -339,6 +339,36 @@ export class SFactoryService {
   }
 
   /**
+   * Snapshot inicial o delta de stock/precios. Es el recurso indicado por
+   * S-Factory para integraciones ecommerce periódicas.
+   */
+  async inventoryStockItemsChangedSince(parameters: {
+    warehouse_id: number;
+    all_items?: boolean;
+    changed_since?: string;
+    filter?: {
+      category_id?: number;
+      subcategory_id?: number;
+    };
+  }): Promise<{
+    data: Array<{
+      item_id?: number;
+      item_code: string;
+      stock: number;
+      sale_price?: number | null;
+      warehouse_id?: number;
+      updated_at?: string | null;
+      changed_at?: string | null;
+    }>;
+  }> {
+    return sfactoryClient.request(
+      'inventario',
+      'inventory_stock_items_changed_since',
+      parameters
+    );
+  }
+
+  /**
     * Cancelar orden de pedido (`ventas_cancelar_orden_pedido`)
     */
   async cancelarOrdenPedido(orderId: number, companyKey?: string) {

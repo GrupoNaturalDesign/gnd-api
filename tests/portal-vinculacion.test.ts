@@ -47,7 +47,7 @@ describe('vinculación de identidad para el portal', () => {
     stub(prisma.portalIdentidad, 'findUnique', async () => ({ estado: 'aprobado', dniVerificado: '41711946' }));
     const link = await generarLinkPortalClientes('uid-test');
     const url = new URL(link.url);
-    assert.equal(url.pathname, '/ssfi/portal');
+    assert.equal(url.pathname, '/ssfi/login');
     const payload = jwt.verify(url.searchParams.get('token')!, SECRET, { algorithms: ['HS256'], audience: 'SSFI-PORTAL' }) as jwt.JwtPayload;
     assert.equal(payload.dni, '41711946');
   });

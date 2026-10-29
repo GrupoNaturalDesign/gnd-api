@@ -1,58 +1,62 @@
-# S-Factory — `inventory_stock_items_by_warehouse_v2`
+# S-Factory — sincronización de inventario
 
-**Endpoint:** `POST https://sfactory-api.com.ar/sfactory/api/main`  
-**Servicio:** `module: "inventario"`, `method: "inventory_stock_items_by_warehouse_v2"`
+## Recurso periódico
 
----
+La tienda sincroniza stock y precios con `module: "inventario"` y
+`method: "inventory_stock_items_changed_since"`.
 
-## Lo que sí funciona
+Primera carga, una sola vez por empresa/depósito:
 
-**1. `lista_depositos`** — Responde bien y devuelve los depósitos (ids 1, 2, 3, 3077, 3078, 3079, 12993, 52624, etc.).
+```json
+"parameters": { "warehouse_id": 52624, "all_items": true }
+```
 
-**2. Consulta por ítems puntuales** — Con `warehouse_id`, `field` y `items` el método responde `success: true`, pero a veces con `data: []`:
+Ejecuciones posteriores:
 
 ```json
 "parameters": {
-  "warehouse_id": 12993,
+  "warehouse_id": 52624,
+  "changed_since": "2026-10-28 15:00:00"
+}
+```
+
+El cursor queda persistido en `sfactory_inventory_sync_state`. Se envía con dos
+minutos de solapamiento para no perder cambios en el borde del segundo y solo se
+avanza después de aplicar correctamente la respuesta. Los upserts toleran filas
+repetidas.
+
+El snapshot local queda en `sfactory_inventory_items`. La sincronización de
+catálogo, el filtrado por depósito y la purga leen esa tabla; no vuelven a pedir
+todo el inventario remoto.
+
+Un delta vacío significa que no hubo cambios. Los códigos ausentes del delta no
+se modifican. Solo en la carga inicial se considera que una variante local ausente
+del snapshot debe quedar sin stock/inactiva.
+
+## Consultas puntuales
+
+`inventory_stock_items_by_warehouse_v2` queda reservado para los códigos de un
+pedido, un producto editado o las variantes de un único grupo:
+
+```json
+"parameters": {
+  "warehouse_id": 52624,
   "all_items": false,
   "field": "code",
-  "items": ["L-WW-CAM-WR4"]
+  "items": ["L-WW-CAM-WR4", "L-WW-CAM-WR5"]
 }
 ```
 
-Response: `result.success: true`, `response.data: []`.
+Todos los códigos se envían juntos. El código rechaza más de 80 para impedir que
+una consulta puntual vuelva a convertirse accidentalmente en un barrido masivo.
 
----
+No usar `all_items: true` con `inventory_stock_items_by_warehouse_v2`: esa
+combinación fue rechazada por la API y no es el recurso de sincronización.
 
-## Lo que no funciona
+## Operación
 
-**Consultar todos los ítems del depósito** (`all_items: true`). Probado con varios depósitos (ej. ECOMMERCE 52624, COTIZACIÓN 12993):
-
-```json
-"parameters": {
-  "warehouse_id": 12993,
-  "all_items": true
-}
-```
-
-Response:
-
-```json
-"result": {
-  "success": false,
-  "state": 900,
-  "message": {
-    "title": "[stock_items_by_warehouse_v2]: [Validacion de datos]: No se ha enviado items para consultar existencias."
-  }
-}
-```
-
----
-
-## Solicitud a soporte S-Factory
-
-Necesitamos poder usar **`all_items: true`** para obtener el stock de todos los ítems de un depósito sin enviar la lista en `items`. ¿Podrían indicar el request exacto (incluyendo nombres de parámetros) que debemos enviar para este caso, o habilitar/ajustar la validación de `all_items` en el endpoint?
-
----
-
-*Documento movido desde la raíz del monorepo (`sfactory-depositos.md`) para mantener una sola fuente bajo `api/docs/`.*
+- Job: `PEDIDO_STOCK_SYNC_ENABLED` y `PEDIDO_STOCK_SYNC_INTERVAL_MS`.
+- El siguiente ciclo se programa al terminar el anterior.
+- Un lease persistente por empresa/depósito evita ejecuciones simultáneas.
+- Migración: `migrations/add_sfactory_inventory_delta_sync.sql`.
+- Ante un error, se registra `last_error` y el cursor no avanza.

@@ -123,7 +123,8 @@ async function logEmail(params: {
     | 'newsletter'
     | 'internal'
     | 'payment_instructions'
-    | 'order_expiring_soon';
+    | 'order_expiring_soon'
+    | 'portal_identity';
   to: string;
   status: 'sent' | 'failed';
   messageId?: string;
@@ -147,6 +148,42 @@ async function logEmail(params: {
 }
 
 export const emailService = {
+  async sendPortalIdentityDecision(payload: {
+    email: string;
+    approved: boolean;
+    reason: string;
+  }): Promise<EmailSendResult> {
+    const resend = getResend();
+    const from = getFromTransactional();
+    const to = payload.email.trim();
+    const subject = payload.approved
+      ? 'Tu identidad fue vinculada al Portal Clientes'
+      : 'Actualización de tu solicitud para Portal Clientes';
+    const status = payload.approved ? 'aprobada' : 'rechazada';
+    const reason = payload.reason
+      .replace(/[&<>"']/g, '')
+      .replace(/(?<!\d)(?:\d[\s.-]*){7,11}(?!\d)/g, '[dato omitido]');
+    const portalUrl = `${process.env.CLIENT_URL?.replace(/\/$/, '') ?? 'https://naturalonline.com.ar'}/portal-clientes`;
+    const text = `Tu solicitud de vinculación al Portal Clientes fue ${status}.\n\nMotivo: ${reason}\n\nConsultá el estado o continuá desde tu cuenta: ${portalUrl}`;
+    const html = `<p>Tu solicitud de vinculación al Portal Clientes fue <strong>${status}</strong>.</p><p><strong>Motivo:</strong> ${reason}</p><p><a href="${portalUrl}">Consultar el estado o continuar desde tu cuenta</a></p>`;
+    if (!resend || !from) {
+      const error = 'Resend no configurado (RESEND_API_KEY / RESEND_FROM_TRANSACTIONAL).';
+      await logEmail({ type: 'portal_identity', to, status: 'failed', error, metadata: { approved: payload.approved } });
+      return { success: false, error };
+    }
+    const { data, error } = await sendWithRetry(
+      () => resend.emails.send({ from, to, subject, html, text }),
+      { label: 'sendPortalIdentityDecision' }
+    );
+    if (error) {
+      await logEmail({ type: 'portal_identity', to, status: 'failed', error: error.message, metadata: { approved: payload.approved } });
+      return { success: false, error: error.message };
+    }
+    const messageId = data && typeof data === 'object' && 'id' in data ? (data as { id: string }).id : undefined;
+    await logEmail({ type: 'portal_identity', to, status: 'sent', messageId, metadata: { approved: payload.approved } });
+    return { success: true, messageId };
+  },
+
   async sendWelcomeEmail(user: WelcomeUserPayload): Promise<EmailSendResult> {
     const resend = getResend();
     const from = getFromTransactional();

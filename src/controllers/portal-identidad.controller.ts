@@ -3,6 +3,7 @@ import { FirebaseAuthRequest } from '../middleware/firebase-auth.middleware';
 import prisma from '../lib/prisma';
 import { solicitudPortalSchema, decisionPortalSchema } from '../validation/portal-identidad.schema';
 import { ZodError } from 'zod';
+import { emailService } from '../lib/email/email.service';
 
 function manejarError(error: unknown, res: Response, next: NextFunction) {
   if (error instanceof ZodError) {
@@ -25,7 +26,11 @@ export async function estado(req: FirebaseAuthRequest, res: Response, next: Next
   try {
     const usuario = await usuarioActual(req);
     const identidad = await prisma.portalIdentidad.findUnique({ where: { usuarioId: usuario.id } });
-    res.json({ success: true, data: { estado: identidad?.estado ?? 'sin_solicitud', emailVerificado: usuario.emailVerified } });
+    res.json({ success: true, data: {
+      estado: identidad?.estado ?? 'sin_solicitud',
+      emailVerificado: usuario.emailVerified,
+      motivo: identidad?.estado === 'rechazado' ? identidad.motivo : null,
+    } });
   } catch (error) { manejarError(error, res, next); }
 }
 
@@ -75,6 +80,11 @@ export async function decidir(req: FirebaseAuthRequest, res: Response, next: Nex
     const data = { dni: input.documento, estado: input.aprobar ? 'aprobado' : 'rechazado',
       dniVerificado: input.aprobar ? input.documento : null, aprobadoPor: administrador.id, motivo: input.motivo };
     await prisma.portalIdentidad.upsert({ where: { usuarioId: usuario.id }, create: { usuarioId: usuario.id, ...data }, update: data });
+    void emailService.sendPortalIdentityDecision({ email: usuario.email, approved: input.aprobar, reason: input.motivo })
+      .then((result) => {
+        if (!result.success) console.warn('[portal-clientes] No se pudo notificar la decisión por email.', { usuarioId: usuario.id });
+      })
+      .catch((error) => console.error('[portal-clientes] Error al notificar decisión.', { usuarioId: usuario.id, error }));
     res.json({ success: true, data: { estado: data.estado } });
   } catch (error) { manejarError(error, res, next); }
 }

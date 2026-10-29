@@ -40,6 +40,10 @@ import {
   resolverPublicadoPadreNuevo,
 } from '../../utils/padre-colores-sync.utils';
 import { aliasCodigosAgrupacionPadre } from '../../utils/sku-line-fusion.utils';
+import {
+  obtenerInventarioLocalPorCodigos,
+  sfactoryInventorySyncService,
+} from './sfactory-inventory-sync.service';
 
 // Type helper for Prisma transaction
 type PrismaTransaction = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
@@ -191,6 +195,9 @@ export class ProductoSyncService {
    */
   async syncProductosSfactory(empresaId: number = 1) {
     try {
+      // El snapshot se inicializa una sola vez y luego el catálogo lee el cache local.
+      // Nunca volver a barrer inventory_stock_items_by_warehouse_v2 por lotes.
+      await sfactoryInventorySyncService.ensureInitialized(empresaId);
       const response = await sfactoryService.listarItems();
       
       let productos: SFactoryProduct[] = [];
@@ -225,9 +232,10 @@ export class ProductoSyncService {
       let llamadasStockInventario = 0;
 
       if (codigosRemotosLista.length > 0) {
-        const { inventarioPorCodigo, llamadasApi } =
-          await obtenerInventarioPorCodigos(codigosRemotosLista);
-        llamadasStockInventario = llamadasApi;
+        const inventarioPorCodigo = await obtenerInventarioLocalPorCodigos(
+          empresaId,
+          codigosRemotosLista
+        );
         const filtroDeposito = resolverCodigosPermitidosDeposito(
           gruposRemotos,
           inventarioPorCodigo
@@ -619,8 +627,10 @@ export class ProductoSyncService {
       let inventarioPorCodigo = new Map<string, InventarioDepositoRow>();
       let codigosPermitidosDeposito = new Set<string>();
       if (codigosParaStock.length > 0) {
-        const inv = await obtenerInventarioPorCodigos(codigosParaStock);
-        inventarioPorCodigo = inv.inventarioPorCodigo;
+        inventarioPorCodigo = await obtenerInventarioLocalPorCodigos(
+          empresaId,
+          codigosParaStock
+        );
         const filtroDeposito = resolverCodigosPermitidosDeposito(grupos, inventarioPorCodigo);
         codigosPermitidosDeposito = filtroDeposito.codigosPermitidos;
         gruposOmitidosSinStock = filtroDeposito.gruposSinStock;

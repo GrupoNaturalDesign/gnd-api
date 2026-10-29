@@ -7,7 +7,7 @@ Resumen de cómo funcionan las sincronizaciones después de la optimización por
 | Ruta | Uso recomendado |
 |------|-----------------|
 | `POST /api/sync/productos` | Catálogo completo (admin). Paso 1 trae `items_list`; filtra por depósito ecommerce **por código** (no arrastra el grupo entero). Al finalizar ejecuta stock/precios + alineación de `activoSfactory`. |
-| `POST /api/sync/stock-precios` | Stock, precios y `activoSfactory` desde depósito ecommerce (`inventory_stock_items_by_warehouse_v2`). Frecuente (botón admin o job horario). |
+| `POST /api/sync/stock-precios` | Snapshot inicial o delta de stock/precios/`activoSfactory` mediante `inventory_stock_items_changed_since`. Una llamada por ejecución. |
 | `POST /api/clientes/sync` | Import masivo de clientes. Diff por hash; lock + cooldown 10 min. |
 | Job `syncPedidosActivosDesdeSfactory` | Poll de pedidos activos; skip si `sfactoryLastPayloadHash` no cambió. |
 
@@ -83,7 +83,7 @@ Script manual: `npx ts-node --transpile-only scripts/refrescar-colores-padre.ts 
 ## Limitaciones conocidas
 
 - `items_list` sigue trayendo todo el catálogo S-Factory (limitación API).
-- `inventory_stock_items_by_warehouse_v2` no soporta `all_items: true` — ver [sfactory-inventory-stock.md](./sfactory-inventory-stock.md).
+- `inventory_stock_items_by_warehouse_v2` se usa solo para consultas puntuales de hasta 80 códigos; el job y el catálogo usan `inventory_stock_items_changed_since` + snapshot local. Ver [sfactory-inventory-stock.md](./sfactory-inventory-stock.md).
 - El filtro de depósito es **por código** (`resolverCodigosPermitidosDeposito`); un padre puede procesarse si al menos una variante es vendible en el depósito, pero las demás quedan con `activoSfactory=false`.
 - SKUs marcadores `_D/_H/_U` solo se activan si tienen `sale_price` en el depósito ecommerce.
 - Variantes **sin color** en padres **sin** whitelist de colores: siguen activas si el depósito las considera vendibles (`activoSfactoryConWhitelist`). Padres con whitelist siguen exigiendo color permitido/aprobado.
@@ -92,7 +92,7 @@ Script manual: `npx ts-node --transpile-only scripts/refrescar-colores-padre.ts 
 
 - Hashes: `api/src/utils/sync-hash.utils.ts`
 - Productos: `api/src/services/sync/producto-sync.service.ts`
-- Stock / activo depósito: `api/src/services/sync/stock-precios-sync.service.ts`
+- Stock / activo depósito: `api/src/services/sync/sfactory-inventory-sync.service.ts`
 - Inventario depósito: `api/src/utils/sfactory-stock-fetch.utils.ts` (`obtenerInventarioPorCodigos`, `resolverCodigosPermitidosDeposito`)
 - Colores por padre (NTDS): `api/src/config/colores-padre-whitelist.config.ts` + `api/src/utils/sfactory-color-parse.utils.ts` (patrones `GRIS MEL CL`, `RAY CEL`, etc.)
 - Pedidos: `api/src/services/pedido-sync.service.ts`
